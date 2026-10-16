@@ -1,0 +1,14 @@
+
+{
+  "manifest_version": 3,
+  "name": "Master Project AI Agent",
+  "version": "1.0.0",
+  "description": "Master Project AI Agent extension interface",
+  "action": {
+    "default_title": "Master Project AI Agent",
+    "default_popup": "popup.html"
+  },
+  "permissions": [],
+  "host_permissions": []
+}
+￼Enter
