@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#15803d">
+  <meta name="description" content="Your standalone AI Agent workspace">
+  <title>Standalone AI Agent</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-logo" aria-hidden="true">AI</div>
+        <div>
+          <h1>AI Agent</h1>
+          <p>Standalone Assistant</p>
+        </div>
+      </div>
+      <span class="status-pill">
+        <span class="status-dot"></span>
+        <span id="connectionStatus">Ready</span>
+      </span>
+    </header>
+
+    <main class="main-content">
+      <section class="welcome" id="welcome">
+        <div class="welcome-icon" aria-hidden="true">✦</div>
+        <p class="eyebrow">YOUR AI WORKSPACE</p>
+        <h2>How can I help you today?</h2>
+        <p class="welcome-description">
+          Ask questions, explore ideas, write content, or plan your next project.
+        </p>
+
+        <div class="suggestions">
+          <button class="suggestion" type="button"
+            data-prompt="Help me plan a new software project.">
+            <span>⌘</span>
+            <span><strong>Plan a project</strong><small>Create a clear step-by-step plan</small></span>
+          </button>
+
+          <button class="suggestion" type="button"
+            data-prompt="Help me write and improve some code.">
+            <span>&lt;/&gt;</span>
+            <span><strong>Write code</strong><small>Build and improve applications</small></span>
+          </button>
+
+          <button class="suggestion" type="button"
+            data-prompt="Research this topic and explain it simply.">
+            <span>⌕</span>
+            <span><strong>Explore a topic</strong><small>Understand something new</small></span>
+          </button>
+
+          <button class="suggestion" type="button"
+            data-prompt="Help me create a content plan.">
+            <span>✎</span>
+            <span><strong>Create content</strong><small>Develop ideas and scripts</small></span>
+          </button>
+        </div>
+      </section>
+
+      <section class="chat-panel" aria-label="AI conversation">
+        <div id="chatMessages" class="chat-messages"
+          aria-live="polite" aria-relevant="additions"></div>
+        <p id="errorMessage" class="error-message" role="alert" hidden></p>
+
+        <form id="chatForm" class="chat-form">
+          <label class="sr-only" for="messageInput">Your message</label>
+          <textarea
+            id="messageInput"
+            name="message"
+            rows="1"
+            maxlength="8000"
+            placeholder="Message your AI Agent..."
+            required></textarea>
+          <button id="sendButton" class="send-button" type="submit"
+            aria-label="Send message">
+            <span>↑</span>
+          </button>
+          <p class="composer-note">AI can make mistakes. Check important information.</p>
+        </form>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>Standalone AI Agent</span>
+      <span>Built for helpful, human-controlled AI</span>
+    </footer>
+  </div>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>￼Enter
