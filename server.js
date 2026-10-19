@@ -1,72 +1,83 @@
-import "dotenv/config";
-import express from "express";
-import { GoogleGenAI } from "@google/genai";
+import express from 'express';
+import dotenv from 'dotenv';
+import { GoogleGenAI } from '@google/genai';
+
+dotenv.config();
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
+const apiKey = process.env.GEMINI_API_KEY;
 
-app.disable("x-powered-by");
-app.use(express.json({ limit: "20kb" }));
+app.disable('x-powered-by');
+app.use(express.json({ limit: '20kb' }));
+app.use(express.static('public'));
 
-app.use((req, res, next) => {
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader("X-Frame-Options", "DENY");
-  next();
-});
-
-app.use(express.static("public"));
-
-app.get("/api/health", (req, res) => {
+app.get('/api/health', (_req, res) => {
   res.json({
-    status: "ok",
-    app: "Standalone AI Agent"
+    status: 'ok',
+    apiKeyConfigured: Boolean(apiKey)
   });
 });
 
-app.post("/api/chat", async (req, res) => {
-  const message = req.body?.message;
-
-  if (typeof message !== "string" || !message.trim()) {
-    return res.status(400).json({
-      error: "Message likhna zaroori hai."
-    });
-  }
-
-  if (message.length > 8000) {
-    return res.status(413).json({
-      error: "Message bahut lamba hai."
-    });
-  }
-
-  if (!process.env.GEMINI_API_KEY) {
-    return res.status(503).json({
-      error: "Gemini API key abhi configure nahi hai."
-    });
-  }
-
+app.post('/api/chat', async (req, res) => {
   try {
-    const ai = new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY
-    });
+    const message = req.body?.message;
 
-    const result = await ai.models.generateContent({
-      model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+    if (typeof message !== 'string' || !message.trim()) {
+      return res.status(400).json({
+        error: 'Please enter a message.'
+      });
+    }
+
+    if (message.length > 10000) {
+      return res.status(413).json({
+        error: 'Message is too long.'
+      });
+    }
+
+    if (!apiKey) {
+      return res.status(503).json({
+        error: 'GEMINI_API_KEY is not configured on the server.'
+      });
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
       contents: message.trim()
     });
 
-    return res.json({
-      reply: result.text || "AI se text response nahi mila."
-    });
-  } catch (error) {
-    console.error("Gemini request failed.");
+    const reply = response.text;
 
-    return res.status(502).json({
-      error: "AI se jawab nahi mil saka. API configuration check karein."
+    if (typeof reply !== 'string' || !reply.trim()) {
+      return res.status(502).json({
+        error: 'The AI returned an empty response.'
+      });
+    }
+
+    return res.json({ reply });
+  } catch (error) {
+    console.error('Chat request failed:', error.message);
+    return res.status(500).json({
+      error: 'AI request failed. Check the server logs and API configuration.'
     });
   }
 });
 
-app.listen(port, () => {
-  console.log(`Standalone AI Agent server listening on port ${port}`);
-});￼Enter
+app.use((err, _req, res, _next) => {
+  if (err instanceof SyntaxError && 'body' in err) {
+    return res.status(400).json({
+      error: 'Invalid JSON request body.'
+    });
+  }
+
+  console.error('Request error:', err.message);
+  return res.status(500).json({
+    error: 'Internal server error.'
+  });
+});
+
+app.listen(port, '127.0.0.1', () => {
+  console.log(`Server running on http://127.0.0.1:${port}`);
+});
