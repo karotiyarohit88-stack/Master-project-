@@ -1,0 +1,6 @@
+{
+  "name": "Master Project AI Agent",
+  "description": "Central AI assistant for software design, programming, database planning, testing, security reviews, deployment, and future worker agent planning.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
