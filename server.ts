@@ -1381,7 +1381,7 @@ app.post('/api/connections/test', async (req: Request, res: Response) => {
       })();
 
       const timeoutPromise = new Promise<string>((_, reject) =>
-        setTimeout(() => reject(new Error('Connection timed out after 6000ms')), 6000)
+        setTimeout(() => reject(new Error('Connection timed out after 30000ms')), 30000)
       );
 
       const text = await Promise.race([pingPromise, timeoutPromise]);
@@ -2157,7 +2157,7 @@ ${isConsequential ? '#### 3. Safety Authorization:\nThis operation is consequent
 
     dynamicSystemInstruction += `\n\nCRITICAL CODE PRESERVATION RULE: You MUST preserve all programming code, code blocks (\`\`\`), syntax, function and class names, variable names, filenames, API routes, terminal shell commands, URLs, and JSON keys strictly in standard English without translating them into local scripts.`;
 
-    const callGeminiWithTimeout = async (model: string, timeoutMs = 4500): Promise<string> => {
+    const callGeminiWithTimeout = async (model: string, timeoutMs = 30000): Promise<string> => {
       const generatePromise = client.models.generateContent({
         model,
         contents,
@@ -2175,11 +2175,11 @@ ${isConsequential ? '#### 3. Safety Authorization:\nThis operation is consequent
     };
 
     try {
-      replyText = await callGeminiWithTimeout(selectedModel, 4500);
+      replyText = await callGeminiWithTimeout(selectedModel, 30000);
     } catch (primaryErr: any) {
       console.warn(`Primary model [${selectedModel}] error/timeout:`, primaryErr?.message);
       try {
-        replyText = await callGeminiWithTimeout('gemini-3.1-flash-lite', 3500);
+        replyText = await callGeminiWithTimeout('gemini-3.1-flash-lite', 20000);
       } catch (secondaryErr: any) {
         console.warn('Fallback model error/timeout, generating structured architectural assistant response:', secondaryErr?.message);
         replyText = `### Master Project AI Agent
