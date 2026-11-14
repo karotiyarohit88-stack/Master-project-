@@ -126,3 +126,22 @@ The schema includes:
 | Issue ID | Module | Finding | Status |
 | :--- | :--- | :--- | :--- |
 | MP-WF-10 | Background Agent Queue / PostgreSQL | No durable task queue schema existed to preserve queued work, worker leases, retries, approvals, and task events across restarts. | SQL schema committed to feature branch; database migration not applied; runtime integration pending |
+
+
+## 9. Administrative API Guard — First Security Hardening (2026-11-14)
+
+**Implemented on feature branch:** added a fail-closed AAKSH_ADMIN_TOKEN gate to these sensitive routes:
+- POST /api/connections/save
+- POST /api/connections/test
+- POST /api/registry/test-connection
+- POST /api/registry/update
+
+The server requires a minimum 32-character server-side token and compares it using crypto.timingSafeEqual. If the secret is absent/too short, the routes return HTTP 503; if missing/incorrect, they return HTTP 401. The Connections Center now accepts the admin token in a password field held only in component memory and sends it in the request header. The token is not written to localStorage.
+
+**Configuration required before these protected actions can be used:** set a unique AAKSH_ADMIN_TOKEN in the deployment's server-side secret manager. Do not put it in GitHub, source code, chat, or persistent browser storage.
+
+**Scope limitation:** this is a targeted owner/admin gate for connection and capability-registry mutation routes, not full application login, multi-user identity, session management, or per-user authorization. Other task-execution, approval, publishing, GitHub mutation, and automation routes still require a complete route-by-route auth design before public exposure. No live deployment, runtime test, or production security verification is claimed.
+
+| Issue ID | Module | Finding | Status |
+| :--- | :--- | :--- | :--- |
+| MP-SEC-04 | Connections / Capability Registry API | Unauthenticated connection-secret mutation and capability-registry mutation/test routes were identified. | Targeted admin-token gate added to feature branch; full API route authorization and live verification pending |
