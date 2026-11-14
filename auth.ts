@@ -222,3 +222,25 @@ export async function requireSession(req:Request,res:Response,next:NextFunction)
   try { const user=await getUser(req); if(!user)return res.status(401).json({error:'Authentication required.'}); req.authUser=user; return next(); }
   catch(e){console.error('[AUTH] session validation failed',e);return res.status(503).json({error:'Session validation unavailable.'});}
 }
+
+function credentialKey() {
+  const raw = process.env.APP_ENCRYPTION_KEY || '';
+  if (raw.length < 32) throw new Error('APP_ENCRYPTION_KEY (32+ characters) is required to persist credentials.');
+  return crypto.createHash('sha256').update(raw).digest();
+}
+export async function saveEncryptedSecret(name: string, value: string) {
+  if (!pool) throw new Error('DATABASE_URL is required.');
+  const iv=crypto.randomBytes(12), cipher=crypto.createCipheriv('aes-256-gcm',credentialKey(),iv);
+  const encrypted=Buffer.concat([cipher.update(value,'utf8'),cipher.final()]);
+  const payload=[iv.toString('base64'),cipher.getAuthTag().toString('base64'),encrypted.toString('base64')].join('.');
+  await pool.query('INSERT INTO app_secrets(name,encrypted_value) VALUES($1,$2) ON CONFLICT(name) DO UPDATE SET encrypted_value=EXCLUDED.encrypted_value,updated_at=NOW()',[name,payload]);
+}
+export async function readEncryptedSecret(name: string) {
+  if (!pool) return null;
+  const r=await pool.query('SELECT encrypted_value FROM app_secrets WHERE name=$1',[name]);
+  if(!r.rows[0])return null;
+  const [iv,tag,data]=String(r.rows[0].encrypted_value).split('.');
+  const decipher=crypto.createDecipheriv('aes-256-gcm',credentialKey(),Buffer.from(iv,'base64'));
+  decipher.setAuthTag(Buffer.from(tag,'base64'));
+  return Buffer.concat([decipher.update(Buffer.from(data,'base64')),decipher.final()]).toString('utf8');
+}
