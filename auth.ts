@@ -114,7 +114,7 @@ authRouter.post('/request-otp', async (req: Request, res: Response) => {
   if (!pool) return res.status(503).json({ error: 'DATABASE_URL is required.' });
   const email = String(req.body?.email || '').trim().toLowerCase();
   const purpose = req.body?.purpose === 'password_reset' ? 'password_reset' : 'register';
-  if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) return res.status(400).json({ error: 'Valid email is required.' });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Valid email is required.' });
   if (process.env.NODE_ENV === 'production' && !secret) return res.status(503).json({ error: 'AUTH_OTP_SECRET is required.' });
   try {
     const client = await pool.connect();
@@ -155,7 +155,7 @@ authRouter.post('/request-otp', async (req: Request, res: Response) => {
 authRouter.post('/register', async (req: Request,res: Response) => {
   if (!pool) return res.status(503).json({error:'DATABASE_URL is required.'});
   const email=String(req.body?.email||'').trim().toLowerCase(), code=String(req.body?.code||''), password=String(req.body?.password||''), displayName=String(req.body?.displayName||'').trim().slice(0,100);
-  if (!/^\\d{6}$/.test(code) || password.length<10 || !email) return res.status(400).json({error:'Email, six digit OTP and password (10+ chars) required.'});
+  if (!/^\d{6}$/.test(code) || password.length<10 || !email) return res.status(400).json({error:'Email, six digit OTP and password (10+ chars) required.'});
   const client=await pool.connect();
   try {
     await client.query('BEGIN');
@@ -193,7 +193,7 @@ authRouter.post('/logout', async (req:Request,res:Response) => {
 authRouter.post('/reset-password', async (req:Request,res:Response) => {
   if(!pool) return res.status(503).json({error:'DATABASE_URL is required.'});
   const email=String(req.body?.email||'').trim().toLowerCase(), code=String(req.body?.code||''), password=String(req.body?.password||'');
-  if(!/^\\d{6}$/.test(code)||password.length<10) return res.status(400).json({error:'Valid OTP and 10+ character password required.'});
+  if(!/^\d{6}$/.test(code)||password.length<10) return res.status(400).json({error:'Valid OTP and 10+ character password required.'});
   const c=await pool.connect();
   try {
     await c.query('BEGIN'); await c.query('SELECT pg_advisory_xact_lock(hashtext($1))',[email+':password_reset']);
@@ -212,12 +212,12 @@ authRouter.patch('/profile', async (req:Request,res:Response)=>{
   if(!pool)return res.status(503).json({error:'DATABASE_URL is required.'});
   const user=await getUser(req);if(!user)return res.status(401).json({error:'Authentication required.'});
   const name=String(req.body?.displayName||'').trim().slice(0,100), avatar=req.body?.avatarUrl?String(req.body.avatarUrl).trim().slice(0,2048):null;
-  if(avatar&&!/^https:\\/\\/.+/i.test(avatar))return res.status(400).json({error:'Avatar URL must use HTTPS.'});
+  if(avatar&&!/^https:\/\/.+/i.test(avatar))return res.status(400).json({error:'Avatar URL must use HTTPS.'});
   const r=await pool.query('UPDATE app_users SET display_name=$1,avatar_url=$2,updated_at=NOW() WHERE id=$3 RETURNING id,email,display_name,avatar_url,created_at',[name||null,avatar,user.id]);
   return res.json({success:true,user:r.rows[0]});
 });
 export async function requireSession(req:Request,res:Response,next:NextFunction) {
-  if(req.path==='/health'||req.path.startsWith('/auth/')||req.path==='/auth'||/^\\/autopilot\\/webhook\\/[^/]+$/.test(req.path)) return next();
+  if(req.path==='/health'||req.path.startsWith('/auth/')||req.path==='/auth'||/^\/autopilot\/webhook\/[^/]+$/.test(req.path)) return next();
   if(!pool)return res.status(503).json({error:'Authentication database unavailable; set DATABASE_URL.'});
   try { const user=await getUser(req); if(!user)return res.status(401).json({error:'Authentication required.'}); req.authUser=user; return next(); }
   catch(e){console.error('[AUTH] session validation failed',e);return res.status(503).json({error:'Session validation unavailable.'});}
