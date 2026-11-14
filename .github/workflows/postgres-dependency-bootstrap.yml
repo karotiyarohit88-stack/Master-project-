@@ -35,8 +35,13 @@ jobs:
         run: |
           set +e
           npm pkg set 'devDependencies.esbuild=^0.28.0'
-          npm install --save-exact pg@8.16.3 --save-dev @types/pg --no-audit --no-fund > postgres-dependency-install.log 2>&1
+          npm pkg delete 'devDependencies.pg'
+          npm install --save-exact pg@8.16.3 --no-audit --no-fund > postgres-dependency-install.log 2>&1
           result=$?
+          if [ $result -eq 0 ]; then
+            npm install --save-dev @types/pg --no-audit --no-fund >> postgres-dependency-install.log 2>&1
+            result=$?
+          fi
           tail -n 120 postgres-dependency-install.log
           exit $result
 
