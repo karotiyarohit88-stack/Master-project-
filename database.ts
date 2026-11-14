@@ -44,7 +44,7 @@ export function getPostgresPool(): Pool | null {
   return pool;
 }
 
-export async function checkPostgresConnection(): Promise<{
+export async function checkPostgresConnection(connectionStringOverride?: string): Promise<{
   configured: boolean;
   connected: boolean;
   database?: string;
@@ -52,7 +52,15 @@ export async function checkPostgresConnection(): Promise<{
   latencyMs?: number;
   error?: string;
 }> {
-  const databasePool = getPostgresPool();
+  const configuredUrl = connectionStringOverride?.trim() || getDatabaseUrl();
+  if (!configuredUrl) {
+    return { configured: false, connected: false, error: 'DATABASE_URL is not configured.' };
+  }
+
+  const usesTemporaryPool = Boolean(connectionStringOverride?.trim() && connectionStringOverride.trim() !== getDatabaseUrl());
+  const databasePool = usesTemporaryPool
+    ? new Pool({ connectionString: configuredUrl, connectionTimeoutMillis: 5000, max: 1 })
+    : getPostgresPool();
   if (!databasePool) {
     return { configured: false, connected: false, error: 'DATABASE_URL is not configured.' };
   }
@@ -80,6 +88,8 @@ export async function checkPostgresConnection(): Promise<{
       latencyMs: Date.now() - startedAt,
       error: message.slice(0, 240),
     };
+  } finally {
+    if (usesTemporaryPool) await databasePool.end();
   }
 }
 
