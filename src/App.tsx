@@ -48,6 +48,7 @@ import { AutomationLogsCenter } from './components/AutomationLogsCenter';
 import { GitHubCodeExplorer } from './components/GitHubCodeExplorer';
 import { AnalyticsCenter } from './components/AnalyticsCenter';
 import { FloatingChatWidget } from './components/FloatingChatWidget';
+import { AuthScreen } from './components/AuthScreen';
 
 const STORAGE_KEY = 'master_project_ai_agent_sessions_v1';
 const ACTIVE_SESSION_KEY = 'master_project_ai_agent_active_v1';
@@ -63,6 +64,32 @@ const DEFAULT_SETTINGS: AppSettings = {
 };
 
 export default function App() {
+  const [authUser, setAuthUser] = useState<any>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileName, setProfileName] = useState('');
+
+  useEffect(() => {
+    fetch('/api/auth/session', { credentials: 'include' })
+      .then(async response => response.ok ? response.json() : null)
+      .then(data => { setAuthUser(data?.user || null); setProfileName(data?.user?.display_name || ''); })
+      .catch(() => setAuthUser(null))
+      .finally(() => setAuthLoading(false));
+  }, []);
+
+  const handleAuthenticated = (user: any) => { setAuthUser(user); setProfileName(user?.display_name || ''); };
+  const handleLogout = async () => {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    setAuthUser(null); setProfileOpen(false);
+  };
+  const saveProfile = async () => {
+    const response = await fetch('/api/auth/profile', { method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ displayName: profileName }) });
+    const data = await response.json();
+    if (response.ok) { setAuthUser(data.user); setProfileOpen(false); } else window.alert(data.error || 'Profile update failed');
+  };
+
+  if (authLoading) return <div className="min-h-[100dvh] flex items-center justify-center bg-slate-50 text-emerald-700">Checking secure session…</div>;
+  if (!authUser) return <AuthScreen onAuthenticated={handleAuthenticated} />;
   const [conversations, setConversations] = useState<ConversationSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string>('');
   const [input, setInput] = useState<string>('');
@@ -611,6 +638,12 @@ I am your central AI assistant and command center. You can manage engineering ta
 
   return (
     <div className="flex flex-col h-[100dvh] w-full max-w-full bg-slate-50 text-slate-800 font-sans overflow-hidden antialiased selection:bg-emerald-500/20 selection:text-emerald-950">
+      <div className="flex items-center justify-end gap-2 border-b border-emerald-100 bg-white px-4 py-2 text-xs">
+        <span className="max-w-[55vw] truncate text-slate-500">{authUser.display_name || authUser.email}</span>
+        <button type="button" onClick={() => setProfileOpen(v => !v)} className="rounded-lg border border-emerald-200 px-3 py-1.5 font-semibold text-emerald-700">Account</button>
+        <button type="button" onClick={handleLogout} className="rounded-lg bg-slate-100 px-3 py-1.5 font-semibold text-slate-700">Logout</button>
+      </div>
+      {profileOpen && <div className="absolute right-4 top-16 z-50 w-72 rounded-2xl border border-emerald-100 bg-white p-4 shadow-xl"><p className="mb-2 text-sm font-bold text-slate-800">Account settings</p><p className="mb-3 break-all text-xs text-slate-500">{authUser.email}</p><label className="mb-3 block text-xs font-semibold text-slate-600">Public display name<input value={profileName} onChange={e => setProfileName(e.target.value)} maxLength={100} className="mt-1 w-full rounded-lg border border-slate-200 p-2 text-sm" /></label><div className="flex gap-2"><button onClick={saveProfile} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white">Save profile</button><button onClick={() => setProfileOpen(false)} className="rounded-lg bg-slate-100 px-3 py-2 text-xs">Close</button></div></div>}
       {/* Top Header with Module Navigation */}
       <Header
         onOpenDrawer={() => setIsDrawerOpen(true)}
