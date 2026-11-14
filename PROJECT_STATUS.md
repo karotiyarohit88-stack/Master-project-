@@ -1,6 +1,6 @@
 # Master Project AI Agent — Project Status & Capability Memory Registry
 
-**Last Verified:** 2026-10-24T04:40:00-07:00  
+**Source Audit Update:** 2026-11-14 (feature branch; source inspection only)  
 **Status:** Capability registry and mobile Control Centre UI present; user authentication and durable database persistence remain unimplemented/unverified  
 **Environment:** React 19 + TypeScript + Vite + Express Backend (`server.ts`) + Gemini AI Integration  
 
@@ -45,13 +45,15 @@ Every Google Workspace app is registered and tracked in `/src/config/capabilityR
 
 ## 4. Verification & Testing Evidence
 
-| Check | Endpoint / Command | Status | Result |
-| :--- | :--- | :--- | :--- |
-| **TypeScript Typecheck** | `npm run lint` (`tsc --noEmit`) | **Passed** | 0 errors |
-| **Capability Registry API** | `GET /api/registry` | **200 OK** | Full capability memory returned |
-| **Capability Test Endpoint** | `POST /api/registry/test-connection` | **200 OK** | Live capability testing & audit log recorded |
-| **Health Check** | `GET /api/health` | **200 OK** | Server running on port 3000, Gemini model online |
-| **Connections Check** | `GET /api/connections` | **200 OK** | Server-side credential status returned |
+The following checks were recorded in an earlier project status snapshot. They have **not** been rerun for this feature-branch audit and must not be treated as current verification:
+
+| Earlier recorded check | Endpoint / Command | Current audit status |
+| :--- | :--- | :--- |
+| TypeScript typecheck | `npm run lint` (`tsc --noEmit`) | Not rerun in this audit |
+| Capability Registry API | `GET /api/registry` | Not independently retested |
+| Capability Test Endpoint | `POST /api/registry/test-connection` | Not independently retested; endpoint semantics require review |
+| Health Check | `GET /api/health` | Not independently retested against Render |
+| Connections Check | `GET /api/connections` | Not independently retested against Render |
 
 ---
 
@@ -61,3 +63,18 @@ Every Google Workspace app is registered and tracked in `/src/config/capabilityR
 - `/server.ts`: In-memory `capabilityRegistryStore`, `/api/registry`, `/api/registry/test-connection`, and `/api/registry/update` endpoints.
 - `/src/components/ConnectionsCenter.tsx`: Control Centre tabbed interface with Google Workspace Apps Registry, AI & Media Capabilities, and Server API Keys.
 - `/PROJECT_STATUS.md`: Persistent capability memory roadmap document.
+
+
+## 6. Security Audit Findings (2026-11-14)
+
+This section records source-level findings on `feature/master-project-api-key-secret-manager`. No production deployment or runtime security test is implied.
+
+| Issue ID | Module / File evidence | Finding | Status |
+| :--- | :--- | :--- | :--- |
+| MP-SEC-04 | `server.ts` lines 24-25, 1105 onward, 1276, 1345; `src/components/ConnectionsCenter.tsx` | Only global middleware visible at server startup is `express.json()`. Provider secret mutation/test requests are sent without an application session or authorization header. No global app-user auth middleware was found in the inspected server source. | Source-confirmed exposure; implementation pending |
+| MP-SEC-06 | `src/App.tsx`; `server.ts` route inventory; `package.json` | Main React app initializes directly to `home`; no app login/register UI or application session/token middleware was found in inspected source. GitHub provider-token auth is not application-user authentication. | Source-confirmed absence in inspected files; implementation pending |
+| MP-SEC-03 | `server.ts` in-memory `serverStore`; `package.json` dependencies | Provider configuration is currently held in process memory; no database client/ORM dependency appears in package manifest. | In-memory implementation confirmed; durable persistence pending |
+
+**Immediate security boundary:** do not expose this branch publicly or merge/deploy it until application authentication and server-side authorization protect all sensitive mutation, execution, approval, and credential routes. The existing webhook token check is specific to `/api/autopilot/webhook/:triggerId` and is not a substitute for application-user authentication.
+
+**Next safe engineering step:** map every sensitive route to its required role/permission and define a production-compatible session/database design before adding authentication code. Avoid a partial login screen or a client-only token check; neither protects the Express API.
