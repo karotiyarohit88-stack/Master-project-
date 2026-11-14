@@ -3697,7 +3697,7 @@ app.post('/api/github/auth/token', async (req: Request, res: Response) => {
     const remaining = parseInt(testResp.headers.get('x-ratelimit-remaining') || '5000', 10);
     const limit = parseInt(testResp.headers.get('x-ratelimit-limit') || '5000', 10);
 
-    await saveEncryptedSecret('github_pat:' + req.authUser!.id, cleanToken);
+    await saveEncryptedSecret('github_pat:system', cleanToken);
     serverStore.github.token = cleanToken;
     serverStore.github.userLogin = userData.login || 'User';
     serverStore.github.avatarUrl = userData.avatar_url || '';
