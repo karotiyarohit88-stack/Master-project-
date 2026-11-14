@@ -31,7 +31,22 @@ jobs:
           cache: npm
 
       - name: Add pinned PostgreSQL driver and generate lockfile
-        run: npm install --save-exact pg@8.16.3
+        id: pg_install
+        run: |
+          set +e
+          npm install --save-exact pg@8.16.3 --no-audit --no-fund > postgres-dependency-install.log 2>&1
+          result=$?
+          tail -n 120 postgres-dependency-install.log
+          exit $result
+
+      - name: Upload dependency install diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-dependency-install-log
+          path: postgres-dependency-install.log
+          if-no-files-found: warn
+          retention-days: 3
 
       - name: Verify dependency install and existing project checks
         run: |
