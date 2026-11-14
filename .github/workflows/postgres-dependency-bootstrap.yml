@@ -50,10 +50,31 @@ jobs:
           retention-days: 3
 
       - name: Verify dependency install and existing project checks
+        id: verify
         run: |
-          npm ci
-          npm run lint
-          npm run build
+          set +e
+          {
+            npm ci
+            install_status=$?
+            if [ $install_status -eq 0 ]; then npm run lint; lint_status=$?; else lint_status=99; fi
+            if [ $install_status -eq 0 ] && [ $lint_status -eq 0 ]; then npm run build; build_status=$?; else build_status=99; fi
+            echo "npm_ci_exit=$install_status"
+            echo "lint_exit=$lint_status"
+            echo "build_exit=$build_status"
+            test $install_status -eq 0 && test $lint_status -eq 0 && test $build_status -eq 0
+          } > postgres-validation.log 2>&1
+          result=$?
+          tail -n 180 postgres-validation.log
+          exit $result
+
+      - name: Upload dependency validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-dependency-validation-log
+          path: postgres-validation.log
+          if-no-files-found: warn
+          retention-days: 3
 
       - name: Commit generated manifests on this feature branch only
         env:
