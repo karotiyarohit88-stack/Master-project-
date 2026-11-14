@@ -10,7 +10,7 @@ import crypto from 'crypto';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { GoogleGenAI } from '@google/genai';
-import { applyPendingPostgresMigrations, checkPostgresConnection, getPostgresMigrationStatus } from './database';
+import { applyPendingPostgresMigrations, checkPostgresConnection, getPostgresMigrationStatus } from './database.ts';
 
 const execAsync = promisify(exec);
 
