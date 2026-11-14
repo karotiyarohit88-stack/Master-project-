@@ -161,3 +161,13 @@ The server requires a minimum 32-character server-side token and compares it usi
 | Issue ID | Module | Finding | Status |
 | :--- | :--- | :--- | :--- |
 | MP-SEC-06 | Application Login / Identity / Sessions | No application login/register UI or server-side identity/session middleware was present in inspected source. | PostgreSQL schema foundation committed to feature branch; runtime auth, database driver, controlled owner bootstrap, UI, route authorization and tests pending |
+
+
+## 11. Automated Build Checks Added (2026-11-14)
+
+Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull requests it runs:
+1. `npm ci` using the committed lockfile.
+2. `npm run lint` (TypeScript no-emit check).
+3. `npm run build` (Vite production build).
+
+**Verification status:** workflow source was re-fetched from GitHub and matches the intended steps. The latest commit's GitHub combined-status response currently contains no status checks, so an executed CI result is not yet available. No build, typecheck, or runtime pass is claimed until the workflow actually reports completion.
