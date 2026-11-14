@@ -4,6 +4,8 @@ import {
   User, 
   Copy, 
   Check, 
+  Volume2,
+  VolumeX, 
   AlertCircle, 
   RefreshCw, 
   Info,
@@ -43,6 +45,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   onNavigateToView
 }) => {
   const [copied, setCopied] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const isUser = message.role === 'user';
 
   const copyContent = async () => {
@@ -51,6 +54,26 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
+  };
+
+  const toggleReadAloud = () => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    if (isSpeaking) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(message.content);
+    const language = settings?.selectedLanguage;
+    if (language && language !== 'auto') {
+      const languageMap: Record<string, string> = { hi: 'hi-IN', hinglish: 'hi-IN', en: 'en-IN', pa: 'pa-IN', ur: 'ur-PK', bn: 'bn-IN', ta: 'ta-IN', te: 'te-IN', mr: 'mr-IN', gu: 'gu-IN' };
+      utterance.lang = languageMap[language] || language;
+    }
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+    setIsSpeaking(true);
+    window.speechSynthesis.speak(utterance);
   };
 
   const getCategoryBadge = (cat?: string) => {
@@ -167,16 +190,28 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
           {!isUser && (
             <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
               <span className="font-mono text-[10px]">Master Project AI</span>
-              <button
-                type="button"
-                onClick={copyContent}
-                className="flex items-center gap-1 hover:text-emerald-700 transition-colors cursor-pointer p-1 -m-1 rounded"
-                title="Copy message text"
-                aria-label="Copy message text"
-              >
-                {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                <span className="text-[10px]">{copied ? 'Copied' : 'Copy'}</span>
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={toggleReadAloud}
+                  className="flex items-center gap-1 hover:text-emerald-700 transition-colors cursor-pointer p-1 -m-1 rounded"
+                  title={isSpeaking ? 'Stop reading reply' : 'Listen to reply'}
+                  aria-label={isSpeaking ? 'Stop reading reply' : 'Listen to reply'}
+                >
+                  {isSpeaking ? <VolumeX className="w-3.5 h-3.5 text-emerald-600" /> : <Volume2 className="w-3.5 h-3.5" />}
+                  <span className="text-[10px]">{isSpeaking ? 'Stop' : 'Listen'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={copyContent}
+                  className="flex items-center gap-1 hover:text-emerald-700 transition-colors cursor-pointer p-1 -m-1 rounded"
+                  title="Copy message text"
+                  aria-label="Copy message text"
+                >
+                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span className="text-[10px]">{copied ? 'Copied' : 'Copy'}</span>
+                </button>
+              </div>
             </div>
           )}
         </div>
