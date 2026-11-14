@@ -244,3 +244,7 @@ export async function readEncryptedSecret(name: string) {
   decipher.setAuthTag(Buffer.from(tag,'base64'));
   return Buffer.concat([decipher.update(Buffer.from(data,'base64')),decipher.final()]).toString('utf8');
 }
+
+export async function deleteEncryptedSecret(name: string) {
+  if (pool) await pool.query('DELETE FROM app_secrets WHERE name=$1',[name]);
+}
