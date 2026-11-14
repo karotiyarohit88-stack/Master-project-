@@ -10,7 +10,7 @@ import crypto from 'crypto';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { GoogleGenAI } from '@google/genai';
-import { authRouter, initializeAuth, requireSession } from './auth.ts';
+import { authRouter, initializeAuth, requireSession, saveEncryptedSecret, readEncryptedSecret } from './auth.ts';
 
 const execAsync = promisify(exec);
 
@@ -2248,7 +2248,7 @@ app.post('/api/approve-action', (req: Request, res: Response) => {
     category: 'approval',
     action: `Human Operator Approved Risky Task: ${actionDescription || 'Authorized Task'}`,
     status: 'success',
-    details: `Task ID [${actionId}] approved. Dry-run snapshot verified. Zero unverified mutations.`,
+    details: `Operator [${req.authUser?.id || 'unknown'} / ${req.authUser?.email || 'unknown'}] approved Task ID [${actionId}]. Dry-run snapshot recorded.`,
     executionHash
   });
 
@@ -2317,7 +2317,7 @@ app.post('/api/project/apply-proposal', async (req: Request, res: Response) => {
     category: 'approval',
     action: `Applied Code Change Proposal [${proposalId}]`,
     status: 'success',
-    details: `Applied proposal "${proposal.title}". Affected files: ${proposal.affectedFiles.join(', ')}. Validation: ${validationResult}.`,
+    details: `Operator [${req.authUser?.id || 'unknown'} / ${req.authUser?.email || 'unknown'}] applied proposal "${proposal.title}". Affected files: ${proposal.affectedFiles.join(', ')}. Validation: ${validationResult}.`,
     executionHash: auditHash
   });
 
@@ -3422,7 +3422,7 @@ app.post('/api/publishing/approve', (req: Request, res: Response) => {
     category: 'approval',
     action: `Human Operator Approved Social Publication [${postId}]`,
     status: 'success',
-    details: `Publication approved for platform [${post.platform}]. Topic: "${post.topic}".`,
+    details: `Operator [${req.authUser?.id || 'unknown'} / ${req.authUser?.email || 'unknown'}] approved publication for platform [${post.platform}]. Topic: "${post.topic}".`,
     executionHash: approvalHash
   });
 
@@ -3697,6 +3697,7 @@ app.post('/api/github/auth/token', async (req: Request, res: Response) => {
     const remaining = parseInt(testResp.headers.get('x-ratelimit-remaining') || '5000', 10);
     const limit = parseInt(testResp.headers.get('x-ratelimit-limit') || '5000', 10);
 
+    await saveEncryptedSecret('github_pat:' + req.authUser!.id, cleanToken);
     serverStore.github.token = cleanToken;
     serverStore.github.userLogin = userData.login || 'User';
     serverStore.github.avatarUrl = userData.avatar_url || '';
@@ -4253,6 +4254,10 @@ app.post('/api/github/commit', async (req: Request, res: Response) => {
 // -----------------------------------------------------------------------------
 async function start() {
   await initializeAuth();
+  if (!serverStore.github.token && process.env.APP_ENCRYPTION_KEY) {
+    try { const savedToken = await readEncryptedSecret('github_pat:system'); if (savedToken) serverStore.github.token = savedToken; }
+    catch (error: any) { console.warn('[AUTH] Stored GitHub credential could not be loaded:', error?.message); }
+  }
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
