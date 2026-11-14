@@ -10,7 +10,7 @@ import crypto from 'crypto';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { GoogleGenAI } from '@google/genai';
-import { authRouter, initializeAuth, requireSession, saveEncryptedSecret, readEncryptedSecret } from './auth.ts';
+import { authRouter, initializeAuth, requireSession, saveEncryptedSecret, readEncryptedSecret, deleteEncryptedSecret } from './auth.ts';
 
 const execAsync = promisify(exec);
 
@@ -3734,7 +3734,8 @@ app.post('/api/github/auth/token', async (req: Request, res: Response) => {
 });
 
 // POST /api/github/auth/disconnect: Disconnect token
-app.post('/api/github/auth/disconnect', (req: Request, res: Response) => {
+app.post('/api/github/auth/disconnect', async (req: Request, res: Response) => {
+  await deleteEncryptedSecret('github_pat:system');
   serverStore.github.token = '';
   serverStore.github.authMethod = 'demo';
   serverStore.github.status = 'sandbox_mode';
