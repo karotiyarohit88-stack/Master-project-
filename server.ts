@@ -10,6 +10,7 @@ import crypto from 'crypto';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { GoogleGenAI } from '@google/genai';
+import { applyPendingPostgresMigrations, checkPostgresConnection, getPostgresMigrationStatus } from './database';
 
 const execAsync = promisify(exec);
 
@@ -1124,14 +1125,35 @@ function classifyRequest(prompt: string): 'question' | 'task_execution' | 'code_
 // ENDPOINTS
 // -----------------------------------------------------------------------------
 
-// GET /api/health
-app.get('/api/health', (req: Request, res: Response) => {
+// GET /api/health: application health plus a real PostgreSQL reachability probe.
+app.get('/api/health', async (req: Request, res: Response) => {
+  const database = await checkPostgresConnection();
+  let migrations = { migrationTableExists: false, appliedMigrations: [] as string[] };
+  if (database.connected) {
+    try {
+      migrations = await getPostgresMigrationStatus();
+    } catch {
+      // A failed migration-status lookup must not be reported as an applied schema.
+    }
+  }
+
   res.json({
     status: 'ok',
     appName: 'Master Project AI Agent',
     hasApiKey: Boolean(serverStore.gemini.apiKey || process.env.GEMINI_API_KEY),
     model: serverStore.gemini.model,
     sandboxMode: 'Prototype Sandbox (Safety Hardened)',
+    database: {
+      provider: 'PostgreSQL',
+      configured: database.configured,
+      connected: database.connected,
+      status: database.connected ? 'connected' : database.configured ? 'connection_failed' : 'not_configured',
+      latencyMs: database.latencyMs,
+      serverVersion: database.serverVersion,
+      migrationTableExists: migrations.migrationTableExists,
+      appliedMigrations: migrations.appliedMigrations,
+      error: database.error
+    },
     activeConnectors: {
       gemini: serverStore.gemini.apiKey ? 'Connected (Server)' : 'Awaiting API Key',
       n8n: serverStore.n8n.webhookUrl ? 'Configured' : 'Local Fallback Mode',
@@ -1141,6 +1163,55 @@ app.get('/api/health', (req: Request, res: Response) => {
       sheets: serverStore.sheets.spreadsheetId ? 'Configured' : 'Local Memory Mirror'
     }
   });
+});
+
+// GET /api/database/status: read-only, live PostgreSQL connectivity and migration state.
+app.get('/api/database/status', async (req: Request, res: Response) => {
+  const connection = await checkPostgresConnection();
+  if (!connection.connected) {
+    return res.status(connection.configured ? 503 : 200).json({
+      provider: 'PostgreSQL',
+      ...connection,
+      migrationTableExists: false,
+      appliedMigrations: []
+    });
+  }
+
+  try {
+    const migrations = await getPostgresMigrationStatus();
+    return res.json({ provider: 'PostgreSQL', ...connection, ...migrations });
+  } catch (error) {
+    return res.status(503).json({
+      provider: 'PostgreSQL',
+      ...connection,
+      migrationStatusError: error instanceof Error ? error.message.slice(0, 200) : 'Unable to read migration status'
+    });
+  }
+});
+
+// POST /api/database/migrate: admin-only and disabled unless explicitly enabled server-side.
+app.post('/api/database/migrate', requireAdminToken, async (req: Request, res: Response) => {
+  if (process.env.RUN_DB_MIGRATIONS !== 'true') {
+    return res.status(403).json({
+      success: false,
+      error: 'Migrations are disabled. Set RUN_DB_MIGRATIONS=true in the server secret/configuration only for an approved migration window.'
+    });
+  }
+
+  const connection = await checkPostgresConnection();
+  if (!connection.connected) {
+    return res.status(503).json({ success: false, error: connection.error || 'PostgreSQL is not connected.' });
+  }
+
+  try {
+    const result = await applyPendingPostgresMigrations();
+    return res.json({ success: true, provider: 'PostgreSQL', ...result });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message.slice(0, 300) : 'PostgreSQL migration failed.'
+    });
+  }
 });
 
 // GET /api/analytics: System analytics & performance metrics
@@ -1211,8 +1282,13 @@ app.post('/api/automation/trigger', (req: Request, res: Response) => {
 });
 
 // GET /api/connections: Return status with masked secrets
-app.get('/api/connections', (req: Request, res: Response) => {
+app.get('/api/connections', async (req: Request, res: Response) => {
   const hasGemini = Boolean(serverStore.gemini.apiKey || process.env.GEMINI_API_KEY);
+  const databaseCheck = await checkPostgresConnection();
+  let migrationCheck = { migrationTableExists: false, appliedMigrations: [] as string[] };
+  if (databaseCheck.connected) {
+    try { migrationCheck = await getPostgresMigrationStatus(); } catch { /* report unknown, never assume applied */ }
+  }
   res.json({
     gemini: {
       configured: hasGemini,
@@ -1273,10 +1349,16 @@ app.get('/api/connections', (req: Request, res: Response) => {
       status: (serverStore.workspace.clientId || serverStore.workspace.oauthToken) ? 'connected' : 'unconfigured'
     },
     database: {
-      configured: Boolean(serverStore.database.url || serverStore.database.firebaseConfig),
-      hasPostgresUrl: Boolean(serverStore.database.url),
-      hasFirebaseConfig: Boolean(serverStore.database.firebaseConfig),
-      status: (serverStore.database.url || serverStore.database.firebaseConfig) ? 'connected' : 'memory_store_active'
+      provider: 'PostgreSQL',
+      configured: databaseCheck.configured,
+      hasPostgresUrl: databaseCheck.configured,
+      connected: databaseCheck.connected,
+      status: databaseCheck.connected ? 'connected' : databaseCheck.configured ? 'connection_failed' : 'unconfigured',
+      latencyMs: databaseCheck.latencyMs,
+      serverVersion: databaseCheck.serverVersion,
+      migrationTableExists: migrationCheck.migrationTableExists,
+      appliedMigrations: migrationCheck.appliedMigrations,
+      error: databaseCheck.error
     },
     github: {
       configured: Boolean(serverStore.github.token),
@@ -1480,17 +1562,22 @@ app.post('/api/connections/test', requireAdminToken, async (req: Request, res: R
   }
 
   if (provider === 'database') {
-    if (!serverStore.database.url && !serverStore.database.firebaseConfig) {
-      return res.json({
+    const database = await checkPostgresConnection(serverStore.database.url || undefined);
+    if (!database.connected) {
+      return res.status(database.configured ? 503 : 200).json({
         success: false,
-        status: 'unconfigured',
-        message: 'No DATABASE_URL or FIREBASE_CONFIG configured. Express server memory store active.'
+        status: database.configured ? 'connection_failed' : 'unconfigured',
+        message: database.error || 'Set DATABASE_URL in the server environment to connect PostgreSQL.'
       });
     }
     return res.json({
       success: true,
       status: 'connected',
-      message: 'Database / Firebase configuration validated.'
+      provider: 'PostgreSQL',
+      database: database.database,
+      serverVersion: database.serverVersion,
+      latencyMs: database.latencyMs,
+      message: 'PostgreSQL accepted a live SQL query. This verifies connectivity, not migration completion.'
     });
   }
 
