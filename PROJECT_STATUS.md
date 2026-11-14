@@ -107,3 +107,22 @@ This section records source-level findings on `feature/master-project-api-key-se
 | MP-WF-09 | Task Status / Notifications | Current UI can display logs/status supplied by frontend state; durable event-driven stage notifications are not yet verified. | Implementation pending |
 
 **Implementation order:** implement a truthful backend workflow contract and stage model first; connect the chat UI to server-returned stage events second; add independent verification and bounded repair third; add durable per-user workflow history only after the authentication/database foundation is in place. Preserve existing chat routes and modules. No deployment is authorized by this record.
+
+
+## 8. 24/7 Background Agent Infrastructure — First Implementation Step (2026-11-14)
+
+**Implemented on feature branch:** `migrations/20261114_001_agent_task_queue.sql` adds a PostgreSQL schema foundation for durable task records and append-only task events.
+
+The schema includes:
+- Original user prompt stored separately from the normalized task.
+- Owner-scoped task identity and idempotency key.
+- Queue lifecycle states: queued, running, waiting_approval, retry_wait, completed, failed, cancelled.
+- Priority, bounded retry count, worker lease owner/expiry, and scheduled availability.
+- Explicit human approval metadata for tasks requiring approval.
+- Per-task and per-owner event-history indexes.
+
+**Safety / activation boundary:** This is a committed SQL migration only. It has not been applied to a database, no database connection has been verified, and no background worker or 24/7 execution is active from this change. Do not expose task endpoints or start workers until application authentication, owner-level authorization, verified PostgreSQL connectivity, and worker claim/recovery logic are implemented and tested. Render persistent hosting/worker services and database provisioning remain separate deployment steps requiring user approval.
+
+| Issue ID | Module | Finding | Status |
+| :--- | :--- | :--- | :--- |
+| MP-WF-10 | Background Agent Queue / PostgreSQL | No durable task queue schema existed to preserve queued work, worker leases, retries, approvals, and task events across restarts. | SQL schema committed to feature branch; database migration not applied; runtime integration pending |
