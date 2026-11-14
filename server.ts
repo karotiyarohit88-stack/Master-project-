@@ -259,8 +259,8 @@ const capabilityRegistryStore = {
       name: 'Persistent Storage & Firestore/SQL',
       category: 'database' as const,
       purpose: 'Relational & document database persistence for users, jobs, and logs',
-      status: 'Working — verified' as const,
-      provider: 'Express Server In-Memory Store & Firebase Firestore Ready',
+      status: 'Needs configuration' as const,
+      provider: 'In-memory server store only; durable database connection not verified',
       supportedActions: ['Write Audit Log', 'Save Connection Credentials', 'Query Execution History'],
       lastTested: new Date().toISOString()
     },
@@ -269,8 +269,8 @@ const capabilityRegistryStore = {
       name: 'User Authentication & OAuth Gate',
       category: 'auth' as const,
       purpose: 'Multi-role authentication and human approval security authorization',
-      status: 'Working — verified' as const,
-      provider: 'Firebase Auth & Human Approval Gate Token',
+      status: 'Needs configuration' as const,
+      provider: 'Authentication implementation not present in inspected server routes',
       supportedActions: ['Google Sign In', 'Verify Operator Token', '2-Step Approval Enforcer'],
       lastTested: new Date().toISOString()
     }
