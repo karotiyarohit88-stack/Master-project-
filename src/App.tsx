@@ -351,10 +351,12 @@ I am your central AI assistant and command center. You can manage engineering ta
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt: trimmed || 'Image input provided for analysis',
+          prompt: trimmed || 'Please analyze the attached image.',
+          imageAttachment: imageAttachment || undefined,
           conversationHistory: currentMessages.map(m => ({
             role: m.role === 'assistant' ? 'model' : 'user',
-            content: m.content
+            // Do not resend embedded data URLs from earlier image messages as text history.
+            content: m.content.replace(/!\\[Uploaded Attachment\\]\\(data:[^)]+\\)/g, '[Earlier image attachment]')
           })),
           gitContext,
           targetLanguage: settings.selectedLanguage || 'auto'
