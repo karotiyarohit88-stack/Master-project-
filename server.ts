@@ -1882,7 +1882,7 @@ app.post('/api/chat', async (req: Request, res: Response) => {
     if (typeof imageAttachment !== 'string' || imageAttachment.length > 6_000_000) {
       return res.status(413).json({ error: 'Image attachment is too large. Please choose a smaller image.' });
     }
-    const imageMatch = imageAttachment.match(/^data:(image\\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/i);
+    const imageMatch = imageAttachment.match(/^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/i);
     if (!imageMatch) {
       return res.status(400).json({ error: 'Unsupported image attachment. Use JPEG, PNG, WEBP, or GIF.' });
     }
