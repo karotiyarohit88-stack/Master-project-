@@ -23,6 +23,29 @@ const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 app.use(express.json({ limit: '8mb' }));
 
+// Owner-only guard for credential/configuration mutation routes.
+// Configure AAKSH_ADMIN_TOKEN as a server-side secret (minimum 32 characters).
+// The token is never persisted by the browser UI; it stays in component memory.
+const requireAdminToken: express.RequestHandler = (req, res, next) => {
+  const expectedToken = process.env.AAKSH_ADMIN_TOKEN || '';
+  if (expectedToken.length < 32) {
+    return res.status(503).json({
+      error: 'Administrative security is not configured. Set AAKSH_ADMIN_TOKEN (minimum 32 characters) in the server environment before changing connection settings.'
+    });
+  }
+
+  const providedToken = req.header('x-aaksh-admin-token') || '';
+  const expected = Buffer.from(expectedToken, 'utf8');
+  const provided = Buffer.from(providedToken, 'utf8');
+  const matches = provided.length === expected.length && crypto.timingSafeEqual(provided, expected);
+
+  if (!matches) {
+    return res.status(401).json({ error: 'Administrative authorization required. Enter the configured AAKSH admin token.' });
+  }
+  return next();
+};
+
+
 // In-Memory Secure Store for Server Credentials & Config (Never sent unmasked to browser)
 const serverStore = {
   gemini: {
@@ -1273,7 +1296,7 @@ app.get('/api/connections', (req: Request, res: Response) => {
 });
 
 // POST /api/connections/save: Save connection settings on server (secrets never stored in localStorage)
-app.post('/api/connections/save', (req: Request, res: Response) => {
+app.post('/api/connections/save', requireAdminToken, (req: Request, res: Response) => {
   const { provider, config } = req.body;
 
   if (!provider || !config) {
@@ -1726,7 +1749,7 @@ app.post('/api/registry/test-connection', async (req: Request, res: Response) =>
 });
 
 // POST /api/registry/update: Update item status or config in capability registry
-app.post('/api/registry/update', (req: Request, res: Response) => {
+app.post('/api/registry/update', requireAdminToken, (req: Request, res: Response) => {
   const { id, status, requiredScopes } = req.body;
   if (!id || !status) {
     return res.status(400).json({ error: 'ID and status are required.' });
