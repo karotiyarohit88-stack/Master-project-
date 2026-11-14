@@ -170,7 +170,7 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 2. `npm run lint` (TypeScript no-emit check).
 3. `npm run build` (Vite production build).
 
-**Verification status:** workflow source was re-fetched from GitHub and matches the intended steps. The latest commit's GitHub combined-status response currently contains no status checks, so an executed CI result is not yet available. No build, typecheck, or runtime pass is claimed until the workflow actually reports completion.
+**Verification status (updated 2026-11-14):** GitHub Actions run `43591782467` completed successfully on the feature branch. The `npm ci`, `npm run lint` (TypeScript check), and `npm run build` steps all reported success. This verifies install, typecheck and production build only; it does not prove a live PostgreSQL connection, HTTP runtime behavior, or migration execution.
 
 ## 12. PostgreSQL Connection & Migration Runtime Foundation (2026-11-14)
 
