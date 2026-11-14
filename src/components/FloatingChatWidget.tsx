@@ -7,6 +7,7 @@ import {
   Maximize2, 
   Minimize2,
   ImageIcon, 
+  Camera,
   Mic, 
   MicOff, 
   XCircle, 
@@ -52,6 +53,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
   const [speechSupported, setSpeechSupported] = useState<boolean>(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
 
@@ -288,6 +290,14 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
                 onChange={handleImageChange}
                 className="hidden"
               />
+              <input
+                type="file"
+                ref={cameraInputRef}
+                accept="image/*"
+                capture="environment"
+                onChange={handleImageChange}
+                className="hidden"
+              />
 
               <button
                 type="button"
@@ -297,6 +307,16 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
                 title="Attach photo"
               >
                 <ImageIcon className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => cameraInputRef.current?.click()}
+                disabled={isLoading}
+                className="p-2 text-slate-500 hover:text-emerald-600 transition-colors rounded-xl hover:bg-slate-100 cursor-pointer flex-shrink-0"
+                title="Take a photo with your camera"
+                aria-label="Take a photo with your camera"
+              >
+                <Camera className="w-4 h-4" />
               </button>
 
               {speechSupported && (
