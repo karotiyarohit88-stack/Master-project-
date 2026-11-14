@@ -145,3 +145,19 @@ The server requires a minimum 32-character server-side token and compares it usi
 | Issue ID | Module | Finding | Status |
 | :--- | :--- | :--- | :--- |
 | MP-SEC-04 | Connections / Capability Registry API | Unauthenticated connection-secret mutation and capability-registry mutation/test routes were identified. | Targeted admin-token gate added to feature branch; full API route authorization and live verification pending |
+
+
+## 10. Application Identity & Session Schema Foundation (2026-11-14)
+
+**Implemented on feature branch:** added `migrations/20261114_002_application_auth.sql` with PostgreSQL tables for:
+- `app_users`: normalized unique email, password-hash field, role, account status, verification and login timestamps.
+- `app_sessions`: opaque session-token digest, session-bound CSRF-token digest, expiry/revocation and session metadata.
+- `app_invitations`: hashed one-time invitation tokens, invited email/role, expiry and acceptance/revocation state.
+
+**Security boundaries:** this is a database schema foundation only. No public registration or login endpoint has been added or enabled. The owner account must be provisioned through a controlled bootstrap path; public users cannot self-assign owner/admin roles. Password hashing, session cookie issuance/validation, CSRF enforcement, login rate limiting, invitation consumption, database connectivity, and owner-scoped route authorization still require implementation and runtime tests. Do not apply the migration or expose authentication routes until those controls are implemented and verified.
+
+**Dependency finding:** the current `package.json` and `package-lock.json` do not include a PostgreSQL client or an authentication/session library. Avoid importing an unavailable package or hand-editing the lockfile. The next implementation step must add a compatible database driver through a reproducible dependency install and update both manifests together, then verify `npm ci`, typecheck and build in CI/runtime.
+
+| Issue ID | Module | Finding | Status |
+| :--- | :--- | :--- | :--- |
+| MP-SEC-06 | Application Login / Identity / Sessions | No application login/register UI or server-side identity/session middleware was present in inspected source. | PostgreSQL schema foundation committed to feature branch; runtime auth, database driver, controlled owner bootstrap, UI, route authorization and tests pending |
