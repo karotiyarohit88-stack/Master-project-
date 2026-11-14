@@ -78,3 +78,32 @@ This section records source-level findings on `feature/master-project-api-key-se
 **Immediate security boundary:** do not expose this branch publicly or merge/deploy it until application authentication and server-side authorization protect all sensitive mutation, execution, approval, and credential routes. The existing webhook token check is specific to `/api/autopilot/webhook/:triggerId` and is not a substitute for application-user authentication.
 
 **Next safe engineering step:** map every sensitive route to its required role/permission and define a production-compatible session/database design before adding authentication code. Avoid a partial login screen or a client-only token check; neither protects the Express API.
+
+## 7. Chief AI Agent Workflow — Requirement & Source Audit (2026-11-14)
+
+**Requested outcome:** AAKSH Chief AI Agent in the existing chat must intake and clarify user instructions, normalize typo-heavy requests without changing intent, create an actionable plan, dispatch permitted work to an execution agent, independently verify results, route missing configuration/permissions to the user, notify on progress/blockers, and produce a final evidence-based chat report.
+
+**Required stages:**
+1. Chief Agent — parse the user's original request, preserve intent, identify ambiguity and safety boundaries.
+2. Planning Agent — produce ordered steps, affected modules/files, dependencies, acceptance criteria, and rollback plan.
+3. Configuration Agent — check existing settings and connector readiness; request only missing user-owned credentials/consents through secure settings/OAuth, never chat messages.
+4. Execution Agent — invoke real, allow-listed backend tools; no fabricated completion or simulated file changes.
+5. Independent Checking Agent — inspect actual outputs and run relevant checks; return failures to execution for bounded repair attempts.
+6. Notification Agent — publish stage changes, blockers, approval requests, and evidence links/status.
+7. Chief Agent — synthesize the verified outcome, list completed and pending items separately, and show exact files/tests/evidence in chat.
+
+**Safety and persistence requirements:** retain original request and normalized task separately; require explicit human approval for destructive changes, publishing, spending/paid API use, credential changes, and production deployment; never treat an AI agent's own approval as user approval. Each stage must have a truthful status and timestamp. Do not label a task completed/verified unless the corresponding action and check actually succeeded. Store workflow runs and audit events in durable, user-scoped storage before describing them as permanent.
+
+**Source findings:**
+- src/App.tsx initializes a local, hard-coded four-step workflow modal state (including pre-marked completed/running/waiting-approval stages). This is presentation state, not evidence of agents having run.
+- src/components/TaskWorkflowModal.tsx renders supplied steps/logs and advances via UI callbacks; it does not itself dispatch agent work or independently verify results.
+- server.ts /api/chat uses request classification and hard-coded task/proposal branches; standard conversational requests call Gemini. The inspected route does not yet implement the requested Chief → Planner → Config → Executor → Checker → Notification → Chief orchestration loop.
+- src/App.tsx chat sessions are persisted in browser localStorage; this is not server-side durable workflow/audit storage.
+
+| Issue ID | Module | Finding | Status |
+| :--- | :--- | :--- | :--- |
+| MP-WF-07 | Chat / Agent Orchestration (src/App.tsx, TaskWorkflowModal.tsx, server.ts) | Current workflow UI is not backed by a multi-agent execution and independent verification pipeline. | Source-confirmed; implementation pending |
+| MP-WF-08 | Chat / Workflow Persistence (src/App.tsx, server.ts) | Chat history is browser-local and no durable workflow-run store was verified. | Source-confirmed for localStorage; durable store pending |
+| MP-WF-09 | Task Status / Notifications | Current UI can display logs/status supplied by frontend state; durable event-driven stage notifications are not yet verified. | Implementation pending |
+
+**Implementation order:** implement a truthful backend workflow contract and stage model first; connect the chat UI to server-returned stage events second; add independent verification and bounded repair third; add durable per-user workflow history only after the authentication/database foundation is in place. Preserve existing chat routes and modules. No deployment is authorized by this record.
