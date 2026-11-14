@@ -119,7 +119,7 @@ async function runMigration(client: PoolClient, version: string, sql: string, ch
     // Existing migration files include their own transaction wrappers. Strip only
     // those wrappers so the migration record and DDL commit atomically together.
     const body = sql
-      .replace(/^\s*BEGIN\s*;?/i, '')
+      .replace(/\bBEGIN\s*;/i, '')
       .replace(/COMMIT\s*;?\s*$/i, '');
 
     await client.query(body);
