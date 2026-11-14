@@ -10,6 +10,7 @@ import crypto from 'crypto';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { GoogleGenAI } from '@google/genai';
+import { authRouter, initializeAuth, requireSession } from './auth.ts';
 
 const execAsync = promisify(exec);
 
@@ -21,7 +22,11 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+
+// Authentication routes remain public; every other /api route requires a valid DB session.
+app.use('/api/auth', authRouter);
+app.use('/api', requireSession);
 
 // In-Memory Secure Store for Server Credentials & Config (Never sent unmasked to browser)
 const serverStore = {
@@ -4247,6 +4252,7 @@ app.post('/api/github/commit', async (req: Request, res: Response) => {
 // SERVER LIFECYCLE & VITE MIDDLEWARE
 // -----------------------------------------------------------------------------
 async function start() {
+  await initializeAuth();
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
