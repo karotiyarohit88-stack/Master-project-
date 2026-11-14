@@ -21,7 +21,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: '8mb' }));
 
 // In-Memory Secure Store for Server Credentials & Config (Never sent unmasked to browser)
 const serverStore = {
@@ -1761,10 +1761,22 @@ app.post('/api/registry/update', (req: Request, res: Response) => {
 // CHAT API
 // -----------------------------------------------------------------------------
 app.post('/api/chat', async (req: Request, res: Response) => {
-  const { prompt, conversationHistory = [], gitContext, targetLanguage } = req.body;
+  const { prompt, imageAttachment, conversationHistory = [], gitContext, targetLanguage } = req.body;
 
   if (!prompt || typeof prompt !== 'string') {
     return res.status(400).json({ error: 'Prompt is required.' });
+  }
+
+  let imagePart: { inlineData: { mimeType: string; data: string } } | undefined;
+  if (imageAttachment !== undefined) {
+    if (typeof imageAttachment !== 'string' || imageAttachment.length > 6_000_000) {
+      return res.status(413).json({ error: 'Image attachment is too large. Please choose a smaller image.' });
+    }
+    const imageMatch = imageAttachment.match(/^data:(image\\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/i);
+    if (!imageMatch) {
+      return res.status(400).json({ error: 'Unsupported image attachment. Use JPEG, PNG, WEBP, or GIF.' });
+    }
+    imagePart = { inlineData: { mimeType: imageMatch[1].toLowerCase(), data: imageMatch[2] } };
   }
 
   const classification = classifyRequest(prompt);
@@ -2117,7 +2129,10 @@ ${isConsequential ? '#### 3. Safety Authorization:\nThis operation is consequent
 
     contents.push({
       role: 'user',
-      parts: [{ text: userPromptText }]
+      parts: [
+        { text: userPromptText },
+        ...(imagePart ? [imagePart] : [])
+      ]
     });
 
     let replyText = '';
