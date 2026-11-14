@@ -1365,7 +1365,7 @@ app.post('/api/connections/save', requireAdminToken, (req: Request, res: Respons
 });
 
 // POST /api/connections/test: Safely test connection reachability
-app.post('/api/connections/test', async (req: Request, res: Response) => {
+app.post('/api/connections/test', requireAdminToken, async (req: Request, res: Response) => {
   const { provider } = req.body;
 
   if (!provider) {
@@ -1692,7 +1692,7 @@ app.get('/api/registry', (req: Request, res: Response) => {
 });
 
 // POST /api/registry/test-connection: Run actual test check on a capability and update registry status
-app.post('/api/registry/test-connection', async (req: Request, res: Response) => {
+app.post('/api/registry/test-connection', requireAdminToken, async (req: Request, res: Response) => {
   const { id, type } = req.body;
   if (!id) {
     return res.status(400).json({ error: 'Item ID is required.' });
