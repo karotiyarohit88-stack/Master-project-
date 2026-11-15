@@ -28,7 +28,7 @@ window.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response>
   if (csrfCookie && !headers.has('X-CSRF-Token')) {
     headers.set('X-CSRF-Token', decodeURIComponent(csrfCookie.slice('aaksh_csrf='.length)));
   }
-  return nativeFetch(input, { ...init, credentials: init?.credentials || 'same-origin', headers });
+  return nativeFetch(input, { ...init, credentials: init?.credentials || 'same-origin', headers }).then(response => {\n    if (response.status === 401 && target.pathname.startsWith('/api/') && !target.pathname.startsWith('/api/auth/')) {\n      window.dispatchEvent(new Event('aaksh:session-expired'));\n    }\n    return response;\n  });
 };
 
 createRoot(document.getElementById('root')!).render(
