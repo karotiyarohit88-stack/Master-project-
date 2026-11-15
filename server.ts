@@ -11,6 +11,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { GoogleGenAI } from '@google/genai';
 import { applyPendingPostgresMigrations, checkPostgresConnection, getPostgresMigrationStatus } from './database.ts';
+import { createAuthRouter } from './auth.ts';
 
 const execAsync = promisify(exec);
 
@@ -23,6 +24,9 @@ const app = express();
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 app.use(express.json({ limit: '8mb' }));
+
+// Application authentication endpoints; legacy business routes remain unchanged in Phase 1.
+app.use('/api/auth', createAuthRouter());
 
 // Owner-only guard for credential/configuration mutation routes.
 // Configure AAKSH_ADMIN_TOKEN as a server-side secret (minimum 32 characters).
