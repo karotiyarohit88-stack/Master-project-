@@ -43,7 +43,12 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
     }
   }, []);
 
-  useEffect(() => {\n    void checkSession();\n    const handleExpired = () => { setUser(null); setMode('login'); setChecking(false); setNotice('Your session has expired. Please sign in again.'); };\n    window.addEventListener('aaksh:session-expired', handleExpired);\n    return () => window.removeEventListener('aaksh:session-expired', handleExpired);\n  }, [checkSession]);
+  useEffect(() => {
+    void checkSession();
+    const handleExpired = () => { setUser(null); setMode('login'); setChecking(false); setNotice('Your session has expired. Please sign in again.'); };
+    window.addEventListener('aaksh:session-expired', handleExpired);
+    return () => window.removeEventListener('aaksh:session-expired', handleExpired);
+  }, [checkSession]);
 
   const submitAuth = async (event: React.FormEvent) => {
     event.preventDefault();
