@@ -10,6 +10,8 @@ const SCRYPT_OPTIONS = { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 5;
 const loginAttempts = new Map<string, number[]>();
+const INVITATION_DEFAULT_HOURS = 72;
+const INVITATION_MAX_HOURS = 168;
 
 type AuthUser = {
   id: string;
@@ -22,6 +24,18 @@ type AuthSession = AuthUser & {
   session_id: string;
   csrf_token_hash: string;
   expires_at: string;
+};
+
+type QueryResult = { rows: any[] };
+type AuthDbClient = {
+  query: (sql: string, values?: any[]) => Promise<QueryResult>;
+  release: () => void;
+};
+type AuthDbPool = AuthDbClient & { connect: () => Promise<AuthDbClient> };
+
+type AuthRouterOptions = {
+  pool?: AuthDbPool | null;
+  adminToken?: string;
 };
 
 function deriveKey(password: string, salt: Buffer): Promise<Buffer> {
@@ -46,7 +60,6 @@ export async function verifyPassword(password: string, encodedHash: string): Pro
       !/^[a-f0-9]{32}$/i.test(parts[4]) || !/^[a-f0-9]{128}$/i.test(parts[5])) {
     return false;
   }
-
   try {
     const expected = Buffer.from(parts[5], 'hex');
     const actual = await deriveKey(password, Buffer.from(parts[4], 'hex'));
@@ -73,11 +86,8 @@ function parseCookies(header: string | undefined): Record<string, string> {
     if (separator < 1) continue;
     const name = part.slice(0, separator).trim();
     const rawValue = part.slice(separator + 1).trim();
-    try {
-      cookies[name] = decodeURIComponent(rawValue);
-    } catch {
-      cookies[name] = rawValue;
-    }
+    try { cookies[name] = decodeURIComponent(rawValue); }
+    catch { cookies[name] = rawValue; }
   }
   return cookies;
 }
@@ -87,12 +97,7 @@ function serializeCookie(
   value: string,
   options: { httpOnly?: boolean; secure: boolean; maxAge: number }
 ): string {
-  const parts = [
-    `${name}=${encodeURIComponent(value)}`,
-    'Path=/',
-    'SameSite=Lax',
-    `Max-Age=${options.maxAge}`
-  ];
+  const parts = [`${name}=${encodeURIComponent(value)}`, 'Path=/', 'SameSite=Lax', `Max-Age=${options.maxAge}`];
   if (options.httpOnly) parts.push('HttpOnly');
   if (options.secure) parts.push('Secure');
   return parts.join('; ');
@@ -106,19 +111,15 @@ function clearAuthCookies(res: Response, secure: boolean) {
 }
 
 function requestUsesSecureCookies(req: Request): boolean {
-  return process.env.NODE_ENV === 'production' ||
-    req.secure ||
+  return process.env.NODE_ENV === 'production' || req.secure ||
     req.get('x-forwarded-proto')?.split(',')[0].trim() === 'https';
 }
 
 function hasSameOrigin(req: Request): boolean {
   const origin = req.get('origin');
   if (!origin) return false;
-  try {
-    return new URL(origin).host === req.get('host');
-  } catch {
-    return false;
-  }
+  try { return new URL(origin).host === req.get('host'); }
+  catch { return false; }
 }
 
 function rejectCrossOriginIfPresent(req: Request, res: Response): boolean {
@@ -148,10 +149,7 @@ function isLoginRateLimited(key: string): { limited: boolean; retryAfterSeconds:
   }
   const attempts = loginAttempts.get(key) || [];
   if (attempts.length >= LOGIN_MAX_ATTEMPTS) {
-    return {
-      limited: true,
-      retryAfterSeconds: Math.max(1, Math.ceil((LOGIN_WINDOW_MS - (now - attempts[0])) / 1000))
-    };
+    return { limited: true, retryAfterSeconds: Math.max(1, Math.ceil((LOGIN_WINDOW_MS - (now - attempts[0])) / 1000)) };
   }
   return { limited: false, retryAfterSeconds: 0 };
 }
@@ -174,48 +172,50 @@ function validateCredentials(emailValue: unknown, passwordValue: unknown) {
   return { valid: true, email, password };
 }
 
-async function loadSession(req: Request): Promise<AuthSession | null> {
-  const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
-  if (!token || !/^[A-Za-z0-9_-]{40,60}$/.test(token)) return null;
-  const pool = getPostgresPool();
-  if (!pool) return null;
+function validateEmail(emailValue: unknown): string | null {
+  if (typeof emailValue !== 'string') return null;
+  const email = emailValue.trim().toLowerCase();
+  return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
+}
 
-  const result = await pool.query<AuthSession>(
+async function loadSession(pool: AuthDbPool | null, req: Request): Promise<AuthSession | null> {
+  const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+  if (!pool || !token || !/^[A-Za-z0-9_-]{40,60}$/.test(token)) return null;
+  const result = await pool.query(
     `SELECT s.id AS session_id, s.csrf_token_hash, s.expires_at,
             u.id, u.email, u.display_name, u.role
        FROM app_sessions s
        JOIN app_users u ON u.id = s.user_id
-      WHERE s.session_token_hash = $1
-        AND s.revoked_at IS NULL
-        AND s.expires_at > NOW()
-        AND u.status = 'active'
+      WHERE s.session_token_hash = $1 AND s.revoked_at IS NULL
+        AND s.expires_at > NOW() AND u.status = 'active'
       LIMIT 1`,
     [sha256(token)]
   );
-  return result.rows[0] || null;
+  return (result.rows[0] as AuthSession) || null;
 }
 
-const requireSession: RequestHandler = async (req, res, next) => {
-  try {
-    const session = await loadSession(req);
-    if (!session) {
-      clearAuthCookies(res, requestUsesSecureCookies(req));
-      res.status(401).json({ error: 'Authentication required.' });
-      return;
+function createRequireSession(pool: AuthDbPool | null): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      const session = await loadSession(pool, req);
+      if (!session) {
+        clearAuthCookies(res, requestUsesSecureCookies(req));
+        res.status(401).json({ error: 'Authentication required.' });
+        return;
+      }
+      res.locals.authSession = session;
+      next();
+    } catch {
+      res.status(503).json({ error: 'Authentication service is temporarily unavailable.' });
     }
-    res.locals.authSession = session;
-    next();
-  } catch {
-    res.status(503).json({ error: 'Authentication service is temporarily unavailable.' });
-  }
-};
+  };
+}
 
 const requireCsrf: RequestHandler = (req, res, next) => {
   const session = res.locals.authSession as AuthSession | undefined;
   const cookies = parseCookies(req.headers.cookie);
   const cookieToken = cookies[CSRF_COOKIE] || '';
   const headerToken = req.get('x-csrf-token') || '';
-
   if (!session || !hasSameOrigin(req) || !cookieToken ||
       !constantTimeTextEqual(cookieToken, headerToken) ||
       !constantTimeTextEqual(sha256(cookieToken), session.csrf_token_hash)) {
@@ -229,68 +229,59 @@ function publicUser(user: AuthUser) {
   return { id: user.id, email: user.email, displayName: user.display_name, role: user.role };
 }
 
-function isValidAdminBootstrapToken(providedToken: string): boolean {
-  const expectedToken = process.env.AAKSH_ADMIN_TOKEN || '';
-  return expectedToken.length >= 32 && constantTimeTextEqual(providedToken, expectedToken);
+function isValidAdminBootstrapToken(providedToken: string, configuredToken: string): boolean {
+  return configuredToken.length >= 32 && constantTimeTextEqual(providedToken, configuredToken);
 }
 
-export function createAuthRouter() {
+export function createAuthRouter(options: AuthRouterOptions = {}) {
   const router = Router();
+  const pool = options.pool === undefined
+    ? (getPostgresPool() as unknown as AuthDbPool | null)
+    : options.pool;
+  const adminToken = options.adminToken ?? process.env.AAKSH_ADMIN_TOKEN ?? '';
+  const requireSession = createRequireSession(pool);
 
   router.post('/bootstrap-owner', async (req: Request, res: Response) => {
     if (rejectCrossOriginIfPresent(req, res)) return;
-    if (!isValidAdminBootstrapToken(req.get('x-aaksh-admin-token') || '')) {
+    if (!isValidAdminBootstrapToken(req.get('x-aaksh-admin-token') || '', adminToken)) {
       res.status(401).json({ error: 'Administrative bootstrap authorization required.' });
       return;
     }
-
     const credentials = validateCredentials(req.body?.email, req.body?.password);
     const displayName = typeof req.body?.displayName === 'string' ? req.body.displayName.trim() : '';
     if (!credentials.valid || displayName.length < 1 || displayName.length > 100) {
       res.status(400).json({ error: 'Provide a valid email, a password of 12–128 characters, and a display name.' });
       return;
     }
-
-    const pool = getPostgresPool();
     if (!pool) {
       res.status(503).json({ error: 'PostgreSQL is not configured.' });
       return;
     }
 
-    let client;
+    let client: AuthDbClient | undefined;
     try {
       const passwordHash = await hashPassword(credentials.password);
       client = await pool.connect();
       await client.query('BEGIN');
       await client.query('LOCK TABLE app_users IN EXCLUSIVE MODE');
-      const count = await client.query<{ count: string }>('SELECT COUNT(*)::text AS count FROM app_users');
-      if (Number(count.rows[0]?.count || 0) !== 0) {
+      const owners = await client.query("SELECT COUNT(*)::text AS count FROM app_users WHERE role = 'owner'");
+      if (Number(owners.rows[0]?.count || 0) > 0) {
         await client.query('ROLLBACK');
-        res.status(409).json({ error: 'Owner bootstrap is permanently closed because an account already exists.' });
+        res.status(409).json({ error: 'Owner bootstrap is permanently closed because an Owner account already exists.' });
         return;
       }
-
-      const created = await client.query<AuthUser>(
+      const created = await client.query(
         `INSERT INTO app_users (email, password_hash, display_name, role, status, email_verified_at)
          VALUES ($1, $2, $3, 'owner', 'active', NOW())
          RETURNING id, email, display_name, role`,
         [credentials.email, passwordHash, displayName]
       );
       await client.query('COMMIT');
-      res.status(201).json({
-        success: true,
-        user: publicUser(created.rows[0]),
-        message: 'Owner account created. Sign in using the login endpoint.'
-      });
+      res.status(201).json({ success: true, user: publicUser(created.rows[0] as AuthUser), message: 'Owner account created. Sign in using the login endpoint.' });
     } catch (error) {
-      if (client) {
-        try { await client.query('ROLLBACK'); } catch { /* transaction may already be closed */ }
-      }
-      if ((error as { code?: string })?.code === '23505') {
-        res.status(409).json({ error: 'An account with this email already exists.' });
-      } else {
-        res.status(503).json({ error: 'Owner bootstrap could not be completed.' });
-      }
+      if (client) { try { await client.query('ROLLBACK'); } catch { /* transaction may already be closed */ } }
+      if ((error as { code?: string })?.code === '23505') res.status(409).json({ error: 'An account with this email already exists.' });
+      else res.status(503).json({ error: 'Owner bootstrap could not be completed.' });
     } finally {
       client?.release();
     }
@@ -303,7 +294,6 @@ export function createAuthRouter() {
       res.status(400).json({ error: 'Invalid email or password format.' });
       return;
     }
-
     const rateKey = getLoginRateLimitKey(req, credentials.email);
     const rate = isLoginRateLimited(rateKey);
     if (rate.limited) {
@@ -311,62 +301,40 @@ export function createAuthRouter() {
       res.status(429).json({ error: 'Too many sign-in attempts. Please try again later.' });
       return;
     }
-
-    const pool = getPostgresPool();
     if (!pool) {
       res.status(503).json({ error: 'Authentication database is unavailable.' });
       return;
     }
-
     try {
-      const result = await pool.query<AuthUser & { password_hash: string; status: string }>(
+      const result = await pool.query(
         `SELECT id, email, display_name, role, password_hash, status
-           FROM app_users
-          WHERE lower(trim(email)) = $1
-          LIMIT 1`,
+           FROM app_users WHERE lower(trim(email)) = $1 LIMIT 1`,
         [credentials.email]
       );
-      const user = result.rows[0];
+      const user = result.rows[0] as (AuthUser & { password_hash: string; status: string }) | undefined;
       const passwordMatches = user
         ? await verifyPassword(credentials.password, user.password_hash)
         : (await deriveKey(credentials.password, Buffer.from('aaksh-auth-dummy-salt', 'utf8'))).length === PASSWORD_KEY_LENGTH;
-
       if (!user || user.status !== 'active' || !passwordMatches) {
         recordFailedLogin(rateKey);
         res.status(401).json({ error: 'Email or password is incorrect.' });
         return;
       }
-
       const sessionToken = randomBytes(32).toString('base64url');
       const csrfToken = randomBytes(32).toString('base64url');
       const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
       await pool.query(
-        `INSERT INTO app_sessions
-          (user_id, session_token_hash, csrf_token_hash, expires_at, user_agent, ip_fingerprint)
+        `INSERT INTO app_sessions (user_id, session_token_hash, csrf_token_hash, expires_at, user_agent, ip_fingerprint)
          VALUES ($1, $2, $3, $4, $5, $6)`,
-        [
-          user.id,
-          sha256(sessionToken),
-          sha256(csrfToken),
-          expiresAt,
-          (req.get('user-agent') || '').slice(0, 300),
-          sha256(req.ip || req.socket.remoteAddress || 'unknown')
-        ]
+        [user.id, sha256(sessionToken), sha256(csrfToken), expiresAt, (req.get('user-agent') || '').slice(0, 300),
+          sha256(req.ip || req.socket.remoteAddress || 'unknown')]
       );
       await pool.query('UPDATE app_users SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1', [user.id]);
       loginAttempts.delete(rateKey);
-
       const secure = requestUsesSecureCookies(req);
       res.setHeader('Set-Cookie', [
-        serializeCookie(SESSION_COOKIE, sessionToken, {
-          httpOnly: true,
-          secure,
-          maxAge: Math.floor(SESSION_TTL_MS / 1000)
-        }),
-        serializeCookie(CSRF_COOKIE, csrfToken, {
-          secure,
-          maxAge: Math.floor(SESSION_TTL_MS / 1000)
-        })
+        serializeCookie(SESSION_COOKIE, sessionToken, { httpOnly: true, secure, maxAge: Math.floor(SESSION_TTL_MS / 1000) }),
+        serializeCookie(CSRF_COOKIE, csrfToken, { secure, maxAge: Math.floor(SESSION_TTL_MS / 1000) })
       ]);
       res.json({ success: true, user: publicUser(user), csrfToken, expiresAt: expiresAt.toISOString() });
     } catch {
@@ -382,19 +350,115 @@ export function createAuthRouter() {
   router.post('/logout', requireSession, requireCsrf, async (req: Request, res: Response) => {
     const session = res.locals.authSession as AuthSession;
     try {
-      const pool = getPostgresPool();
       if (!pool) {
         res.status(503).json({ error: 'Authentication database is unavailable.' });
         return;
       }
-      await pool.query(
-        'UPDATE app_sessions SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL',
-        [session.session_id]
-      );
+      await pool.query('UPDATE app_sessions SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL', [session.session_id]);
       clearAuthCookies(res, requestUsesSecureCookies(req));
       res.json({ success: true });
     } catch {
       res.status(503).json({ error: 'Logout could not be completed. Please retry.' });
+    }
+  });
+
+  router.post('/invitations', requireSession, requireCsrf, async (req: Request, res: Response) => {
+    const session = res.locals.authSession as AuthSession;
+    if (session.role !== 'owner') {
+      res.status(403).json({ error: 'Only the Owner can create invitations.' });
+      return;
+    }
+    const email = validateEmail(req.body?.email);
+    const role = req.body?.role === undefined ? 'member' : req.body.role;
+    const requestedHours = req.body?.expiresInHours === undefined ? INVITATION_DEFAULT_HOURS : Number(req.body.expiresInHours);
+    if (!email || (role !== 'admin' && role !== 'member') ||
+        !Number.isInteger(requestedHours) || requestedHours < 1 || requestedHours > INVITATION_MAX_HOURS) {
+      res.status(400).json({ error: 'Provide a valid email, role (admin/member), and expiry between 1 and 168 hours.' });
+      return;
+    }
+    if (!pool) {
+      res.status(503).json({ error: 'Authentication database is unavailable.' });
+      return;
+    }
+    try {
+      const token = randomBytes(32).toString('base64url');
+      const tokenHash = sha256(token);
+      const expiresAt = new Date(Date.now() + requestedHours * 60 * 60 * 1000);
+      const created = await pool.query(
+        `INSERT INTO app_invitations (email, role, invite_token_hash, created_by, expires_at)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, email, role, created_at, expires_at`,
+        [email, role, tokenHash, session.id, expiresAt]
+      );
+      res.status(201).json({
+        success: true,
+        invitation: created.rows[0],
+        invitationToken: token,
+        message: 'Copy this invitation token now. It will not be shown again.'
+      });
+    } catch (error) {
+      if ((error as { code?: string })?.code === '23505') {
+        res.status(409).json({ error: 'An active invitation or account already exists for this email.' });
+      } else {
+        res.status(503).json({ error: 'Invitation could not be created.' });
+      }
+    }
+  });
+
+  router.post('/accept-invitation', async (req: Request, res: Response) => {
+    if (rejectCrossOriginIfPresent(req, res)) return;
+    const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const displayName = typeof req.body?.displayName === 'string' ? req.body.displayName.trim() : '';
+    if (!/^[A-Za-z0-9_-]{40,60}$/.test(token) || password.length < 12 || password.length > 128 ||
+        password.includes('\u0000') || displayName.length < 1 || displayName.length > 100) {
+      res.status(400).json({ error: 'Provide a valid invitation token, a password of 12–128 characters, and a display name.' });
+      return;
+    }
+    if (!pool) {
+      res.status(503).json({ error: 'Authentication database is unavailable.' });
+      return;
+    }
+    let client: AuthDbClient | undefined;
+    try {
+      const passwordHash = await hashPassword(password);
+      client = await pool.connect();
+      await client.query('BEGIN');
+      const found = await client.query(
+        `SELECT id, email, role, expires_at, accepted_at, revoked_at
+           FROM app_invitations
+          WHERE invite_token_hash = $1
+          FOR UPDATE`,
+        [sha256(token)]
+      );
+      const invitation = found.rows[0] as {
+        id: string; email: string; role: 'admin' | 'member'; expires_at: string;
+        accepted_at: string | null; revoked_at: string | null;
+      } | undefined;
+      if (!invitation || invitation.accepted_at || invitation.revoked_at ||
+          new Date(invitation.expires_at).getTime() <= Date.now()) {
+        await client.query('ROLLBACK');
+        res.status(400).json({ error: 'Invitation is invalid, expired, revoked, or already used.' });
+        return;
+      }
+      const created = await client.query(
+        `INSERT INTO app_users (email, password_hash, display_name, role, status, email_verified_at)
+         VALUES ($1, $2, $3, $4, 'active', NOW())
+         RETURNING id, email, display_name, role`,
+        [invitation.email, passwordHash, displayName, invitation.role]
+      );
+      await client.query(
+        'UPDATE app_invitations SET accepted_at = NOW() WHERE id = $1 AND accepted_at IS NULL AND revoked_at IS NULL',
+        [invitation.id]
+      );
+      await client.query('COMMIT');
+      res.status(201).json({ success: true, user: publicUser(created.rows[0] as AuthUser) });
+    } catch (error) {
+      if (client) { try { await client.query('ROLLBACK'); } catch { /* transaction may already be closed */ } }
+      if ((error as { code?: string })?.code === '23505') res.status(409).json({ error: 'An account with this email already exists.' });
+      else res.status(503).json({ error: 'Invitation could not be accepted.' });
+    } finally {
+      client?.release();
     }
   });
 
