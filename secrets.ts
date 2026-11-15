@@ -34,62 +34,21 @@ const TABLE_DDL = `
   )
 `;
 
-let schemaReady = false;
-let schemaPromise: Promise<void> | null = null;
-
-function getEncryptionKey(configuredKey: string): Buffer {
-  const value = configuredKey.trim();
-  let key: Buffer;
-  if (/^[a-f0-9]{64}$/i.test(value)) key = Buffer.from(value, 'hex');
-  else {
-    try { key = Buffer.from(value, 'base64'); }
-    catch { throw new Error('AAKSH_SECRETS_ENCRYPTION_KEY must be a 32-byte base64 or 64-character hex value.'); }
-  }
-  if (key.length !== 32) {
-    throw new Error('AAKSH_SECRETS_ENCRYPTION_KEY must decode to exactly 32 bytes.');
-  }
-  return key;
-}
-
-export function maskSecret(secret: string): string {
-  if (secret.length <= 8) return '••••••••';
-  return `${secret.slice(0, 3)}...${secret.slice(-4)}`;
-}
-
-export function encryptSecret(secret: string, key: Buffer, associatedData: string): EncryptedSecret {
-  if (key.length !== 32) throw new Error('AES-256-GCM requires a 32-byte key.');
-  const nonce = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, nonce);
-  cipher.setAAD(Buffer.from(associatedData, 'utf8'));
-  const ciphertext = Buffer.concat([cipher.update(secret, 'utf8'), cipher.final()]);
-  return {
-    ciphertext: ciphertext.toString('base64'),
-    nonce: nonce.toString('base64'),
-    authTag: cipher.getAuthTag().toString('base64')
-  };
-}
-
-export function decryptSecret(encrypted: EncryptedSecret, key: Buffer, associatedData: string): string {
-  if (key.length !== 32) throw new Error('AES-256-GCM requires a 32-byte key.');
-  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(encrypted.nonce, 'base64'));
-  decipher.setAAD(Buffer.from(associatedData, 'utf8'));
-  decipher.setAuthTag(Buffer.from(encrypted.authTag, 'base64'));
-  return Buffer.concat([
-    decipher.update(Buffer.from(encrypted.ciphertext, 'base64')),
-    decipher.final()
-  ]).toString('utf8');
-}
+const schemaReadyPools = new WeakSet<object>();
+const schemaPromises = new WeakMap<object, Promise<void>>();
 
 async function ensureSecretsTable(pool: SecretsDbPool): Promise<void> {
-  if (schemaReady) return;
-  if (!schemaPromise) {
-    schemaPromise = (async () => {
+  if (schemaReadyPools.has(pool)) return;
+  let pending = schemaPromises.get(pool);
+  if (!pending) {
+    pending = (async () => {
       await pool.query(TABLE_DDL);
       await pool.query('CREATE INDEX IF NOT EXISTS app_secrets_owner_active_idx ON app_secrets (owner_id, created_at DESC) WHERE revoked_at IS NULL');
-      schemaReady = true;
-    })().finally(() => { schemaPromise = null; });
+      schemaReadyPools.add(pool);
+    })().finally(() => { schemaPromises.delete(pool); });
+    schemaPromises.set(pool, pending);
   }
-  await schemaPromise;
+  await pending;
 }
 
 function safeError(res: Response, error: unknown) {
