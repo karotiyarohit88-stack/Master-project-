@@ -12,6 +12,7 @@ import { promisify } from 'util';
 import { GoogleGenAI } from '@google/genai';
 import { applyPendingPostgresMigrations, checkPostgresConnection, getPostgresMigrationStatus } from './database.ts';
 import { createAuthGuards, createAuthRouter } from './auth.ts';
+import { createSecretsRouter } from './secrets.ts';
 
 const execAsync = promisify(exec);
 
@@ -70,6 +71,12 @@ app.use('/api', (req, res, next) => {
   if (!ownerOnly) return next();
   return requireOwner(req, res, next);
 });
+
+// Secret Manager: all routes require an authenticated Owner; mutations also require CSRF.
+app.use('/api/secrets', requireOwner, (req, res, next) => {
+  if (req.method === 'GET') return next();
+  return authGuards.requireCsrf(req, res, next);
+}, createSecretsRouter());
 
 // Owner-only guard for credential/configuration mutation routes.
 // Configure AAKSH_ADMIN_TOKEN as a server-side secret (minimum 32 characters).
