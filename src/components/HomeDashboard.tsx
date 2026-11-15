@@ -31,6 +31,7 @@ import {
   Clock
 } from 'lucide-react';
 import { AppView, ServerHealth, TaskStatus } from '../types';
+import { SecretManagerPanel } from './SecretManagerPanel';
 
 interface HomeDashboardProps {
   onSelectView: (view: AppView) => void;
@@ -652,6 +653,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
         </div>
       </div>
 
+      <SecretManagerPanel />
     </div>
   );
 };
