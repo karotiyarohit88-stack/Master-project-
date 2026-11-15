@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { LockKeyhole, LogIn, UserPlus, ShieldCheck, LogOut, Copy, Users, LoaderCircle, AlertCircle } from 'lucide-react';
 
 type AuthUser = { id: string; email: string; displayName: string; role: 'owner' | 'admin' | 'member' };
@@ -43,7 +43,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
     }
   }, []);
 
-  useEffect(() => { void checkSession(); }, [checkSession]);
+  useEffect(() => {\n    void checkSession();\n    const handleExpired = () => { setUser(null); setMode('login'); setChecking(false); setNotice('Your session has expired. Please sign in again.'); };\n    window.addEventListener('aaksh:session-expired', handleExpired);\n    return () => window.removeEventListener('aaksh:session-expired', handleExpired);\n  }, [checkSession]);
 
   const submitAuth = async (event: React.FormEvent) => {
     event.preventDefault();
