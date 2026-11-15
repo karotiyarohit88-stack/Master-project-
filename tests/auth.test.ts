@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import { createHash } from 'node:crypto';
-import { createAuthRouter, hashPassword } from '../auth.ts';
+import { createAuthGuards, createAuthRouter, hashPassword } from '../auth.ts';
 
 type Row = Record<string, any>;
 
@@ -283,6 +283,49 @@ test('non-Owner authenticated account cannot create invitations', async () => {
     });
     assert.equal(denied.status, 403);
     assert.equal(db.invitations.length, 1);
+  });
+});
+
+test('route authorization rejects anonymous requests, blocks non-Owners, and permits the Owner', async () => {
+  await withServer(async (baseUrl, db) => {
+    const guards = createAuthGuards({ pool: db });
+    const app = express();
+    app.use(express.json());
+    app.get('/protected', guards.requireSession, (_req, res) => res.json({ allowed: true }));
+    app.get('/owner-only', guards.requireSession, guards.requireRole('owner'), (_req, res) => res.json({ allowed: true }));
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Guard test server did not bind a TCP port.');
+    const guardUrl = `http://127.0.0.1:${address.port}`;
+    try {
+      const anonymous = await fetch(`${guardUrl}/protected`);
+      assert.equal(anonymous.status, 401);
+
+      await bootstrap(baseUrl);
+      db.users.push({
+        id: 'member-1', email: 'member@example.test', display_name: 'Member',
+        role: 'member', status: 'active', password_hash: await hashPassword('MemberPassword!234')
+      });
+      const memberLogin = await login(baseUrl, 'member@example.test', 'MemberPassword!234');
+      const memberCookies = memberLogin.headers.get('set-cookie') || '';
+      const memberSession = cookieValue(memberCookies, 'aaksh_session');
+      const memberDenied = await fetch(`${guardUrl}/owner-only`, {
+        headers: { cookie: `aaksh_session=${memberSession}` }
+      });
+      assert.equal(memberDenied.status, 403);
+
+      const ownerLogin = await login(baseUrl, 'owner@example.test', 'OwnerPassword!234');
+      const ownerCookies = ownerLogin.headers.get('set-cookie') || '';
+      const ownerSession = cookieValue(ownerCookies, 'aaksh_session');
+      const ownerAllowed = await fetch(`${guardUrl}/owner-only`, {
+        headers: { cookie: `aaksh_session=${ownerSession}` }
+      });
+      assert.equal(ownerAllowed.status, 200);
+      assert.deepEqual(await ownerAllowed.json(), { allowed: true });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
   });
 });
 

@@ -11,7 +11,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { GoogleGenAI } from '@google/genai';
 import { applyPendingPostgresMigrations, checkPostgresConnection, getPostgresMigrationStatus } from './database.ts';
-import { createAuthRouter } from './auth.ts';
+import { createAuthGuards, createAuthRouter } from './auth.ts';
 
 const execAsync = promisify(exec);
 
@@ -27,6 +27,49 @@ app.use(express.json({ limit: '8mb' }));
 
 // Application authentication endpoints; legacy business routes remain unchanged in Phase 1.
 app.use('/api/auth', createAuthRouter());
+
+const authGuards = createAuthGuards();
+const requireSession = authGuards.requireSession;
+const requireOwner = authGuards.requireRole('owner');
+
+// All API routes require an application session except the public health probe,
+// the auth router (which applies endpoint-specific controls), and the existing
+// shared-secret AutoPilot webhook.
+app.use('/api', (req, res, next) => {
+  const publicHealth = req.path === '/health';
+  const authEndpoint = req.path === '/auth' || req.path.startsWith('/auth/');
+  const sharedSecretWebhook = req.method === 'POST' && /^\/autopilot\/webhook\/[^/]+$/.test(req.path);
+  if (publicHealth || authEndpoint || sharedSecretWebhook) return next();
+  return requireSession(req, res, next);
+});
+
+// Owner role is required for configuration, credential, approval, and publishing
+// mutations. Ordinary authenticated members retain access to non-admin workflows.
+app.use('/api', (req, res, next) => {
+  const path = req.path;
+  const method = req.method;
+  const ownerOnly =
+    (method === 'POST' && [
+      /^\/connections\/(save|test)$/,
+      /^\/registry\/(test-connection|update)$/,
+      /^\/autopilot\/config$/,
+      /^\/autopilot\/workflows$/,
+      /^\/autopilot\/workflows\/[^/]+\/(toggle|run)$/,
+      /^\/autopilot\/queue\/[^/]+\/(pause|resume|stop)$/,
+      /^\/autopilot\/executions\/[^/]+\/(approve|retry)$/,
+      /^\/publishing\/(approve|publish)$/,
+      /^\/github\/auth\/(token|disconnect)$/,
+      /^\/github\/select$/,
+      /^\/github\/commit$/,
+      /^\/approve-action$/,
+      /^\/project\/(apply-proposal|reject-proposal)$/,
+      /^\/automation\/trigger$/
+    ].some((pattern) => pattern.test(path))) ||
+    (method === 'PUT' && /^\/autopilot\/workflows\/[^/]+$/.test(path)) ||
+    (method === 'DELETE' && /^\/autopilot\/workflows\/[^/]+$/.test(path));
+  if (!ownerOnly) return next();
+  return requireOwner(req, res, next);
+});
 
 // Owner-only guard for credential/configuration mutation routes.
 // Configure AAKSH_ADMIN_TOKEN as a server-side secret (minimum 32 characters).
@@ -1382,7 +1425,7 @@ app.get('/api/connections', async (req: Request, res: Response) => {
 });
 
 // POST /api/connections/save: Save connection settings on server (secrets never stored in localStorage)
-app.post('/api/connections/save', requireAdminToken, (req: Request, res: Response) => {
+app.post('/api/connections/save', requireOwner, (req: Request, res: Response) => {
   const { provider, config } = req.body;
 
   if (!provider || !config) {
@@ -1451,7 +1494,7 @@ app.post('/api/connections/save', requireAdminToken, (req: Request, res: Respons
 });
 
 // POST /api/connections/test: Safely test connection reachability
-app.post('/api/connections/test', requireAdminToken, async (req: Request, res: Response) => {
+app.post('/api/connections/test', requireOwner, async (req: Request, res: Response) => {
   const { provider } = req.body;
 
   if (!provider) {
@@ -1783,7 +1826,7 @@ app.get('/api/registry', (req: Request, res: Response) => {
 });
 
 // POST /api/registry/test-connection: Run actual test check on a capability and update registry status
-app.post('/api/registry/test-connection', requireAdminToken, async (req: Request, res: Response) => {
+app.post('/api/registry/test-connection', requireOwner, async (req: Request, res: Response) => {
   const { id, type } = req.body;
   if (!id) {
     return res.status(400).json({ error: 'Item ID is required.' });
@@ -1840,7 +1883,7 @@ app.post('/api/registry/test-connection', requireAdminToken, async (req: Request
 });
 
 // POST /api/registry/update: Update item status or config in capability registry
-app.post('/api/registry/update', requireAdminToken, (req: Request, res: Response) => {
+app.post('/api/registry/update', requireOwner, (req: Request, res: Response) => {
   const { id, status, requiredScopes } = req.body;
   if (!id || !status) {
     return res.status(400).json({ error: 'ID and status are required.' });

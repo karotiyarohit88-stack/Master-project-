@@ -225,6 +225,30 @@ const requireCsrf: RequestHandler = (req, res, next) => {
   next();
 };
 
+export function createAuthGuards(options: AuthRouterOptions = {}) {
+  const pool = options.pool === undefined
+    ? (getPostgresPool() as unknown as AuthDbPool | null)
+    : options.pool;
+  return {
+    requireSession: createRequireSession(pool),
+    requireRole(role: AuthUser['role']): RequestHandler {
+      return (_req, res, next) => {
+        const session = res.locals.authSession as AuthSession | undefined;
+        if (!session) {
+          res.status(401).json({ error: 'Authentication required.' });
+          return;
+        }
+        if (session.role !== role) {
+          res.status(403).json({ error: 'Insufficient role for this action.' });
+          return;
+        }
+        next();
+      };
+    },
+    requireCsrf
+  };
+}
+
 function publicUser(user: AuthUser) {
   return { id: user.id, email: user.email, displayName: user.display_name, role: user.role };
 }
