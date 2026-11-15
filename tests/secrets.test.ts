@@ -9,7 +9,7 @@ type Row = Record<string, any>;
 const OWNER_ID = '11111111-1111-4111-8111-111111111111';
 const MEMBER_ID = '22222222-2222-4222-8222-222222222222';
 const OWNER_SESSION = 'owner-session-token-value-123456789012345';
-const MEMBER_SESSION = 'member-session-token-value-123456789012';
+const MEMBER_SESSION = 'member-session-token-value-12345678901234';
 const CSRF_TOKEN = 'csrf-token-value-123456789012345678901234';
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 
