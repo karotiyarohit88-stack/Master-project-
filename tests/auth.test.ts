@@ -86,6 +86,9 @@ class MemoryAuthDb {
       release: () => undefined
     };
   }
+  release(): void {
+    // Pool-level release is a no-op for this in-memory test double.
+  }
 }
 
 const ADMIN_TOKEN = 'test-only-admin-token-with-more-than-32-characters';
