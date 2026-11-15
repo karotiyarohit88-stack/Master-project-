@@ -37,5 +37,8 @@ jobs:
       - name: TypeScript check
         run: npm run lint
 
+      - name: Authentication unit tests
+        run: npm test
+
       - name: Production build
         run: npm run build
