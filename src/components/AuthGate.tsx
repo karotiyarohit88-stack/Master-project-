@@ -58,11 +58,11 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
     try {
       let endpoint = '/api/auth/login';
       let payload: Record<string, string> = { email, password };
-      let headers: HeadersInit = { 'Content-Type': 'application/json' };
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (mode === 'bootstrap') {
         endpoint = '/api/auth/bootstrap-owner';
         payload = { email, password, displayName };
-        headers = { ...headers, 'X-AAKSH-Admin-Token': adminToken };
+        headers['X-AAKSH-Admin-Token'] = adminToken;
       } else if (mode === 'invite') {
         endpoint = '/api/auth/accept-invitation';
         payload = { token: inviteToken, password, displayName };
