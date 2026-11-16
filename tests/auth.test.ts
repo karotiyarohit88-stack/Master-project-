@@ -121,16 +121,6 @@ async function bootstrap(url: string, email = 'owner@example.test') {
   return post(url, 'bootstrap-owner', { email, password: 'OwnerPassword!234', displayName: 'Test Owner' }, { 'x-aaksh-admin-token': ADMIN_TOKEN });
 }
 async function verify(url: string, challengeToken: string, otp: string) { return post(url, 'verify-otp', { challengeToken, otp }); }
-async function ownerSession(url: string) {
-  const start = await bootstrap(url); assert.equal(start.status, 202);
-  const data = await start.json() as Row;
-  const done = await verify(url, data.challengeToken, (await withLastCode(data, url)) as string);
-  return done;
-}
-// The sender is captured by the in-memory DB; helpers below keep the flow explicit.
-async function startOwner(url: string) {
-  const response = await bootstrap(url); const body = await response.json() as Row; return { response, body };
-}
 function latestCode(db: MemoryAuthDb) { const code = db.sentCodes.at(-1); assert.ok(code); return code!; }
 
 test('bootstrap Owner is created only after OTP verification and closes permanently', async () => withServer(async (url, db) => {
@@ -147,10 +137,16 @@ test('login issues OTP and creates no session until successful verification; me/
   assert.equal((await verify(url, bootBody.challengeToken, latestCode(db))).status, 200);
   const start = await post(url, 'login', { email: 'owner@example.test', password: 'OwnerPassword!234' });
   assert.equal(start.status, 202); assert.equal(db.sessions.length, 1);
-  const body = await start.json() as Row; assert.equal((await verify(url, body.challengeToken, latestCode(db))).status, 200);
-  assert.equal(db.sessions.length, 2);
-  const sessionResponse = await fetch(`${url}/api/auth/me`, { headers: { cookie: `aaksh_session=${cookie(sessionResponseCookie(db), 'aaksh_session')}` } }).catch(() => null);
-  assert.ok(sessionResponse === null || sessionResponse.status === 401);
+  const body = await start.json() as Row;
+  const verified = await verify(url, body.challengeToken, latestCode(db));
+  assert.equal(verified.status, 200); assert.equal(db.sessions.length, 2);
+  const setCookie = verified.headers.get('set-cookie') || '';
+  const cookies = `aaksh_session=${cookie(setCookie, 'aaksh_session')}; aaksh_csrf=${cookie(setCookie, 'aaksh_csrf')}`;
+  const verifiedBody = await verified.json() as Row;
+  const me = await fetch(`${url}/api/auth/me`, { headers: { cookie: cookies } });
+  assert.equal(me.status, 200); assert.equal((await me.json() as Row).user.email, 'owner@example.test');
+  assert.equal((await post(url, 'logout', {}, { cookie: cookies, origin: url, 'x-csrf-token': 'bad' })).status, 403);
+  assert.equal((await post(url, 'logout', {}, { cookie: cookies, origin: url, 'x-csrf-token': verifiedBody.csrfToken })).status, 200);
 }));
 test('login rejects incorrect credentials without revealing account existence', async () => withServer(async url => {
   const a = await post(url, 'login', { email: 'known@example.test', password: 'WrongPassword!234' });
