@@ -35,6 +35,8 @@ interface FloatingChatWidgetProps {
   onLanguageChange?: (lang: string) => void;
   voiceAssistantEnabled?: boolean;
   onVoiceAssistantToggle?: () => void;
+  safetyControlsEnabled?: boolean;
+  onSafetyControlsToggle?: () => void;
 }
 
 export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
@@ -48,7 +50,9 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
   selectedLanguage = 'auto',
   onLanguageChange,
   voiceAssistantEnabled = false,
-  onVoiceAssistantToggle
+  onVoiceAssistantToggle,
+  safetyControlsEnabled = false,
+  onSafetyControlsToggle
 }) => {
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [input, setInput] = useState<string>('');
@@ -87,14 +91,14 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!voiceAssistantEnabled && isListening) {
+    if ((!voiceAssistantEnabled || !safetyControlsEnabled) && isListening) {
       recognitionRef.current?.stop();
       setIsListening(false);
     }
-  }, [voiceAssistantEnabled, isListening]);
+  }, [voiceAssistantEnabled, safetyControlsEnabled, isListening]);
 
   const toggleMic = () => {
-    if (!voiceAssistantEnabled || !recognitionRef.current) return;
+    if (!safetyControlsEnabled || !voiceAssistantEnabled || !recognitionRef.current) return;
     if (isListening) {
       recognitionRef.current.stop();
       setIsListening(false);
@@ -178,10 +182,16 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
               </div>
             </div>
 
-            <div data-safety-controls-slot="true" className="flex items-center gap-1 flex-shrink-0" aria-label="Voice assistant safety controls">
+            <div data-safety-controls-slot="true" className="flex items-center gap-1 flex-shrink-0" aria-label="Voice assistant and AutoPilot safety controls">
+              {onSafetyControlsToggle && (
+                <button type="button" onClick={onSafetyControlsToggle} aria-pressed={safetyControlsEnabled} title={safetyControlsEnabled ? 'Turn Safety & Security OFF — return to Safe Chat-Only Mode' : 'Turn Safety & Security ON — allow approved voice and AutoPilot controls'} className={`inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-bold border transition-colors ${safetyControlsEnabled ? 'bg-white text-emerald-800 border-white' : 'bg-amber-100 text-amber-900 border-amber-200'}`}>
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>Safety {safetyControlsEnabled ? 'ON' : 'OFF'}</span>
+                </button>
+              )}
               {onVoiceAssistantToggle && (
-                <button type="button" onClick={onVoiceAssistantToggle} aria-pressed={voiceAssistantEnabled} title="Voice Assistant ON/OFF — chat remains available when OFF" className={`px-2 py-1.5 rounded-lg text-[10px] font-bold border transition-colors ${voiceAssistantEnabled ? 'bg-white text-emerald-800 border-white' : 'bg-white/15 text-white border-white/30'}`}>
-                  {voiceAssistantEnabled ? 'Voice ON' : 'Voice OFF'}
+                <button type="button" onClick={onVoiceAssistantToggle} disabled={!safetyControlsEnabled} aria-pressed={Boolean(voiceAssistantEnabled && safetyControlsEnabled)} title={!safetyControlsEnabled ? 'Enable Safety & Security first' : 'Voice Assistant ON/OFF'} className={`px-2 py-1.5 rounded-lg text-[10px] font-bold border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${voiceAssistantEnabled && safetyControlsEnabled ? 'bg-white text-emerald-800 border-white' : 'bg-white/15 text-white border-white/30'}`}>
+                  {voiceAssistantEnabled && safetyControlsEnabled ? 'Voice ON' : 'Voice OFF'}
                 </button>
               )}
             </div>
@@ -245,7 +255,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
             ) : (
               <span className="truncate">Type commands to run workflows or query AI agent</span>
             )}
-            <span className="font-bold text-emerald-700 flex-shrink-0">● Active</span>
+            <span className={`font-bold flex-shrink-0 ${safetyControlsEnabled ? 'text-emerald-700' : 'text-amber-700'}`}>{safetyControlsEnabled ? '● Safety Enabled' : '● Safe Chat-Only Mode'}</span>
           </div>
 
           {/* Chat Messages Area */}
