@@ -27,7 +27,8 @@ import {
   Trash2,
   Sparkles,
   Lock,
-  Layers
+  Layers,
+  Mic
 } from 'lucide-react';
 import { 
   AutoPilotJob, 
@@ -38,7 +39,7 @@ import {
   WorkflowToolId 
 } from '../types';
 
-export const AutoPilotCenter: React.FC = () => {
+export const AutoPilotCenter: React.FC<{ voiceAssistantEnabled?: boolean }> = ({ voiceAssistantEnabled = false }) => {
   // Navigation & View States
   const [activeTab, setActiveTab] = useState<'workflows' | 'history' | 'queue' | 'trigger' | 'config'>('workflows');
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -84,6 +85,9 @@ export const AutoPilotCenter: React.FC = () => {
   const [manualTopic, setManualTopic] = useState<string>('');
   const [copiedWebhook, setCopiedWebhook] = useState<boolean>(false);
   const [copiedCurl, setCopiedCurl] = useState<boolean>(false);
+  const [pendingVoiceConfig, setPendingVoiceConfig] = useState<AutoPilotConfig | null>(null);
+  const [voiceCommandStatus, setVoiceCommandStatus] = useState<string>('');
+  const [isListeningForCommand, setIsListeningForCommand] = useState<boolean>(false);
 
   // Fetch all data
   const fetchData = async () => {
@@ -338,6 +342,77 @@ export const AutoPilotCenter: React.FC = () => {
     }
   };
 
+  const startAutoPilotVoiceCommand = () => {
+    if (!voiceAssistantEnabled) {
+      setVoiceCommandStatus('Turn Voice Assistant ON in Chat or Settings first.');
+      return;
+    }
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setVoiceCommandStatus('Voice recognition is not supported by this browser.');
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    setIsListeningForCommand(true);
+    setVoiceCommandStatus('Listening for a scheduled-task command...');
+    recognition.onresult = (event: any) => {
+      const transcript = String(event.results?.[0]?.[0]?.transcript || '').toLowerCase().trim();
+      let nextConfig: AutoPilotConfig | null = null;
+      if (/\b(pause|stop)\s+(the\s+)?autopilot\b/.test(transcript)) {
+        nextConfig = { ...config, isRunning: false };
+      } else if (/\b(start|resume)\s+(the\s+)?autopilot\b/.test(transcript)) {
+        nextConfig = { ...config, isRunning: true };
+      } else if (/\b(hourly|every hour)\b/.test(transcript)) {
+        nextConfig = { ...config, frequency: 'hourly' };
+      } else if (/\b(daily|every day)\b/.test(transcript)) {
+        nextConfig = { ...config, frequency: 'daily' };
+      } else if (/\b(every six hours|every 6 hours|six hourly)\b/.test(transcript)) {
+        nextConfig = { ...config, frequency: 'every_6_hours' };
+      } else if (/\b(manual only|manual mode)\b/.test(transcript)) {
+        nextConfig = { ...config, frequency: 'manual_only' };
+      }
+      if (nextConfig) {
+        setPendingVoiceConfig(nextConfig);
+        setVoiceCommandStatus('Heard: "' + transcript + '". Review and confirm the change below.');
+      } else {
+        setVoiceCommandStatus('Command not recognized. Try: pause AutoPilot, resume AutoPilot, or set schedule daily.');
+      }
+    };
+    recognition.onerror = () => {
+      setIsListeningForCommand(false);
+      setVoiceCommandStatus('Voice command failed. Check microphone permission and try again.');
+    };
+    recognition.onend = () => setIsListeningForCommand(false);
+    try {
+      recognition.start();
+    } catch {
+      setIsListeningForCommand(false);
+      setVoiceCommandStatus('Microphone could not start. Try again.');
+    }
+  };
+
+  const confirmVoiceConfig = async () => {
+    if (!pendingVoiceConfig) return;
+    try {
+      const response = await fetch('/api/autopilot/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pendingVoiceConfig)
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not update AutoPilot settings.');
+      setConfig(pendingVoiceConfig);
+      setPendingVoiceConfig(null);
+      setVoiceCommandStatus('AutoPilot schedule settings updated after your confirmation.');
+      fetchData();
+    } catch (error: any) {
+      setVoiceCommandStatus(error?.message || 'Could not update AutoPilot settings.');
+    }
+  };
+
   const curlCommand = `curl -X POST "${webhookUrl}" \\
   -H "Content-Type: application/json" \\
   -H "x-autopilot-token: ${webhookSecretMasked || 'YOUR_SECRET'}" \\
@@ -367,6 +442,28 @@ export const AutoPilotCenter: React.FC = () => {
 
           {/* Action Header Controls */}
           <div className="flex items-center gap-2 flex-wrap">
+            {voiceCommandStatus && (
+              <div className="w-full basis-full rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-[11px] text-emerald-900">
+                <p>{voiceCommandStatus}</p>
+                {pendingVoiceConfig && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className="font-semibold">Confirm: {pendingVoiceConfig.isRunning !== config.isRunning ? (pendingVoiceConfig.isRunning ? 'Resume AutoPilot' : 'Pause AutoPilot') : 'Change schedule to ' + pendingVoiceConfig.frequency}</span>
+                    <button type="button" onClick={confirmVoiceConfig} className="rounded-md bg-emerald-700 px-2.5 py-1 text-white font-semibold">Confirm</button>
+                    <button type="button" onClick={() => setPendingVoiceConfig(null)} className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-slate-700">Cancel</button>
+                  </div>
+                )}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={startAutoPilotVoiceCommand}
+              disabled={!voiceAssistantEnabled || isListeningForCommand}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-semibold disabled:opacity-50"
+              title="Voice commands require Voice Assistant to be ON"
+            >
+              <Mic className="w-4 h-4" />
+              {isListeningForCommand ? 'Listening...' : 'Voice command'}
+            </button>
             <button
               type="button"
               onClick={handleOpenBuilder}
