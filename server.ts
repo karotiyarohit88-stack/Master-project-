@@ -14,6 +14,7 @@ import { applyPendingPostgresMigrations, checkPostgresConnection, getPostgresMig
 import { createAuthGuards, createAuthRouter } from './auth.ts';
 import { createSecretsRouter } from './secrets.ts';
 import { createAutoPilotSafetyGuard } from './src/utils/autoPilotSafetyGuard.ts';
+import { buildAutomatedContentPackage } from './src/utils/automatedContentPipeline.ts';
 
 const execAsync = promisify(exec);
 
@@ -54,6 +55,7 @@ app.use('/api', (req, res, next) => {
       /^\/registry\/(test-connection|update)$/,
       /^\/autopilot\/config$/,
       /^\/autopilot\/safety$/,
+      /^\/autopilot\/content-pipeline\/prepare$/,
       /^\/autopilot\/workflows$/,
       /^\/autopilot\/workflows\/[^/]+\/(toggle|run)$/,
       /^\/autopilot\/queue\/[^/]+\/(pause|resume|stop)$/,
@@ -3185,6 +3187,48 @@ app.get('/api/autopilot/tools-status', (req: Request, res: Response) => {
   };
 
   res.json({ tools });
+});
+
+// Owner-authenticated, CSRF-protected and Safety-gated content package preparation.
+// Prompt generation only: no paid provider calls and no publishing.
+const automatedContentRuns: ReturnType<typeof buildAutomatedContentPackage>[] = [];
+const processedContentSlots = new Set<string>();
+app.post('/api/autopilot/content-pipeline/prepare', authGuards.requireCsrf, async (req: Request, res: Response) => {
+  if (!serverStore.autopilot.safetyEnabled) return res.status(423).json({ error: 'Safe Chat-Only Mode is active. Enable Safety & Security to prepare scheduled content.' });
+  if (!serverStore.autopilot.isRunning) return res.status(423).json({ error: 'AutoPilot is paused. Enable AutoPilot after Safety & Security is ON.' });
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit' }).formatToParts(now);
+  const part = (name: string) => parts.find(item => item.type === name)?.value || '';
+  const date = part('year') + '-' + part('month') + '-' + part('day');
+  const slot = Number(part('hour')) < 15 ? '09:00' : '21:00';
+  const slotKey = date + 'T' + slot + '+05:30';
+  if (processedContentSlots.has(slotKey)) return res.status(409).json({ error: 'This IST schedule slot has already been prepared.', slot: slotKey });
+  const contentPackage = buildAutomatedContentPackage({ now, id: 'content_' + date.replace(/-/g, '') + '_' + slot.replace(':', ''), topic: typeof req.body?.topic === 'string' ? req.body.topic : undefined });
+  processedContentSlots.add(slotKey);
+  automatedContentRuns.unshift(contentPackage);
+  const shortId = 'pub_' + contentPackage.id + '_short';
+  const longId = 'pub_' + contentPackage.id + '_long';
+  publishingQueue.unshift(
+    { id: longId, topic: 'Political News Funny / Satire — 15-minute 3D cartoon', platform: 'youtube', caption: contentPackage.formats.long.scriptPrompt, hashtags: ['#PoliticalSatire','#3DCartoon','#FactCheck'], videoJobId: contentPackage.id, status: 'waiting_approval', createdAt: now.toISOString(), auditReport: 'Draft prompts only. Human approval required before paid generation or publication.' },
+    { id: shortId, topic: 'Political News Funny / Satire — YouTube Short', platform: 'youtube', caption: contentPackage.formats.short.scriptPrompt, hashtags: ['#PoliticalSatire','#YouTubeShorts','#FactCheck'], videoJobId: contentPackage.id, status: 'waiting_approval', createdAt: now.toISOString(), auditReport: 'Draft prompts only. Human approval required before paid generation or publication.' }
+  );
+  let n8nDelivery: {status:'delivered'|'not_configured'|'failed';message:string} = {status:'not_configured',message:'n8n receiver is not configured. Draft package remains available for review.'};
+  if (serverStore.n8n.webhookUrl) {
+    try {
+      const response = await fetch(serverStore.n8n.webhookUrl, {
+        method:'POST',
+        headers:{'Content-Type':'application/json',...(serverStore.n8n.authToken?{Authorization:'Bearer '+serverStore.n8n.authToken}:{})},
+        body:JSON.stringify({event:'aaksh.content_pipeline.draft_ready',contentPackage,publishingDraftIds:[shortId,longId],policy:contentPackage.executionPolicy}),
+        signal:AbortSignal.timeout(8000)
+      });
+      n8nDelivery = response.ok ? {status:'delivered',message:'Approval-gated prompt package delivered to n8n.'} : {status:'failed',message:'n8n returned HTTP '+response.status+'. Drafts remain in the approval queue.'};
+    } catch { n8nDelivery = {status:'failed',message:'n8n is temporarily unavailable. Drafts remain in the approval queue.'}; }
+  }
+  recordAudit({category:'autopilot',action:'Political Satire Content Package Prepared',status:'warning',details:'Prepared Short and 15-minute long-form prompt drafts for '+slotKey+'. No paid provider calls or publishing occurred.'});
+  return res.status(202).json({success:true,contentPackage,publishingDraftIds:[shortId,longId],n8nDelivery,message:'Draft prompts prepared. Human approval is required before paid generation or publication.'});
+});
+app.get('/api/autopilot/content-pipeline/latest', (_req:Request,res:Response) => {
+  res.json({schedule:{timezone:'Asia/Kolkata',times:['09:00','21:00']},runs:automatedContentRuns.slice(0,10)});
 });
 
 // GET /api/autopilot/workflows: List all workflows
