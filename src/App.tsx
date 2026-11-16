@@ -60,6 +60,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   showStatusTracker: true,
   soundEffects: false,
   selectedLanguage: 'auto',
+  safetyControlsEnabled: false,
+  alwaysActiveAfterLogin: false,
   voiceAssistantEnabled: false,
   voiceLanguage: 'en-US',
   voiceGender: 'female',
@@ -149,6 +151,24 @@ export default function App() {
       .catch((err) => {
         console.warn('Backend health check note:', err);
       });
+  }, []);
+
+  // Sync the server-authoritative AutoPilot safety switch only after AuthGate
+  // has mounted this application with a valid OTP-issued session.
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/autopilot/config', { credentials: 'same-origin' })
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => {
+        if (cancelled || typeof data?.config?.safetyEnabled !== 'boolean') return;
+        setSettings((prev) => ({
+          ...prev,
+          safetyControlsEnabled: data.config.safetyEnabled,
+          ...(data.config.safetyEnabled ? {} : { voiceAssistantEnabled: false })
+        }));
+      })
+      .catch((error) => console.warn('AutoPilot safety status unavailable:', error));
+    return () => { cancelled = true; };
   }, []);
 
   // Save conversations to localStorage
@@ -260,6 +280,30 @@ I am your central AI assistant and command center. You can manage engineering ta
   // Update Settings
   const handleUpdateSettings = (newSettings: Partial<AppSettings>) => {
     setSettings(prev => ({ ...prev, ...newSettings }));
+  };
+
+  const handleSafetyControlsToggle = async () => {
+    const nextEnabled = !settings.safetyControlsEnabled;
+    try {
+      const response = await fetch('/api/autopilot/safety', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ safetyEnabled: nextEnabled })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.safetyEnabled !== nextEnabled) {
+        console.warn('Safety & Security switch was not accepted:', data.error || response.status);
+        return;
+      }
+      setSettings((prev) => ({
+        ...prev,
+        safetyControlsEnabled: nextEnabled,
+        ...(nextEnabled ? {} : { voiceAssistantEnabled: false })
+      }));
+    } catch (error) {
+      console.warn('Could not update Safety & Security:', error);
+    }
   };
 
   const handleResetSettings = () => {
@@ -803,7 +847,13 @@ I am your central AI assistant and command center. You can manage engineering ta
         {activeView === 'analytics' && <AnalyticsCenter />}
 
         {/* VIEW 3: Auto Pilot & Trigger Center */}
-        {activeView === 'autopilot' && <AutoPilotCenter voiceAssistantEnabled={Boolean(settings.voiceAssistantEnabled)} />}
+        {activeView === 'autopilot' && (
+          <AutoPilotCenter
+            voiceAssistantEnabled={Boolean(settings.voiceAssistantEnabled)}
+            safetyControlsEnabled={Boolean(settings.safetyControlsEnabled)}
+            alwaysActiveAfterLogin={Boolean(settings.alwaysActiveAfterLogin)}
+          />
+        )}
 
         {/* VIEW 4: AI Video Generator */}
         {activeView === 'video' && <VideoGeneratorCenter />}
@@ -847,6 +897,8 @@ I am your central AI assistant and command center. You can manage engineering ta
         onLanguageChange={handleLanguageChange}
         voiceAssistantEnabled={Boolean(settings.voiceAssistantEnabled)}
         onVoiceAssistantToggle={() => handleUpdateSettings({ voiceAssistantEnabled: !settings.voiceAssistantEnabled })}
+        safetyControlsEnabled={Boolean(settings.safetyControlsEnabled)}
+        onSafetyControlsToggle={handleSafetyControlsToggle}
       />
 
       {/* Mobile-Friendly Bottom Navigation Bar */}
