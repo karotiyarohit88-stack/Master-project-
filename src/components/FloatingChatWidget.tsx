@@ -167,7 +167,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="w-8 h-8 rounded-full bg-white p-0.5 border border-emerald-300 flex-shrink-0">
                 <img 
-                  src="/assets/aistudio/1791973196299_d0ac9fe0.png" 
+                  src={settings?.assistantAvatarDataUrl || "/assets/aistudio/1791973196299_d0ac9fe0.png"} 
                   className="w-full h-full object-cover rounded-full" 
                   alt="Master AI Agent Avatar" 
                 />
