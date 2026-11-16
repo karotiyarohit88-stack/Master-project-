@@ -138,11 +138,11 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
   return (
     <>
       {/* Floating Help Chat Button (Green Circle with Speech Bubble & Question Mark) */}
-      <div className="fixed bottom-20 sm:bottom-6 right-4 sm:right-6 z-40">
+      <div className="fixed bottom-[calc(6rem+env(safe-area-inset-bottom))] sm:bottom-6 right-3 sm:right-6 z-[60]">
         <button
           type="button"
           onClick={() => setIsOpen(!isOpen)}
-          className="relative group w-16 h-16 sm:w-18 sm:h-18 bg-[#0b7a3e] hover:bg-[#086332] text-white rounded-full flex flex-col items-center justify-center shadow-xl hover:shadow-2xl transition-all transform hover:scale-105 active:scale-95 cursor-pointer border-2 border-white p-1 select-none"
+          className="relative group w-14 h-14 sm:w-[4.5rem] sm:h-[4.5rem] bg-[#0b7a3e] hover:bg-[#086332] text-white rounded-full flex flex-col items-center justify-center shadow-xl hover:shadow-2xl transition-all transform hover:scale-105 active:scale-95 cursor-pointer border-2 border-white p-1 select-none"
           title="Open Help Chat"
           aria-label="Open Help Chat"
         >
@@ -160,10 +160,10 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
 
       {/* Floating Help Chat Window Overlay / Drawer */}
       {isOpen && (
-        <div className="fixed inset-y-0 right-0 w-full max-w-md bg-slate-50 shadow-2xl z-50 flex flex-col border-l border-slate-200 text-slate-800 overflow-hidden animate-in slide-in-from-right duration-200">
+        <div className="fixed inset-x-0 top-[env(safe-area-inset-top)] bottom-0 sm:inset-x-auto sm:top-auto sm:bottom-6 sm:right-6 w-full sm:w-[min(28rem,calc(100vw-3rem))] h-[calc(100dvh-env(safe-area-inset-top))] sm:h-[min(48rem,calc(100dvh-3rem))] max-h-full bg-slate-50 shadow-2xl z-[70] flex flex-col border border-slate-200 text-slate-800 overflow-hidden sm:rounded-2xl animate-in slide-in-from-right duration-200 min-w-0>
           
           {/* Header */}
-          <div className="p-3.5 sm:p-4 bg-[#0b7a3e] text-white flex justify-between items-center shadow-xs flex-shrink-0">
+          <div className="p-3 sm:p-4 pt-[max(0.75rem,env(safe-area-inset-top))] bg-[#0b7a3e] text-white flex justify-between items-center shadow-xs flex-shrink-0 gap-2 min-w-0">
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="w-8 h-8 rounded-full bg-white p-0.5 border border-emerald-300 flex-shrink-0">
                 <img 
@@ -178,6 +178,13 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
               </div>
             </div>
 
+            <div data-safety-controls-slot="true" className="flex items-center gap-1 flex-shrink-0" aria-label="Voice assistant safety controls">
+              {onVoiceAssistantToggle && (
+                <button type="button" onClick={onVoiceAssistantToggle} aria-pressed={voiceAssistantEnabled} title="Voice Assistant ON/OFF — chat remains available when OFF" className={`px-2 py-1.5 rounded-lg text-[10px] font-bold border transition-colors ${voiceAssistantEnabled ? 'bg-white text-emerald-800 border-white' : 'bg-white/15 text-white border-white/30'}`}>
+                  {voiceAssistantEnabled ? 'Voice ON' : 'Voice OFF'}
+                </button>
+              )}
+            </div>
             <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
               {/* New Chat Button */}
               {onNewChat && (
@@ -272,7 +279,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
           </div>
 
           {/* Input & Image Preview Footer */}
-          <div className="p-3 border-t border-slate-200 bg-white space-y-2 flex-shrink-0">
+          <div className="p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-slate-200 bg-white space-y-2 flex-shrink-0">
             
             {/* Image Preview if attached */}
             {imagePreview && (
@@ -293,7 +300,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
             )}
 
             {/* Input Bar */}
-            <form onSubmit={handleSubmit} className="flex items-center gap-1.5">
+            <form onSubmit={handleSubmit} className="flex items-center gap-1 sm:gap-1.5 min-w-0">
               <input 
                 type="file"
                 ref={fileInputRef}
@@ -314,7 +321,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isLoading}
-                className="p-2 text-slate-500 hover:text-emerald-600 transition-colors rounded-xl hover:bg-slate-100 cursor-pointer flex-shrink-0"
+                className="p-1.5 sm:p-2 text-slate-500 hover:text-emerald-600 transition-colors rounded-xl hover:bg-slate-100 cursor-pointer flex-shrink-0"
                 title="Attach photo"
               >
                 <ImageIcon className="w-4 h-4" />
@@ -343,17 +350,6 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
                   {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                 </button>
               )}
-              {onVoiceAssistantToggle && (
-                <button
-                  type="button"
-                  onClick={onVoiceAssistantToggle}
-                  aria-pressed={voiceAssistantEnabled}
-                  title="Voice Assistant ON/OFF"
-                  className={`px-2 py-1 rounded-lg text-[10px] font-bold border flex-shrink-0 transition-colors ${voiceAssistantEnabled ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-100 text-slate-600 border-slate-200'}`}
-                >
-                  {voiceAssistantEnabled ? 'Voice ON' : 'Voice OFF'}
-                </button>
-              )}
 
               <input 
                 type="text" 
@@ -361,13 +357,13 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
                 onChange={(e) => setInput(e.target.value)}
                 disabled={isLoading}
                 placeholder={isListening ? 'Listening...' : 'Ask AI or type command...'} 
-                className="flex-1 border border-slate-300 rounded-full px-3.5 py-2 text-xs focus:outline-none focus:border-emerald-500 bg-slate-50 font-sans"
+                className="flex-1 min-w-0 border border-slate-300 rounded-full px-3 py-2.5 text-xs focus:outline-none focus:border-emerald-500 bg-slate-50 font-sans"
               />
 
               <button 
                 type="submit"
                 disabled={(!input.trim() && !imagePreview) || isLoading}
-                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white px-3.5 py-2 rounded-full text-xs font-semibold shadow-2xs transition-colors cursor-pointer flex-shrink-0"
+                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white px-3 py-2.5 rounded-full text-xs font-semibold shadow-2xs transition-colors cursor-pointer flex-shrink-0"
               >
                 Send
               </button>
