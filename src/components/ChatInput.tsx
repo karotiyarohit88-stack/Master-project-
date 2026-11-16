@@ -67,6 +67,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     }
   }, [setInput]);
 
+  useEffect(() => {
+    if (!voiceAssistantEnabled && isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+    }
+  }, [voiceAssistantEnabled, isListening]);
+
   const toggleMic = () => {
     if (!voiceAssistantEnabled || !recognitionRef.current) return;
     if (isListening) {
@@ -242,7 +249,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              disabled={isLoading || disabled}
+              disabled={isLoading || disabled || !voiceAssistantEnabled}
               className="p-2 text-slate-500 hover:text-emerald-600 transition-colors rounded-xl hover:bg-slate-50 cursor-pointer flex-shrink-0 mb-0.5"
               title="Attach Image or Photo"
             >
@@ -260,7 +267,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                     ? 'bg-rose-100 text-rose-600 animate-pulse' 
                     : 'text-slate-500 hover:text-emerald-600 hover:bg-slate-50'
                 }`}
-                title={isListening ? 'Stop Listening' : 'Voice Input'}
+                title={!voiceAssistantEnabled ? 'Turn Voice Assistant ON first' : (isListening ? 'Stop Listening' : 'Voice Input')}
               >
                 {isListening ? <MicOff className="w-4.5 h-4.5" /> : <Mic className="w-4.5 h-4.5" />}
               </button>
