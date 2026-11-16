@@ -102,7 +102,7 @@ export const SecretManagerPanel: React.FC = () => {
         <span>Secrets are encrypted on the server with AES-256-GCM. The full value is never returned by the list API. Keep your encryption key backed up securely.</span>
       </div>
 
-      {error && <div role="alert" className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700 flex gap-2"><AlertCircle className="w-4 h-4 shrink-0" />{error}</div>}
+      {error && <div role="alert" className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 flex gap-2"><AlertCircle className="w-4 h-4 shrink-0" />{error}</div>}
       {notice && <div role="status" className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800">{notice}</div>}
 
       <form onSubmit={saveSecret} className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
@@ -130,7 +130,7 @@ export const SecretManagerPanel: React.FC = () => {
             {secrets.map(item => (
               <div key={item.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-3">
                 <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-800">{item.name}</p><p className="mt-0.5 text-[11px] text-slate-500">{item.provider} · <span className="font-mono">{item.masked_preview}</span></p><p className="mt-0.5 text-[10px] text-slate-400">{new Date(item.created_at).toLocaleString()}</p></div>
-                <button type="button" onClick={() => void revokeSecret(item.id)} disabled={busy} aria-label={`Revoke ${item.name}`} title="Revoke secret" className="shrink-0 rounded-lg border border-rose-200 p-2 text-rose-600 hover:bg-rose-50 disabled:opacity-50"><Trash2 className="w-4 h-4" /></button>
+                <button type="button" onClick={() => void revokeSecret(item.id)} disabled={busy} aria-label={`Revoke ${item.name}`} title="Revoke secret" className="shrink-0 rounded-lg border border-amber-200 p-2 text-amber-700 hover:bg-amber-50 disabled:opacity-50"><Trash2 className="w-4 h-4" /></button>
               </div>
             ))}
           </div>
