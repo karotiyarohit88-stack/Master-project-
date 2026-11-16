@@ -5,18 +5,23 @@ export const AnalyticsCenter: React.FC = () => {
   const [analytics, setAnalytics] = useState<any>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [platformAnalytics, setPlatformAnalytics] = useState<any>(null);
+  const [accounting, setAccounting] = useState<any>(null);
+  const [payoutRequests, setPayoutRequests] = useState<any[]>([]);
+  const [payoutAmount, setPayoutAmount] = useState('');
+  const [payoutPurpose, setPayoutPurpose] = useState('');
+  const [payoutMessage, setPayoutMessage] = useState('');
+  const [payoutBusy, setPayoutBusy] = useState(false);
 
   const fetchAnalytics = async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/analytics');
-      if (res.ok) {
-        const data = await res.json();
-        setAnalytics(data);
-      } else {
-        setError(`Analytics endpoint returned HTTP ${res.status}`);
-      }
+      const [res, platformRes, accountingRes, payoutRes] = await Promise.all([fetch('/api/analytics'), fetch('/api/analytics/multi-platform'), fetch('/api/accounting/summary'), fetch('/api/accounting/payout-requests')]);
+      if (res.ok) setAnalytics(await res.json()); else setError(`Analytics endpoint returned HTTP ${res.status}`);
+      if (platformRes.ok) setPlatformAnalytics(await platformRes.json());
+      if (accountingRes.ok) setAccounting(await accountingRes.json());
+      if (payoutRes.ok) { const payoutData = await payoutRes.json(); setPayoutRequests(payoutData.requests || []); }
     } catch (e: any) {
       setError(e?.message || 'Failed to connect to analytics endpoint');
     } finally {
@@ -27,6 +32,34 @@ export const AnalyticsCenter: React.FC = () => {
   useEffect(() => {
     fetchAnalytics();
   }, []);
+
+  const csrfHeaders = () => {
+    const token = document.cookie.split('; ').find(value => value.startsWith('aaksh_csrf='))?.split('=').slice(1).join('=') || '';
+    return { 'Content-Type': 'application/json', 'X-CSRF-Token': decodeURIComponent(token) };
+  };
+
+  const createPayoutRequest = async () => {
+    setPayoutBusy(true); setPayoutMessage('');
+    try {
+      const res = await fetch('/api/accounting/payout-requests', { method: 'POST', credentials: 'same-origin', headers: csrfHeaders(), body: JSON.stringify({ amount: Number(payoutAmount), purpose: payoutPurpose }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Payout request failed.');
+      setPayoutMessage('Request created and staged for Owner approval. No transfer was initiated.'); setPayoutAmount(''); setPayoutPurpose(''); fetchAnalytics();
+    } catch (e: any) { setPayoutMessage(e?.message || 'Payout request failed.'); }
+    finally { setPayoutBusy(false); }
+  };
+
+  const recordOwnerApproval = async (id: string) => {
+    setPayoutBusy(true); setPayoutMessage('');
+    try {
+      const res = await fetch('/api/accounting/payout-requests/' + encodeURIComponent(id) + '/approve', { method: 'POST', credentials: 'same-origin', headers: csrfHeaders(), body: JSON.stringify({ ownerConfirmation: true }) });
+      const data = await res.json();
+      if (res.status === 423) setPayoutMessage(data.error || 'Transfer blocked by native service verification.');
+      else if (!res.ok) throw new Error(data.error || 'Owner approval could not be recorded.');
+      fetchAnalytics();
+    } catch (e: any) { setPayoutMessage(e?.message || 'Approval could not be recorded.'); }
+    finally { setPayoutBusy(false); }
+  };
 
   return (
     <div className="flex-1 flex flex-col h-full max-w-5xl w-full mx-auto p-2.5 sm:p-4 overflow-y-auto min-w-0">
@@ -97,6 +130,40 @@ export const AnalyticsCenter: React.FC = () => {
           <span className="text-[10px] text-emerald-700 font-medium">Sub-Agents Online</span>
         </div>
       </div>
+
+      {/* Multi-Platform Analytics: sourced from actual application records */}
+      <section className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-2xs mb-4 space-y-3">
+        <div className="flex items-center gap-2"><Layers className="w-4 h-4 text-emerald-600" /><h3 className="text-sm font-bold text-slate-900">Multi-Platform Analytics</h3></div>
+        <p className="text-[11px] text-slate-500">Counts are derived from recorded publishing posts, AutoPilot tasks and webhook workflow records. No estimated reach or fabricated engagement.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="rounded-xl bg-emerald-50/60 border border-emerald-200 p-3"><p className="text-xs font-semibold text-slate-700">YouTube</p><p className="text-xl font-bold text-slate-900">{platformAnalytics?.platforms?.youtube?.publishedPosts ?? 0}</p><p className="text-[10px] text-slate-500">Published · {platformAnalytics?.platforms?.youtube?.tasks ?? 0} tasks</p></div>
+          <div className="rounded-xl bg-slate-50 border border-slate-200 p-3"><p className="text-xs font-semibold text-slate-700">Social Media</p><p className="text-xl font-bold text-slate-900">{platformAnalytics?.platforms?.socialMedia?.publishedPosts ?? 0}</p><p className="text-[10px] text-slate-500">Published · {platformAnalytics?.platforms?.socialMedia?.tasks ?? 0} tasks</p></div>
+          <div className="rounded-xl bg-amber-50/60 border border-amber-200 p-3"><p className="text-xs font-semibold text-slate-700">Webhooks</p><p className="text-xl font-bold text-slate-900">{platformAnalytics?.platforms?.webhooks?.webhookActions ?? 0}</p><p className="text-[10px] text-slate-500">Recorded webhook actions</p></div>
+        </div>
+      </section>
+
+      {/* Verified earnings ledger and mandatory payout approval */}
+      <section className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-2xs mb-4 space-y-4">
+        <div className="flex items-center gap-2"><ShieldCheck className="w-4 h-4 text-emerald-600" /><h3 className="text-sm font-bold text-slate-900">Earning & GST Account</h3></div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="rounded-xl bg-slate-50 border border-slate-200 p-3"><p className="text-[10px] text-slate-500">Total Balance (INR)</p><p className="text-lg font-bold text-slate-900">{Number(accounting?.totalBalance || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</p></div>
+          <div className="rounded-xl bg-slate-50 border border-slate-200 p-3"><p className="text-[10px] text-slate-500">Taxable Amount</p><p className="text-lg font-bold text-slate-900">{Number(accounting?.taxableAmount || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</p></div>
+          <div className="rounded-xl bg-slate-50 border border-slate-200 p-3"><p className="text-[10px] text-slate-500">CGST / SGST</p><p className="text-sm font-bold text-slate-900">{Number(accounting?.cgst || 0).toFixed(2)} / {Number(accounting?.sgst || 0).toFixed(2)}</p></div>
+          <div className="rounded-xl bg-slate-50 border border-slate-200 p-3"><p className="text-[10px] text-slate-500">IGST</p><p className="text-lg font-bold text-slate-900">{Number(accounting?.igst || 0).toFixed(2)}</p></div>
+        </div>
+        <p className="text-[11px] text-amber-800">{accounting?.verifiedEntryCount ? accounting.verifiedEntryCount + ' verified ledger entries included.' : 'No verified invoice or earning entries are connected. Balance and GST are therefore reported as zero, not estimated.'}</p>
+        <div className="border-t border-slate-100 pt-3 space-y-2">
+          <h4 className="text-xs font-bold text-slate-900">Request Payout · Manual Mode</h4>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <input type="number" min="0.01" step="0.01" value={payoutAmount} onChange={e => setPayoutAmount(e.target.value)} placeholder="Amount (INR)" className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs" />
+            <input type="text" maxLength={240} value={payoutPurpose} onChange={e => setPayoutPurpose(e.target.value)} placeholder="Purpose of payout" className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs" />
+          </div>
+          <button type="button" disabled={payoutBusy || !payoutAmount || Number(payoutAmount) <= 0 || !payoutPurpose.trim()} onClick={createPayoutRequest} className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold disabled:opacity-50">Create Owner-Approval Request</button>
+          <p className="text-[11px] text-amber-800">Auto-Payout: Requires Native Android Service Verification. No transfer can execute in this release.</p>
+          {payoutMessage && <p className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-2">{payoutMessage}</p>}
+          {payoutRequests.map((request: any) => <div key={request.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border border-slate-200 rounded-xl p-3"><div><p className="text-xs font-semibold text-slate-800">₹{Number(request.amount).toLocaleString('en-IN')} · {request.purpose}</p><p className="text-[10px] text-slate-500">{request.status.replaceAll('_', ' ')}</p></div>{request.status === 'pending_owner_approval' && <button type="button" disabled={payoutBusy} onClick={() => recordOwnerApproval(request.id)} className="px-3 py-2 rounded-lg bg-amber-100 text-amber-900 border border-amber-200 text-[10px] font-bold">Record Owner Approval</button>}</div>)}
+        </div>
+      </section>
 
       {/* Tools Connectivity Telemetry */}
       <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-2xs space-y-3">
