@@ -77,7 +77,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   const renderedContent = extractInlineImages(message.content);
 
   const copyContent = async () => {
-    const success = await copyToClipboard(message.content);
+    const success = await copyToClipboard(renderedContent.text);
     if (success) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -92,7 +92,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
       return;
     }
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(message.content);
+    const utterance = new SpeechSynthesisUtterance(renderedContent.text);
     const language = settings?.selectedLanguage;
     if (language && language !== 'auto') {
       const languageMap: Record<string, string> = { hi: 'hi-IN', hinglish: 'hi-IN', en: 'en-IN', pa: 'pa-IN', ur: 'ur-PK', bn: 'bn-IN', ta: 'ta-IN', te: 'te-IN', mr: 'mr-IN', gu: 'gu-IN' };
