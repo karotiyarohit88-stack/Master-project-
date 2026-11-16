@@ -138,6 +138,10 @@ export interface AppSettings {
   showStatusTracker: boolean;
   soundEffects: boolean;
   selectedLanguage?: string;
+  /** Master safety switch for voice and AutoPilot actions; chat remains available when off. */
+  safetyControlsEnabled?: boolean;
+  /** Opt in to enabling AutoPilot after the next successful authenticated app login. */
+  alwaysActiveAfterLogin?: boolean;
   /** User-controlled voice input consent on this device; does not enable background listening. */
   voiceAssistantEnabled?: boolean;
   voiceLanguage?: string;
