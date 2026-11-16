@@ -14,7 +14,7 @@ test('auto-post requires owner toggle, safety, daily content and verified non-de
 
 test('platform analytics counts only published posts with publication timestamps', () => {
   const result = buildMultiPlatformAnalytics(
-    [{ platform: 'youtube', status: 'published', publishedAt: '2026-11-16T09:00:00Z' }, { platform: 'instagram', status: 'waiting_approval' }],
+    [{ platform: 'youtube', status: 'published', publishedAt: '2026-11-16T09:00:00Z', publicationConfirmed: true }, { platform: 'instagram', status: 'waiting_approval', publicationConfirmed: false }],
     [{ id: 'task_ap_initial_01', platform: 'youtube_shorts' }, { id: 'task_real_01', platform: 'youtube_shorts' }, { platform: 'linkedin' }],
     [{ id: 'exec_initial_01', triggerSource: 'webhook' }, { id: 'exec_real_01', triggerSource: 'manual', stepsExecuted: [{ toolId: 'n8n_webhook' }] }]
   );
