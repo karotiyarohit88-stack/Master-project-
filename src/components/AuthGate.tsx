@@ -25,6 +25,11 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [otpChallenge, setOtpChallenge] = useState<{ challengeToken: string; purpose: AuthMode } | null>(null);
+  const [otp, setOtp] = useState('');
+  const [resendSeconds, setResendSeconds] = useState(0);
+  const [otpExpiresAt, setOtpExpiresAt] = useState<number | null>(null);
+  const [otpSecondsLeft, setOtpSecondsLeft] = useState(0);
 
   const checkSession = useCallback(async () => {
     setChecking(true);
@@ -70,22 +75,71 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
       const response = await fetch(endpoint, {
         method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify(payload)
       });
-      await readResponse(response);
-      if (mode === 'login') {
-        await checkSession();
-      } else {
-        setMode('login');
-        setPassword('');
-        setAdminToken('');
-        setNotice(mode === 'bootstrap'
-          ? 'Owner account created. Please sign in with your new credentials.'
-          : 'Invitation accepted. Please sign in with your new credentials.');
+      const data = await readResponse(response);
+      if (response.status !== 202 || !data.requiresOtp || typeof data.challengeToken !== 'string') {
+        throw new Error('The server did not start OTP verification. No account or session was activated.');
       }
+      setOtpChallenge({ challengeToken: data.challengeToken, purpose: mode });
+      setOtp('');
+      setResendSeconds(60);
+      setOtpExpiresAt(Date.now() + 10 * 60 * 1000);
+      setOtpSecondsLeft(600);
+      setNotice('A 6-digit verification code has been sent to your registered email address.');
+      setPassword('');
+      setAdminToken('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Authentication request failed.');
     } finally {
       setBusy(false);
     }
+  };
+
+  const verifyOtp = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!otpChallenge || otp.length !== 6) return;
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const response = await fetch('/api/auth/verify-otp', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ challengeToken: otpChallenge.challengeToken, otp })
+      });
+      await readResponse(response);
+      const purpose = otpChallenge.purpose;
+      setOtpChallenge(null); setOtp(''); setOtpExpiresAt(null);
+      if (purpose === 'invite') {
+        setMode('login');
+        setNotice('Email verified and invitation accepted. You can now sign in.');
+      } else {
+        await checkSession();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'OTP verification failed. Check the code and try again.');
+    } finally { setBusy(false); }
+  };
+
+  const resendOtp = async () => {
+    if (!otpChallenge || resendSeconds > 0 || otpSecondsLeft <= 0) return;
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const response = await fetch('/api/auth/resend-otp', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ challengeToken: otpChallenge.challengeToken })
+      });
+      await readResponse(response);
+      setOtp('');
+      setResendSeconds(60);
+      setOtpExpiresAt(Date.now() + 10 * 60 * 1000);
+      setNotice('A new verification code has been sent. The previous code is no longer valid.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not resend the verification code.');
+    } finally { setBusy(false); }
+  };
+
+  const cancelOtp = () => {
+    setOtpChallenge(null); setOtp(''); setOtpExpiresAt(null); setError('');
+    setNotice('Verification cancelled. Submit the form again to request a new code.');
   };
 
   const createInvitation = async (event: React.FormEvent) => {
@@ -159,6 +213,31 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
             <button type="button" onClick={() => { setMode('bootstrap'); setError(''); }} className={`rounded-lg py-2 text-xs font-semibold ${mode === 'bootstrap' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-600'}`}>First Owner</button>
             <button type="button" onClick={() => { setMode('invite'); setError(''); }} className={`rounded-lg py-2 text-xs font-semibold ${mode === 'invite' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-600'}`}>Invitation</button>
           </div>
+          {otpChallenge ? (
+            <div className="space-y-5">
+              <div className="mb-5">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center mb-3"><ShieldCheck className="w-7 h-7" /></div>
+                <h2 className="text-lg font-bold text-slate-900">Verify your email</h2>
+                <p className="text-sm text-slate-500 mt-1">Enter the 6-digit code sent to the email address used in the previous step. The code expires in 10 minutes.</p>
+              </div>
+              {error && <div role="alert" className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700 flex gap-2"><AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />{error}</div>}
+              {notice && <div role="status" className="rounded-xl bg-emerald-50 border border-emerald-200 p-3 text-sm text-emerald-800">{notice}</div>}
+              {otpSecondsLeft > 0 ? (
+                <form onSubmit={verifyOtp} className="space-y-4">
+                  <label className="block text-xs font-semibold text-slate-700">6-digit verification code
+                    <input required autoFocus type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} value={otp} onChange={e => setOtp(e.target.value.replace(/[^0-9]/g, '').slice(0, 6))} className="mt-2 w-full rounded-xl border border-slate-300 p-4 text-center text-2xl font-bold tracking-[0.5em] outline-none focus:border-emerald-500" placeholder="••••••" aria-label="6-digit email verification code" />
+                  </label>
+                  <p className="text-xs text-slate-500 text-center">Code expires in <strong className="tabular-nums">{Math.floor(otpSecondsLeft / 60)}:{String(otpSecondsLeft % 60).padStart(2, '0')}</strong></p>
+                  <button disabled={busy || otp.length !== 6} className="w-full min-h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-semibold flex items-center justify-center gap-2">{busy ? <LoaderCircle className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}Verify email</button>
+                </form>
+              ) : (
+                <div role="alert" className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700">This verification code has expired. Start again to request a fresh code.</div>
+              )}
+              <button type="button" onClick={resendOtp} disabled={busy || resendSeconds > 0 || otpSecondsLeft <= 0} className="w-full min-h-11 rounded-xl border border-emerald-200 text-emerald-800 font-semibold disabled:opacity-50">{resendSeconds > 0 ? `Resend code in ${resendSeconds}s` : otpSecondsLeft > 0 ? 'Resend verification code' : 'Code expired'}</button>
+              <button type="button" onClick={cancelOtp} disabled={busy} className="w-full text-sm text-slate-500 hover:text-slate-800">Cancel and return to sign in</button>
+            </div>
+          ) : (
+            <>
           <div className="mb-5">
             <h2 className="text-lg font-bold text-slate-900">{mode === 'login' ? 'Welcome back' : mode === 'bootstrap' ? 'Set up the first Owner' : 'Accept your invitation'}</h2>
             <p className="text-sm text-slate-500 mt-1">{mode === 'login' ? 'Sign in to open your protected dashboard.' : mode === 'bootstrap' ? 'Owner setup is available only once and requires the server bootstrap authorization token.' : 'Use the secure invitation token shared by your Owner.'}</p>
@@ -174,6 +253,8 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
             <button disabled={busy} className="w-full min-h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-semibold flex items-center justify-center gap-2">{busy ? <LoaderCircle className="w-4 h-4 animate-spin" /> : mode === 'login' ? <LogIn className="w-4 h-4" /> : <UserPlus className="w-4 h-4" />}{mode === 'login' ? 'Sign in securely' : mode === 'bootstrap' ? 'Create Owner account' : 'Accept invitation'}</button>
           </form>
           <p className="text-[11px] text-slate-400 mt-5 text-center flex items-center justify-center gap-1"><LockKeyhole className="w-3 h-3" /> Protected session • Secure, server-side authentication</p>
+            </>
+          )}
         </section>
       </main>
     );
