@@ -320,7 +320,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <ImageIcon className="w-3.5 h-3.5" /> Choose from gallery
                     <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
                   </label>
-                  {settings.assistantAvatarDataUrl && <button type="button" onClick={() => onUpdateSettings({ assistantAvatarDataUrl: '' })} className="ml-2 text-[10px] text-rose-600 font-semibold">Remove</button>}
+                  {settings.assistantAvatarDataUrl && <button type="button" onClick={() => onUpdateSettings({ assistantAvatarDataUrl: '' })} className="ml-2 text-[10px] text-amber-700 font-semibold">Remove</button>}
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -498,7 +498,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   onClose();
                 }
               }}
-              className="w-full sm:w-auto px-3 py-2 rounded-lg text-xs font-medium text-rose-600 hover:text-rose-700 hover:bg-rose-50 border border-rose-200 transition-colors cursor-pointer min-h-[36px]"
+              className="w-full sm:w-auto px-3 py-2 rounded-lg text-xs font-medium text-amber-700 hover:text-amber-800 hover:bg-amber-50 border border-amber-200 transition-colors cursor-pointer min-h-[36px]"
             >
               Clear Conversation History
             </button>
