@@ -125,7 +125,7 @@ export const VoiceStudioCenter: React.FC = () => {
           <div className={`mt-3 p-2.5 rounded-xl text-xs flex items-center gap-2 ${
             statusMessage.type === 'success' ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' :
             statusMessage.type === 'info' ? 'bg-slate-50 border border-slate-200 text-slate-800' :
-            'bg-rose-50 border border-rose-200 text-rose-800'
+            'bg-amber-50 border border-amber-200 text-amber-900'
           }`}>
             <AlertCircle className="w-4 h-4 flex-shrink-0" />
             <span className="truncate">{statusMessage.text}</span>
