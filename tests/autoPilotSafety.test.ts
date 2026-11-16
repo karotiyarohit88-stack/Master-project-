@@ -7,7 +7,6 @@ import { createAutoPilotSafetyGuard } from '../src/utils/autoPilotSafetyGuard.ts
 
 const SESSION = 'test-session-token-with-more-than-40-characters';
 const CSRF = 'test-csrf-token-with-sufficient-randomness';
-const ORIGIN = 'http://127.0.0.1';
 
 function makePool(role: 'owner' | 'member') {
   const sessionHash = createHash('sha256').update(SESSION).digest('hex');
@@ -71,10 +70,10 @@ async function withServer(
   }
 }
 
-function headers(authenticated = true) {
+function headers(url: string, authenticated = true) {
   return {
     ...(authenticated ? { cookie: `aaksh_session=${SESSION}; aaksh_csrf=${CSRF}` } : {}),
-    origin: ORIGIN,
+    origin: new URL(url).origin,
     'x-csrf-token': CSRF,
     'content-type': 'application/json'
   };
@@ -83,7 +82,7 @@ function headers(authenticated = true) {
 test('Safety OFF blocks AutoPilot mutations with 423 while ordinary chat remains available', async () =>
   withServer('owner', async url => {
     const blocked = await fetch(`${url}/api/autopilot/config`, {
-      method: 'POST', headers: headers(), body: JSON.stringify({ isRunning: true })
+      method: 'POST', headers: headers(url), body: JSON.stringify({ isRunning: true })
     });
     assert.equal(blocked.status, 423);
 
@@ -103,7 +102,7 @@ test('Safety switch and AutoPilot cannot be activated without an authenticated s
   withServer('owner', async url => {
     const safety = await fetch(`${url}/api/autopilot/safety`, {
       method: 'POST',
-      headers: { ...headers(false) },
+      headers: { ...headers(url, false) },
       body: JSON.stringify({ safetyEnabled: true })
     });
     assert.equal(safety.status, 401);
@@ -129,7 +128,7 @@ test('non-Owner authenticated sessions cannot enable Safety or mutate AutoPilot'
     assert.equal(autopilot.status, 403);
   }));
 
-test('OTP-authenticated Owner session can enable Safety with CSRF, then AutoPilot mutation is allowed', async () =>
+test('authenticated Owner session can enable Safety with CSRF, then AutoPilot mutation is allowed', async () =>
   withServer('owner', async url => {
     const enabled = await fetch(`${url}/api/autopilot/safety`, {
       method: 'POST', headers: headers(), body: JSON.stringify({ safetyEnabled: true })

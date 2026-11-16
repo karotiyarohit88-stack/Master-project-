@@ -13,6 +13,7 @@ import { GoogleGenAI } from '@google/genai';
 import { applyPendingPostgresMigrations, checkPostgresConnection, getPostgresMigrationStatus } from './database.ts';
 import { createAuthGuards, createAuthRouter } from './auth.ts';
 import { createSecretsRouter } from './secrets.ts';
+import { createAutoPilotSafetyGuard } from './src/utils/autoPilotSafetyGuard.ts';
 
 const execAsync = promisify(exec);
 
@@ -73,16 +74,7 @@ app.use('/api', (req, res, next) => {
 
 // AutoPilot mutations stay locked until the authenticated Owner explicitly
 // enables Safety & Security. Read-only status and configuration remain available.
-app.use('/api', (req, res, next) => {
-  const automationMutation = req.path.startsWith('/autopilot/') || req.path === '/automation/trigger';
-  if (!automationMutation || req.method === 'GET' || req.path === '/autopilot/safety') {
-    return next();
-  }
-  if (!serverStore.autopilot.safetyEnabled) {
-    return res.status(423).json({ error: 'AutoPilot is locked in Safe Chat-Only Mode. Enable Safety & Security after OTP login.' });
-  }
-  next();
-});
+app.use('/api', createAutoPilotSafetyGuard(() => serverStore.autopilot.safetyEnabled));
 
 // Secret Manager: all routes require an authenticated Owner; mutations also require CSRF.
 app.use('/api/secrets', requireOwner, (req, res, next) => {
