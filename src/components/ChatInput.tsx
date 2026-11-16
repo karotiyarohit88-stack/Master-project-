@@ -213,7 +213,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <button
                 type="button"
                 onClick={() => setImagePreview(null)}
-                className="absolute -top-1.5 -right-1.5 bg-slate-900 text-white rounded-full p-0.5 hover:bg-rose-600 transition-colors"
+                className="absolute -top-1.5 -right-1.5 bg-slate-900 text-white rounded-full p-0.5 hover:bg-amber-600 transition-colors"
                 title="Remove attachment"
               >
                 <XCircle className="w-3.5 h-3.5" />
@@ -251,7 +251,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 disabled={isLoading || disabled}
                 className={`p-2 transition-colors rounded-xl cursor-pointer flex-shrink-0 mb-0.5 ${
                   isListening 
-                    ? 'bg-rose-100 text-rose-600 animate-pulse' 
+                    ? 'bg-amber-100 text-amber-700 animate-pulse' 
                     : 'text-slate-500 hover:text-emerald-600 hover:bg-slate-50'
                 }`}
                 title={!voiceAssistantEnabled ? 'Turn Voice Assistant ON first' : (isListening ? 'Stop Listening' : 'Voice Input')}
