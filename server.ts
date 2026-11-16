@@ -74,7 +74,8 @@ app.use('/api', (req, res, next) => {
 // AutoPilot mutations stay locked until the authenticated Owner explicitly
 // enables Safety & Security. Read-only status and configuration remain available.
 app.use('/api', (req, res, next) => {
-  if (!req.path.startsWith('/autopilot/') || req.method === 'GET' || req.path === '/autopilot/safety') {
+  const automationMutation = req.path.startsWith('/autopilot/') || req.path === '/automation/trigger';
+  if (!automationMutation || req.method === 'GET' || req.path === '/autopilot/safety') {
     return next();
   }
   if (!serverStore.autopilot.safetyEnabled) {
