@@ -138,6 +138,8 @@ export interface AppSettings {
   showStatusTracker: boolean;
   soundEffects: boolean;
   selectedLanguage?: string;
+  /** User-controlled voice input consent on this device; does not enable background listening. */
+  voiceAssistantEnabled?: boolean;
 }
 
 export interface SupportedLanguageOption {
