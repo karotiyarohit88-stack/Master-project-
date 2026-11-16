@@ -60,6 +60,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   showStatusTracker: true,
   soundEffects: false,
   selectedLanguage: 'auto',
+  voiceAssistantEnabled: false,
 };
 
 export default function App() {
@@ -789,6 +790,8 @@ I am your central AI assistant and command center. You can manage engineering ta
                 selectedLanguage={settings.selectedLanguage || 'auto'}
                 onLanguageChange={handleLanguageChange}
                 onActionClick={handleChatActionClick}
+                voiceAssistantEnabled={Boolean(settings.voiceAssistantEnabled)}
+                onVoiceAssistantToggle={() => handleUpdateSettings({ voiceAssistantEnabled: !settings.voiceAssistantEnabled })}
               />
             </div>
           </main>
@@ -840,6 +843,8 @@ I am your central AI assistant and command center. You can manage engineering ta
         settings={settings}
         selectedLanguage={settings.selectedLanguage || 'auto'}
         onLanguageChange={handleLanguageChange}
+        voiceAssistantEnabled={Boolean(settings.voiceAssistantEnabled)}
+        onVoiceAssistantToggle={() => handleUpdateSettings({ voiceAssistantEnabled: !settings.voiceAssistantEnabled })}
       />
 
       {/* Mobile-Friendly Bottom Navigation Bar */}
