@@ -3677,8 +3677,22 @@ app.post('/api/publishing/attach-verified-asset', authGuards.requireCsrf, (req: 
   post.videoUrl = job.videoUrl;
   post.videoJobId = job.id;
   post.videoAssetVerified = true;
-  recordAudit({ category: 'publishing', action: 'Daily Video Asset Verified', status: 'success', details: 'Matched publishing post ' + post.id + ' to completed live provider job ' + job.id + '.' });
-  return res.json({ success: true, post, autoPostEligible: canAutoPostDailyContent({ enabled: serverStore.autopilot.autoPostDailyContentEnabled, safetyEnabled: serverStore.autopilot.safetyEnabled, isDailyContent: post.dailyContent === true, videoUrl: post.videoUrl, videoAssetVerified: post.videoAssetVerified }) });
+  const autoPostEligible = canAutoPostDailyContent({ enabled: serverStore.autopilot.autoPostDailyContentEnabled, safetyEnabled: serverStore.autopilot.safetyEnabled, isDailyContent: post.dailyContent === true, videoUrl: post.videoUrl, videoAssetVerified: post.videoAssetVerified });
+  if (autoPostEligible) {
+    if (!serverStore.publishing.webhookEndpoint) return res.status(503).json({ error: 'Daily auto-post remains blocked: live publishing webhook is not configured.', post });
+    try {
+      const providerResponse = await fetch(serverStore.publishing.webhookEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(serverStore.publishing.apiKey ? { Authorization: 'Bearer ' + serverStore.publishing.apiKey } : {}) }, body: JSON.stringify({ event: 'aaksh.daily_content.publish', post: { id: post.id, platform: post.platform, topic: post.topic, caption: post.caption, videoUrl: post.videoUrl } }), signal: AbortSignal.timeout(10000) });
+      const providerData: any = await providerResponse.json().catch(() => ({}));
+      if (!providerResponse.ok || providerData?.success !== true || typeof providerData?.externalPostId !== 'string' || !providerData.externalPostId.trim()) return res.status(502).json({ error: 'Provider did not confirm auto-publication. Draft remains unpublished.', post });
+      post.status = 'published';
+      post.publishedAt = new Date().toISOString();
+      post.externalPostId = providerData.externalPostId;
+    } catch {
+      return res.status(502).json({ error: 'Publishing provider unavailable. Draft remains unpublished.', post });
+    }
+  }
+  recordAudit({ category: 'publishing', action: autoPostEligible ? 'Daily Auto-Post Provider Confirmed' : 'Daily Video Asset Verified', status: autoPostEligible ? 'success' : 'info', details: 'Matched publishing post ' + post.id + ' to completed live provider job ' + job.id + (autoPostEligible ? '; provider confirmed publication.' : '; retained for Human Approval Gate.') });
+  return res.json({ success: true, post, autoPostEligible, publishedAutomatically: autoPostEligible && post.status === 'published' });
 });
 
 // POST /api/publishing/prepare: Prepare captions and hashtags
