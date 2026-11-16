@@ -216,7 +216,7 @@ export const ConnectionsCenter: React.FC = () => {
       case 'Planned':
         return 'bg-indigo-100 text-indigo-900 border-indigo-300 font-medium';
       case 'Error':
-        return 'bg-rose-100 text-rose-800 border-rose-300 font-bold';
+        return 'bg-amber-100 text-amber-900 border-amber-300 font-bold';
       case 'Unavailable':
       default:
         return 'bg-slate-100 text-slate-600 border-slate-300 font-medium';
@@ -342,12 +342,12 @@ export const ConnectionsCenter: React.FC = () => {
           <div className={`mt-3 p-3 rounded-xl border text-xs flex items-start gap-2 ${
             testResult.success
               ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
-              : 'bg-rose-50 border-rose-300 text-rose-900'
+              : 'bg-amber-50 border-amber-300 text-amber-950'
           }`}>
             {testResult.success ? (
               <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
             ) : (
-              <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />
+              <AlertTriangle className="w-4 h-4 text-amber-700 flex-shrink-0 mt-0.5" />
             )}
             <div className="min-w-0 flex-1">
               <span className="font-bold uppercase text-[10px] block mb-0.5">
