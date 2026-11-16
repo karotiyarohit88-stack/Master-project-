@@ -3680,6 +3680,14 @@ app.post('/api/publishing/publish', (req: Request, res: Response) => {
     return res.status(404).json({ error: 'Post draft not found.' });
   }
 
+  // Prompt-only content pipeline drafts are never publishable without a real rendered asset.
+  if (post.videoJobId?.startsWith('content_') && !post.videoUrl) {
+    return res.status(409).json({
+      error: 'This content package contains prompts only. Complete the separately approved media-generation step and attach a verified video asset before publishing.',
+      needsMediaAsset: true
+    });
+  }
+
   // Safety Gate: Must have been approved first!
   if (post.status !== 'approved') {
     return res.status(403).json({
