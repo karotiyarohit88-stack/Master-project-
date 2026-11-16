@@ -80,7 +80,7 @@ class MemoryAuthDb {
           this.users.push(user); return { rows: [{ id: user.id, email: user.email, display_name: user.display_name, role: user.role }] };
         }
         if (q.includes('from app_invitations') && q.includes('for update')) {
-          const invite = this.invitations.find(x => x.id === values[0]); return { rows: invite ? [{ ...invite }] : [] };
+          const invite = this.invitations.find(x => x.invite_token_hash === values[0]); return { rows: invite ? [{ ...invite }] : [] };
         }
         if (q.startsWith('update app_invitations set accepted_at')) {
           const invite = this.invitations.find(x => x.id === values[0]); if (invite) invite.accepted_at = new Date().toISOString(); return { rows: [] };
