@@ -296,19 +296,19 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
 
         {/* Error state with clear troubleshooting instructions */}
         {message.error && (
-          <div className="mt-2.5 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-950 space-y-2 max-w-full min-w-0 overflow-hidden">
+          <div className="mt-2.5 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 space-y-2 max-w-full min-w-0 overflow-hidden">
             <div className="flex items-center gap-1.5">
-              <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
-              <h5 className="font-bold text-xs sm:text-sm text-rose-900 truncate">Execution Notice</h5>
+              <AlertCircle className="w-4 h-4 text-amber-700 flex-shrink-0" />
+              <h5 className="font-bold text-xs sm:text-sm text-amber-950 truncate">Execution Notice</h5>
             </div>
-            <p className="text-xs text-rose-800 bg-white/80 p-2 rounded-lg font-mono border border-rose-200 break-all max-w-full overflow-hidden">
+            <p className="text-xs text-amber-900 bg-white/80 p-2 rounded-lg font-mono border border-amber-200 break-all max-w-full overflow-hidden">
               {message.error}
             </p>
 
             {message.troubleshooting && message.troubleshooting.length > 0 && (
               <div className="text-xs pt-1">
-                <span className="font-semibold text-rose-900 block mb-1">Troubleshooting Checklist:</span>
-                <ul className="list-disc pl-4 space-y-0.5 text-rose-800 text-[11px]">
+                <span className="font-semibold text-amber-950 block mb-1">Troubleshooting Checklist:</span>
+                <ul className="list-disc pl-4 space-y-0.5 text-amber-900 text-[11px]">
                   {message.troubleshooting.map((step: string, sIdx: number) => (
                     <li key={sIdx} className="leading-snug">{step}</li>
                   ))}
@@ -321,7 +321,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                 <button
                   type="button"
                   onClick={() => onRetry(message.content)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-medium transition-colors cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-medium transition-colors cursor-pointer"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
                   Retry Command
