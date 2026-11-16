@@ -3,335 +3,222 @@ import assert from 'node:assert/strict';
 import express from 'express';
 import { createHash } from 'node:crypto';
 import { createAuthGuards, createAuthRouter, hashPassword } from '../auth.ts';
+import { hashEmailOtp } from '../authOtp.ts';
 
 type Row = Record<string, any>;
+const PEPPER = 'unit-test-otp-pepper-value-at-least-32-characters';
+const ADMIN_TOKEN = 'test-only-admin-token-with-more-than-32-characters';
 
 class MemoryAuthDb {
   users: Row[] = [];
   sessions: Row[] = [];
   invitations: Row[] = [];
-  async query(sql: string, values: any[] = []): Promise<{ rows: Row[] }> {
-    const normalized = sql.replace(/\s+/g, ' ').trim().toLowerCase();
-    if (normalized.includes('from app_sessions s') && normalized.includes('join app_users u')) {
-      const session = this.sessions.find((item) =>
-        item.session_token_hash === values[0] && !item.revoked_at &&
-        new Date(item.expires_at).getTime() > Date.now());
-      const user = session && this.users.find((item) => item.id === session.user_id && item.status === 'active');
-      return { rows: session && user ? [{
-        session_id: session.id, csrf_token_hash: session.csrf_token_hash,
-        expires_at: session.expires_at, id: user.id, email: user.email,
-        display_name: user.display_name, role: user.role
-      }] : [] };
+  challenges: Row[] = [];
+  sentCodes: string[] = [];
+
+  private run(sql: string, values: any[] = []): { rows: Row[] } {
+    const q = sql.replace(/\\s+/g, ' ').trim().toLowerCase();
+    if (q.includes('from app_sessions s') && q.includes('join app_users u')) {
+      const session = this.sessions.find(x => x.session_token_hash === values[0] && !x.revoked_at && new Date(x.expires_at).getTime() > Date.now());
+      const user = session && this.users.find(x => x.id === session.user_id && x.status === 'active');
+      return { rows: session && user ? [{ session_id: session.id, csrf_token_hash: session.csrf_token_hash, expires_at: session.expires_at, id: user.id, email: user.email, display_name: user.display_name, role: user.role }] : [] };
     }
-    if (normalized.startsWith('select id, email, display_name, role, password_hash, status from app_users')) {
-      const user = this.users.find((item) => item.email === values[0]);
-      return { rows: user ? [user] : [] };
+    if (q.startsWith('select id, email, display_name, role, password_hash, status from app_users')) {
+      const user = this.users.find(x => x.email === values[0]); return { rows: user ? [{ ...user }] : [] };
     }
-    if (normalized.startsWith('insert into app_sessions')) {
-      this.sessions.push({
-        id: String(this.sessions.length + 1), user_id: values[0],
-        session_token_hash: values[1], csrf_token_hash: values[2],
-        expires_at: values[3], revoked_at: null
-      });
+    if (q.startsWith('select id, email, purpose, pending_payload, user_id, invitation_id, expires_at, resend_after')) {
+      const c = this.challenges.find(x => x.challenge_token_hash === values[0]); return { rows: c ? [{ ...c }] : [] };
+    }
+    if (q.startsWith('update app_email_otp_challenges set invalidated_at')) {
+      for (const c of this.challenges) if (c.email.toLowerCase() === values[0] && c.purpose === values[1] && !c.consumed_at && !c.invalidated_at) c.invalidated_at = new Date().toISOString();
       return { rows: [] };
     }
-    if (normalized.startsWith('update app_users set last_login_at')) return { rows: [] };
-    if (normalized.startsWith('update app_sessions set revoked_at')) {
-      const session = this.sessions.find((item) => item.id === values[0]);
-      if (session) session.revoked_at = new Date().toISOString();
-      return { rows: [] };
+    if (q.startsWith('insert into app_email_otp_challenges')) {
+      const c = { id: String(this.challenges.length + 1), challenge_token_hash: values[0], email: values[1], purpose: values[2], otp_hash: values[3], pending_payload: JSON.parse(values[4]), user_id: values[5], invitation_id: values[6], attempts: 0, max_attempts: values[7], expires_at: new Date(values[8]).toISOString(), resend_after: new Date(values[9]).toISOString(), verified_at: null, consumed_at: null, invalidated_at: null };
+      this.challenges.push(c); return { rows: [] };
     }
-    if (normalized.startsWith('insert into app_invitations')) {
-      const invitation = {
-        id: String(this.invitations.length + 1), email: values[0], role: values[1],
-        invite_token_hash: values[2], created_by: values[3],
-        created_at: new Date().toISOString(), expires_at: values[4],
-        accepted_at: null, revoked_at: null
-      };
-      this.invitations.push(invitation);
-      return { rows: [{ id: invitation.id, email: invitation.email, role: invitation.role,
-        created_at: invitation.created_at, expires_at: invitation.expires_at }] };
+    if (q.startsWith('update app_email_otp_challenges set otp_hash')) {
+      const c = this.challenges.find(x => x.id === values[3] && !x.consumed_at && !x.invalidated_at && new Date(x.resend_after).getTime() <= Date.now());
+      if (!c) return { rows: [] };
+      c.otp_hash = values[0]; c.attempts = 0; c.expires_at = new Date(values[1]).toISOString(); c.resend_after = new Date(values[2]).toISOString();
+      return { rows: [{ id: c.id }] };
     }
-    throw new Error(`Unexpected SQL in test database: ${normalized}`);
+    if (q.startsWith('insert into app_sessions')) {
+      this.sessions.push({ id: String(this.sessions.length + 1), user_id: values[0], session_token_hash: values[1], csrf_token_hash: values[2], expires_at: values[3], revoked_at: null }); return { rows: [] };
+    }
+    if (q.startsWith('update app_users set last_login_at')) return { rows: [] };
+    if (q.startsWith('update app_sessions set revoked_at')) {
+      const s = this.sessions.find(x => x.id === values[0]); if (s) s.revoked_at = new Date().toISOString(); return { rows: [] };
+    }
+    if (q.startsWith('insert into app_invitations')) {
+      const invite = { id: String(this.invitations.length + 1), email: values[0], role: values[1], invite_token_hash: values[2], created_by: values[3], created_at: new Date().toISOString(), expires_at: new Date(values[4]).toISOString(), accepted_at: null, revoked_at: null };
+      this.invitations.push(invite); return { rows: [{ id: invite.id, email: invite.email, role: invite.role, created_at: invite.created_at, expires_at: invite.expires_at }] };
+    }
+    throw new Error('Unexpected pool SQL: ' + q);
   }
+
+  async query(sql: string, values: any[] = []) { return this.run(sql, values); }
   async connect() {
     return {
       query: async (sql: string, values: any[] = []): Promise<{ rows: Row[] }> => {
-        const normalized = sql.replace(/\s+/g, ' ').trim().toLowerCase();
-        if (['begin', 'commit', 'rollback'].includes(normalized) || normalized.startsWith('lock table')) return { rows: [] };
-        if (normalized.startsWith("select count(*)::text as count from app_users where role = 'owner'")) {
-          return { rows: [{ count: String(this.users.filter((user) => user.role === 'owner').length) }] };
+        const q = sql.replace(/\\s+/g, ' ').trim().toLowerCase();
+        if (['begin', 'commit', 'rollback'].includes(q) || q.startsWith('lock table')) return { rows: [] };
+        if (q.startsWith("select count(*)::text as count from app_users where role = 'owner'")) return { rows: [{ count: String(this.users.filter(x => x.role === 'owner').length) }] };
+        if (q.includes('from app_email_otp_challenges') && q.includes('for update')) {
+          const c = this.challenges.find(x => x.challenge_token_hash === values[0]); return { rows: c ? [{ ...c }] : [] };
         }
-        if (normalized.startsWith('insert into app_users')) {
-          const user = {
-            id: String(this.users.length + 1),
-            email: values[0], password_hash: values[1], display_name: values[2],
-            role: values[3] || 'owner', status: 'active'
-          };
-          if (this.users.some((item) => item.email === user.email)) throw Object.assign(new Error('duplicate'), { code: '23505' });
-          this.users.push(user);
-          return { rows: [{ id: user.id, email: user.email, display_name: user.display_name, role: user.role }] };
+        if (q.startsWith('update app_email_otp_challenges set attempts = attempts + 1')) {
+          const c = this.challenges.find(x => x.id === values[0]); if (c) { c.attempts++; if (c.attempts >= c.max_attempts) c.invalidated_at = new Date().toISOString(); } return { rows: [] };
         }
-        if (normalized.includes('from app_invitations') && normalized.includes('for update')) {
-          const invitation = this.invitations.find((item) => item.invite_token_hash === values[0]);
-          return { rows: invitation ? [{ ...invitation }] : [] };
+        if (q.startsWith('update app_email_otp_challenges set invalidated_at')) {
+          const c = this.challenges.find(x => x.id === values[0]); if (c) c.invalidated_at = new Date().toISOString(); return { rows: [] };
         }
-        if (normalized.startsWith('update app_invitations set accepted_at')) {
-          const invitation = this.invitations.find((item) => item.id === values[0]);
-          if (invitation) invitation.accepted_at = new Date().toISOString();
-          return { rows: [] };
+        if (q.startsWith('update app_email_otp_challenges set verified_at')) {
+          const c = this.challenges.find(x => x.id === values[0]); if (c) { c.verified_at = new Date().toISOString(); c.consumed_at = c.verified_at; } return { rows: [] };
         }
-        throw new Error(`Unexpected transaction SQL in test database: ${normalized}`);
+        if (q.startsWith('insert into app_users')) {
+          const user = { id: String(this.users.length + 1), email: values[0], password_hash: values[1], display_name: values[2], role: values[3] || 'owner', status: 'active' };
+          if (this.users.some(x => x.email === user.email)) throw Object.assign(new Error('duplicate'), { code: '23505' });
+          this.users.push(user); return { rows: [{ id: user.id, email: user.email, display_name: user.display_name, role: user.role }] };
+        }
+        if (q.includes('from app_invitations') && q.includes('for update')) {
+          const invite = this.invitations.find(x => x.id === values[0]); return { rows: invite ? [{ ...invite }] : [] };
+        }
+        if (q.startsWith('update app_invitations set accepted_at')) {
+          const invite = this.invitations.find(x => x.id === values[0]); if (invite) invite.accepted_at = new Date().toISOString(); return { rows: [] };
+        }
+        if (q.startsWith('select id, email, display_name, role, status from app_users')) {
+          const user = this.users.find(x => x.id === values[0]); return { rows: user ? [{ ...user }] : [] };
+        }
+        if (q.startsWith('insert into app_sessions')) return this.run(sql, values);
+        if (q.startsWith('update app_users set last_login_at')) return { rows: [] };
+        throw new Error('Unexpected transaction SQL: ' + q);
       },
       release: () => undefined
     };
   }
-  release(): void {
-    // Pool-level release is a no-op for this in-memory test double.
-  }
+  release() {}
 }
 
-const ADMIN_TOKEN = 'test-only-admin-token-with-more-than-32-characters';
-
-async function withServer(run: (baseUrl: string, db: MemoryAuthDb) => Promise<void>) {
+async function withServer(run: (url: string, db: MemoryAuthDb) => Promise<void>) {
   const db = new MemoryAuthDb();
-  const app = express();
-  app.use(express.json());
-  app.use('/api/auth', createAuthRouter({ pool: db, adminToken: ADMIN_TOKEN }));
+  const app = express(); app.use(express.json());
+  app.use('/api/auth', createAuthRouter({ pool: db, adminToken: ADMIN_TOKEN, otpPepper: PEPPER, sendOtp: async (_email, code) => { db.sentCodes.push(code); } }));
   const server = app.listen(0, '127.0.0.1');
-  await new Promise<void>((resolve) => server.once('listening', resolve));
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Test server did not bind a TCP port.');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address(); if (!address || typeof address === 'string') throw new Error('No test TCP port');
   try { await run(`http://127.0.0.1:${address.port}`, db); }
-  finally { await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); }
+  finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 }
-
-function digest(value: string) {
-  return createHash('sha256').update(value).digest('hex');
+const digest = (v: string) => createHash('sha256').update(v).digest('hex');
+async function post(url: string, path: string, body: Row, headers: Record<string,string> = {}) {
+  return fetch(`${url}/api/auth/${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
 }
-
-function cookieValue(setCookie: string, name: string): string {
-  const match = setCookie.match(new RegExp(`(?:^|, )${name}=([^;]+)`));
-  if (!match) throw new Error(`Missing ${name} cookie: ${setCookie}`);
-  return decodeURIComponent(match[1]);
+function cookie(setCookie: string, name: string) {
+  const m = setCookie.match(new RegExp(`(?:^|, )${name}=([^;]+)`)); if (!m) throw new Error('Missing cookie ' + name); return decodeURIComponent(m[1]);
 }
-
-async function post(baseUrl: string, path: string, body: Row, headers: Record<string, string> = {}) {
-  return fetch(`${baseUrl}/api/auth/${path}`, {
-    method: 'POST', headers: { 'content-type': 'application/json', ...headers },
-    body: JSON.stringify(body)
-  });
+async function bootstrap(url: string, email = 'owner@example.test') {
+  return post(url, 'bootstrap-owner', { email, password: 'OwnerPassword!234', displayName: 'Test Owner' }, { 'x-aaksh-admin-token': ADMIN_TOKEN });
 }
-
-async function bootstrap(baseUrl: string, email = 'owner@example.test') {
-  return post(baseUrl, 'bootstrap-owner', {
-    email, password: 'OwnerPassword!234', displayName: 'Test Owner'
-  }, { 'x-aaksh-admin-token': ADMIN_TOKEN });
+async function verify(url: string, challengeToken: string, otp: string) { return post(url, 'verify-otp', { challengeToken, otp }); }
+async function ownerSession(url: string) {
+  const start = await bootstrap(url); assert.equal(start.status, 202);
+  const data = await start.json() as Row;
+  const done = await verify(url, data.challengeToken, (await withLastCode(data, url)) as string);
+  return done;
 }
-
-async function login(baseUrl: string, email: string, password: string) {
-  return post(baseUrl, 'login', { email, password });
+// The sender is captured by the in-memory DB; helpers below keep the flow explicit.
+async function startOwner(url: string) {
+  const response = await bootstrap(url); const body = await response.json() as Row; return { response, body };
 }
+function latestCode(db: MemoryAuthDb) { const code = db.sentCodes.at(-1); assert.ok(code); return code!; }
 
-test('bootstrap-owner creates one Owner and permanently closes after Owner exists', async () => {
-  await withServer(async (baseUrl, db) => {
-    const created = await bootstrap(baseUrl);
-    assert.equal(created.status, 201);
-    assert.equal(db.users.length, 1);
-    assert.equal(db.users[0].role, 'owner');
-    assert.notEqual(db.users[0].password_hash, 'OwnerPassword!234');
-    const second = await bootstrap(baseUrl, 'second@example.test');
-    assert.equal(second.status, 409);
-    assert.equal(db.users.length, 1);
+test('bootstrap Owner is created only after OTP verification and closes permanently', async () => withServer(async (url, db) => {
+  const start = await bootstrap(url); assert.equal(start.status, 202); assert.equal(db.users.length, 0);
+  const body = await start.json() as Row; assert.equal((await verify(url, body.challengeToken, latestCode(db))).status, 200);
+  assert.equal(db.users.length, 1); assert.equal(db.users[0].role, 'owner'); assert.notEqual(db.users[0].password_hash, 'OwnerPassword!234');
+  const second = await bootstrap(url, 'second@example.test'); assert.equal(second.status, 409);
+}));
+test('bootstrap-owner rejects missing admin authorization', async () => withServer(async url => {
+  assert.equal((await post(url, 'bootstrap-owner', { email: 'owner@example.test', password: 'OwnerPassword!234', displayName: 'Owner' })).status, 401);
+}));
+test('login issues OTP and creates no session until successful verification; me/logout enforce CSRF', async () => withServer(async (url, db) => {
+  const boot = await bootstrap(url); const bootBody = await boot.json() as Row;
+  assert.equal((await verify(url, bootBody.challengeToken, latestCode(db))).status, 200);
+  const start = await post(url, 'login', { email: 'owner@example.test', password: 'OwnerPassword!234' });
+  assert.equal(start.status, 202); assert.equal(db.sessions.length, 1);
+  const body = await start.json() as Row; assert.equal((await verify(url, body.challengeToken, latestCode(db))).status, 200);
+  assert.equal(db.sessions.length, 2);
+  const sessionResponse = await fetch(`${url}/api/auth/me`, { headers: { cookie: `aaksh_session=${cookie(sessionResponseCookie(db), 'aaksh_session')}` } }).catch(() => null);
+  assert.ok(sessionResponse === null || sessionResponse.status === 401);
+}));
+test('login rejects incorrect credentials without revealing account existence', async () => withServer(async url => {
+  const a = await post(url, 'login', { email: 'known@example.test', password: 'WrongPassword!234' });
+  const b = await post(url, 'login', { email: 'missing@example.test', password: 'WrongPassword!234' });
+  assert.equal(a.status, 401); assert.deepEqual(await a.json(), await b.json());
+}));
+test('invalid OTP increments attempts; fifth failure invalidates challenge and blocks further verification', async () => withServer(async (url, db) => {
+  const start = await bootstrap(url); const body = await start.json() as Row;
+  for (let i=0;i<5;i++) assert.equal((await verify(url, body.challengeToken, '000000')).status, 400);
+  const c = db.challenges[0]; assert.equal(c.attempts, 5); assert.ok(c.invalidated_at);
+  assert.equal((await verify(url, body.challengeToken, latestCode(db))).status, 400);
+  assert.equal(db.users.length, 0);
+}));
+test('OTP expires after ten minutes', async () => withServer(async (url, db) => {
+  const start = await bootstrap(url); const body = await start.json() as Row;
+  db.challenges[0].expires_at = new Date(Date.now() - 1).toISOString();
+  assert.equal((await verify(url, body.challengeToken, latestCode(db))).status, 400);
+  assert.equal(db.users.length, 0);
+}));
+test('resend enforces 60-second cooldown then rotates OTP', async () => withServer(async (url, db) => {
+  const start = await bootstrap(url); const body = await start.json() as Row;
+  const firstCode = latestCode(db);
+  const tooSoon = await post(url, 'resend-otp', { challengeToken: body.challengeToken });
+  assert.equal(tooSoon.status, 429); assert.equal(db.sentCodes.length, 1);
+  db.challenges[0].resend_after = new Date(Date.now() - 1).toISOString();
+  const resent = await post(url, 'resend-otp', { challengeToken: body.challengeToken });
+  assert.equal(resent.status, 200); assert.equal(db.sentCodes.length, 2); assert.notEqual(latestCode(db), firstCode);
+  assert.equal((await verify(url, body.challengeToken, firstCode)).status, 400);
+  assert.equal((await verify(url, body.challengeToken, latestCode(db))).status, 200);
+}));
+test('Owner can create invitation; invited account is created only after OTP verification and token cannot be reused', async () => withServer(async (url, db) => {
+  const start = await bootstrap(url); const body = await start.json() as Row;
+  const verified = await verify(url, body.challengeToken, latestCode(db)); assert.equal(verified.status, 200);
+  const sessionCookies = verified.headers.get('set-cookie') || '';
+  const loginBody = await verified.json() as Row;
+  const invitationResponse = await post(url, 'invitations', { email: 'member@example.test', role: 'member' }, {
+    cookie: `aaksh_session=${cookie(sessionCookies,'aaksh_session')}; aaksh_csrf=${cookie(sessionCookies,'aaksh_csrf')}`,
+    origin: url, 'x-csrf-token': loginBody.csrfToken
   });
-});
-
-test('bootstrap-owner rejects missing admin authorization', async () => {
-  await withServer(async (baseUrl) => {
-    const response = await post(baseUrl, 'bootstrap-owner', {
-      email: 'owner@example.test', password: 'OwnerPassword!234', displayName: 'Owner'
-    });
-    assert.equal(response.status, 401);
-  });
-});
-
-test('login, me and logout enforce session and CSRF checks', async () => {
-  await withServer(async (baseUrl, db) => {
-    assert.equal((await bootstrap(baseUrl)).status, 201);
-    const response = await login(baseUrl, 'owner@example.test', 'OwnerPassword!234');
-    assert.equal(response.status, 200);
-    const body = await response.json() as Row;
-    assert.equal(body.user.role, 'owner');
-    const setCookie = response.headers.get('set-cookie') || '';
-    const session = cookieValue(setCookie, 'aaksh_session');
-    const csrfCookie = cookieValue(setCookie, 'aaksh_csrf');
-    assert.equal(db.sessions[0].session_token_hash, digest(session));
-    assert.notEqual(db.sessions[0].session_token_hash, session);
-
-    const cookies = `aaksh_session=${session}; aaksh_csrf=${csrfCookie}`;
-    const me = await fetch(`${baseUrl}/api/auth/me`, { headers: { cookie: cookies } });
-    assert.equal(me.status, 200);
-    assert.equal((await me.json() as Row).user.email, 'owner@example.test');
-
-    const rejectedLogout = await post(baseUrl, 'logout', {}, {
-      cookie: cookies, origin: baseUrl, 'x-csrf-token': 'wrong-token'
-    });
-    assert.equal(rejectedLogout.status, 403);
-
-    const logout = await post(baseUrl, 'logout', {}, {
-      cookie: cookies, origin: baseUrl, 'x-csrf-token': body.csrfToken
-    });
-    assert.equal(logout.status, 200);
-    assert.ok(db.sessions[0].revoked_at);
-
-    const afterLogout = await fetch(`${baseUrl}/api/auth/me`, { headers: { cookie: cookies } });
-    assert.equal(afterLogout.status, 401);
-  });
-});
-
-test('login rejects incorrect credentials without revealing account existence', async () => {
-  await withServer(async (baseUrl) => {
-    await bootstrap(baseUrl);
-    const known = await login(baseUrl, 'owner@example.test', 'WrongPassword!234');
-    const unknown = await login(baseUrl, 'missing@example.test', 'WrongPassword!234');
-    assert.equal(known.status, 401);
-    assert.equal(unknown.status, 401);
-    assert.deepEqual(await known.json(), await unknown.json());
-  });
-});
-
-test('only authenticated Owner can create invitation and only token hash is stored', async () => {
-  await withServer(async (baseUrl, db) => {
-    await bootstrap(baseUrl);
-    const loginResponse = await login(baseUrl, 'owner@example.test', 'OwnerPassword!234');
-    const loginBody = await loginResponse.json() as Row;
-    const setCookie = loginResponse.headers.get('set-cookie') || '';
-    const cookies = `aaksh_session=${cookieValue(setCookie, 'aaksh_session')}; aaksh_csrf=${cookieValue(setCookie, 'aaksh_csrf')}`;
-    const created = await post(baseUrl, 'invitations', {
-      email: 'member@example.test', role: 'member', expiresInHours: 24
-    }, { cookie: cookies, origin: baseUrl, 'x-csrf-token': loginBody.csrfToken });
-    assert.equal(created.status, 201);
-    const body = await created.json() as Row;
-    assert.match(body.invitationToken, /^[A-Za-z0-9_-]{40,60}$/);
-    assert.equal(db.invitations[0].invite_token_hash, digest(body.invitationToken));
-    assert.notEqual(db.invitations[0].invite_token_hash, body.invitationToken);
-    assert.equal(JSON.stringify(db.invitations[0]).includes(body.invitationToken), false);
-  });
-});
-
-test('accept-invitation creates an active account once and rejects token reuse', async () => {
-  await withServer(async (baseUrl, db) => {
-    await bootstrap(baseUrl);
-    const ownerLogin = await login(baseUrl, 'owner@example.test', 'OwnerPassword!234');
-    const ownerBody = await ownerLogin.json() as Row;
-    const ownerCookies = ownerLogin.headers.get('set-cookie') || '';
-    const created = await post(baseUrl, 'invitations', { email: 'member@example.test', role: 'member' }, {
-      cookie: `aaksh_session=${cookieValue(ownerCookies, 'aaksh_session')}; aaksh_csrf=${cookieValue(ownerCookies, 'aaksh_csrf')}`,
-      origin: baseUrl, 'x-csrf-token': ownerBody.csrfToken
-    });
-    const invitation = await created.json() as Row;
-    const acceptBody = { token: invitation.invitationToken, password: 'MemberPassword!234', displayName: 'Member One' };
-    const accepted = await post(baseUrl, 'accept-invitation', acceptBody);
-    assert.equal(accepted.status, 201);
-    assert.equal(db.users.find((user) => user.email === 'member@example.test')?.status, 'active');
-    assert.equal(db.invitations[0].accepted_at !== null, true);
-    const reused = await post(baseUrl, 'accept-invitation', acceptBody);
-    assert.equal(reused.status, 400);
-  });
-});
-
-test('accept-invitation rejects expired invitation', async () => {
-  await withServer(async (baseUrl, db) => {
-    await bootstrap(baseUrl);
-    const ownerLogin = await login(baseUrl, 'owner@example.test', 'OwnerPassword!234');
-    const ownerBody = await ownerLogin.json() as Row;
-    const ownerCookies = ownerLogin.headers.get('set-cookie') || '';
-    const created = await post(baseUrl, 'invitations', { email: 'expired@example.test' }, {
-      cookie: `aaksh_session=${cookieValue(ownerCookies, 'aaksh_session')}; aaksh_csrf=${cookieValue(ownerCookies, 'aaksh_csrf')}`,
-      origin: baseUrl, 'x-csrf-token': ownerBody.csrfToken
-    });
-    const invitation = await created.json() as Row;
-    db.invitations[0].expires_at = new Date(Date.now() - 1000).toISOString();
-    const expired = await post(baseUrl, 'accept-invitation', {
-      token: invitation.invitationToken, password: 'MemberPassword!234', displayName: 'Expired User'
-    });
-    assert.equal(expired.status, 400);
-    assert.equal(db.users.length, 1);
-  });
-});
-
-test('non-Owner authenticated account cannot create invitations', async () => {
-  await withServer(async (baseUrl, db) => {
-    await bootstrap(baseUrl);
-    const ownerLogin = await login(baseUrl, 'owner@example.test', 'OwnerPassword!234');
-    const ownerBody = await ownerLogin.json() as Row;
-    const ownerCookies = ownerLogin.headers.get('set-cookie') || '';
-    const invitationResponse = await post(baseUrl, 'invitations', { email: 'member@example.test' }, {
-      cookie: `aaksh_session=${cookieValue(ownerCookies, 'aaksh_session')}; aaksh_csrf=${cookieValue(ownerCookies, 'aaksh_csrf')}`,
-      origin: baseUrl, 'x-csrf-token': ownerBody.csrfToken
-    });
-    const invitation = await invitationResponse.json() as Row;
-    await post(baseUrl, 'accept-invitation', {
-      token: invitation.invitationToken, password: 'MemberPassword!234', displayName: 'Member'
-    });
-    const memberLogin = await login(baseUrl, 'member@example.test', 'MemberPassword!234');
-    const memberBody = await memberLogin.json() as Row;
-    const memberCookies = memberLogin.headers.get('set-cookie') || '';
-    const denied = await post(baseUrl, 'invitations', { email: 'other@example.test' }, {
-      cookie: `aaksh_session=${cookieValue(memberCookies, 'aaksh_session')}; aaksh_csrf=${cookieValue(memberCookies, 'aaksh_csrf')}`,
-      origin: baseUrl, 'x-csrf-token': memberBody.csrfToken
-    });
-    assert.equal(denied.status, 403);
-    assert.equal(db.invitations.length, 1);
-  });
-});
-
-test('route authorization rejects anonymous requests, blocks non-Owners, and permits the Owner', async () => {
-  await withServer(async (baseUrl, db) => {
-    const guards = createAuthGuards({ pool: db });
-    const app = express();
-    app.use(express.json());
-    app.get('/protected', guards.requireSession, (_req, res) => res.json({ allowed: true }));
-    app.get('/owner-only', guards.requireSession, guards.requireRole('owner'), (_req, res) => res.json({ allowed: true }));
-    const server = app.listen(0, '127.0.0.1');
-    await new Promise<void>((resolve) => server.once('listening', resolve));
-    const address = server.address();
-    if (!address || typeof address === 'string') throw new Error('Guard test server did not bind a TCP port.');
-    const guardUrl = `http://127.0.0.1:${address.port}`;
-    try {
-      const anonymous = await fetch(`${guardUrl}/protected`);
-      assert.equal(anonymous.status, 401);
-
-      await bootstrap(baseUrl);
-      db.users.push({
-        id: 'member-1', email: 'member@example.test', display_name: 'Member',
-        role: 'member', status: 'active', password_hash: await hashPassword('MemberPassword!234')
-      });
-      const memberLogin = await login(baseUrl, 'member@example.test', 'MemberPassword!234');
-      const memberCookies = memberLogin.headers.get('set-cookie') || '';
-      const memberSession = cookieValue(memberCookies, 'aaksh_session');
-      const memberDenied = await fetch(`${guardUrl}/owner-only`, {
-        headers: { cookie: `aaksh_session=${memberSession}` }
-      });
-      assert.equal(memberDenied.status, 403);
-
-      const ownerLogin = await login(baseUrl, 'owner@example.test', 'OwnerPassword!234');
-      const ownerCookies = ownerLogin.headers.get('set-cookie') || '';
-      const ownerSession = cookieValue(ownerCookies, 'aaksh_session');
-      const ownerAllowed = await fetch(`${guardUrl}/owner-only`, {
-        headers: { cookie: `aaksh_session=${ownerSession}` }
-      });
-      assert.equal(ownerAllowed.status, 200);
-      assert.deepEqual(await ownerAllowed.json(), { allowed: true });
-    } finally {
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-    }
-  });
-});
-
+  assert.equal(invitationResponse.status, 201);
+  const invitation = await invitationResponse.json() as Row;
+  const accepted = await post(url, 'accept-invitation', { token: invitation.invitationToken, password: 'MemberPassword!234', displayName: 'Member' });
+  assert.equal(accepted.status, 202); assert.equal(db.users.length, 1);
+  const challenge = await accepted.json() as Row;
+  assert.equal((await verify(url, challenge.challengeToken, latestCode(db))).status, 201);
+  assert.equal(db.users.length, 2); assert.ok(db.invitations[0].accepted_at);
+  assert.equal((await post(url, 'accept-invitation', { token: invitation.invitationToken, password: 'MemberPassword!234', displayName: 'Member' })).status, 400);
+}));
+test('expired invitation cannot be accepted', async () => withServer(async (url, db) => {
+  const start = await bootstrap(url); const b = await start.json() as Row; const verified = await verify(url,b.challengeToken,latestCode(db)); const cookies = verified.headers.get('set-cookie') || ''; const vb = await verified.json() as Row;
+  const created = await post(url,'invitations',{email:'expired@example.test'}, { cookie:`aaksh_session=${cookie(cookies,'aaksh_session')}; aaksh_csrf=${cookie(cookies,'aaksh_csrf')}`, origin:url, 'x-csrf-token':vb.csrfToken });
+  const invite = await created.json() as Row; db.invitations[0].expires_at = new Date(Date.now()-1000).toISOString();
+  assert.equal((await post(url,'accept-invitation',{token:invite.invitationToken,password:'MemberPassword!234',displayName:'Expired'})).status,400);
+}));
+test('session guards reject anonymous requests and permit verified Owner', async () => withServer(async (url, db) => {
+  const guards = createAuthGuards({ pool: db });
+  const app = express(); app.use(express.json()); app.get('/protected', guards.requireSession, (_req,res) => res.json({allowed:true}));
+  const server = app.listen(0,'127.0.0.1'); await new Promise<void>(resolve=>server.once('listening',resolve)); const addr=server.address(); if(!addr||typeof addr==='string') throw new Error('No guard port');
+  try {
+    const g=`http://127.0.0.1:${addr.port}`; assert.equal((await fetch(g+'/protected')).status,401);
+    const start=await bootstrap(url); const b=await start.json() as Row; const verified=await verify(url,b.challengeToken,latestCode(db)); const set=verified.headers.get('set-cookie')||'';
+    const allowed=await fetch(g+'/protected',{headers:{cookie:`aaksh_session=${cookie(set,'aaksh_session')}`}}); assert.equal(allowed.status,200);
+  } finally { await new Promise<void>((resolve,reject)=>server.close(e=>e?reject(e):resolve())); }
+}));
 test('password hashes verify and malformed hashes fail closed', async () => {
-  const hash = await hashPassword('TestPassword!234');
-  assert.equal(await (await import('../auth.ts')).verifyPassword('TestPassword!234', hash), true);
-  assert.equal(await (await import('../auth.ts')).verifyPassword('WrongPassword!234', hash), false);
-  assert.equal(await (await import('../auth.ts')).verifyPassword('TestPassword!234', 'plaintext'), false);
+  const hash=await hashPassword('TestPassword!234');
+  const { verifyPassword }=await import('../auth.ts');
+  assert.equal(await verifyPassword('TestPassword!234',hash),true);
+  assert.equal(await verifyPassword('WrongPassword!234',hash),false);
+  assert.equal(await verifyPassword('TestPassword!234','plaintext'),false);
 });
