@@ -803,7 +803,7 @@ I am your central AI assistant and command center. You can manage engineering ta
         {activeView === 'analytics' && <AnalyticsCenter />}
 
         {/* VIEW 3: Auto Pilot & Trigger Center */}
-        {activeView === 'autopilot' && <AutoPilotCenter />}
+        {activeView === 'autopilot' && <AutoPilotCenter voiceAssistantEnabled={Boolean(settings.voiceAssistantEnabled)} />}
 
         {/* VIEW 4: AI Video Generator */}
         {activeView === 'video' && <VideoGeneratorCenter />}
