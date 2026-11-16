@@ -375,6 +375,10 @@ export const AutoPilotCenter: React.FC<{
   };
 
   const startAutoPilotVoiceCommand = () => {
+    if (!safetyControlsEnabled) {
+      setVoiceCommandStatus('Safe Chat-Only Mode is ON. Enable Safety & Security first.');
+      return;
+    }
     if (!voiceAssistantEnabled) {
       setVoiceCommandStatus('Turn Voice Assistant ON in Chat or Settings first.');
       return;
@@ -427,6 +431,10 @@ export const AutoPilotCenter: React.FC<{
   };
 
   const confirmVoiceConfig = async () => {
+    if (!safetyControlsEnabled) {
+      setVoiceCommandStatus('Safe Chat-Only Mode is ON. Enable Safety & Security first.');
+      return;
+    }
     if (!pendingVoiceConfig) return;
     try {
       const response = await fetch('/api/autopilot/config', {
