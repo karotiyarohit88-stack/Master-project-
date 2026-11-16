@@ -147,19 +147,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             </div>
           )}
 
-          {onVoiceAssistantToggle && (
-            <button
-              type="button"
-              onClick={onVoiceAssistantToggle}
-              className={`px-2.5 py-1 rounded-xl border font-semibold transition-colors cursor-pointer flex items-center gap-1 flex-shrink-0 text-[11px] ${voiceAssistantEnabled ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-700 border-slate-300'}`}
-              aria-pressed={voiceAssistantEnabled}
-              title="Voice Assistant controls microphone access; it does not listen in the background"
-            >
-              <Mic className="w-3 h-3" />
-              <span>Voice {voiceAssistantEnabled ? 'ON' : 'OFF'}</span>
-            </button>
-          )}
-
           {onActionClick && (
             <>
               <button
@@ -249,7 +236,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              disabled={isLoading || disabled || !voiceAssistantEnabled}
+              disabled={isLoading || disabled}
               className="p-2 text-slate-500 hover:text-emerald-600 transition-colors rounded-xl hover:bg-slate-50 cursor-pointer flex-shrink-0 mb-0.5"
               title="Attach Image or Photo"
             >
@@ -270,6 +257,17 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 title={!voiceAssistantEnabled ? 'Turn Voice Assistant ON first' : (isListening ? 'Stop Listening' : 'Voice Input')}
               >
                 {isListening ? <MicOff className="w-4.5 h-4.5" /> : <Mic className="w-4.5 h-4.5" />}
+              </button>
+            )}
+            {onVoiceAssistantToggle && (
+              <button
+                type="button"
+                onClick={onVoiceAssistantToggle}
+                aria-pressed={voiceAssistantEnabled}
+                title="Voice Assistant ON/OFF; microphone is never active in the background"
+                className={`px-2 py-1.5 rounded-lg border text-[10px] font-bold flex-shrink-0 mb-0.5 ${voiceAssistantEnabled ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-100 text-slate-600 border-slate-200'}`}
+              >
+                {voiceAssistantEnabled ? 'ON' : 'OFF'}
               </button>
             )}
 
