@@ -36,6 +36,16 @@ window.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response>
   });
 };
 
+
 createRoot(document.getElementById('root')!).render(
   <AuthGate><App /></AuthGate>
 );
+
+// Register the app-shell worker only on secure origins. It deliberately excludes
+// /api/* and authentication responses from all caching strategies.
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/service-worker.js', { scope: '/' })
+      .catch((error) => console.warn('PWA offline shell registration unavailable:', error));
+  }, { once: true });
+}
