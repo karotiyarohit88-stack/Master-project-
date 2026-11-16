@@ -18,8 +18,8 @@ export function canAutoPostDailyContent(candidate: AutoPostCandidate): boolean {
 }
 
 type PlatformPost = { platform?: string; status?: string; publishedAt?: string };
-type PlatformTask = { platform?: string; status?: string };
-type PlatformExecution = { triggerSource?: string; status?: string; stepsExecuted?: Array<{ toolId?: string }> };
+type PlatformTask = { id?: string; platform?: string; status?: string };
+type PlatformExecution = { id?: string; triggerSource?: string; status?: string; stepsExecuted?: Array<{ toolId?: string }> };
 
 export function buildMultiPlatformAnalytics(posts: PlatformPost[], tasks: PlatformTask[], executions: PlatformExecution[]) {
   const platforms = {
@@ -33,10 +33,12 @@ export function buildMultiPlatformAnalytics(posts: PlatformPost[], tasks: Platfo
     platforms[key].publishedPosts += 1;
   }
   for (const task of tasks) {
+    if (task.id?.startsWith('task_ap_initial_')) continue;
     const key = String(task.platform || '').includes('youtube') ? 'youtube' : 'socialMedia';
     platforms[key].tasks += 1;
   }
   for (const execution of executions) {
+    if (execution.id?.startsWith('exec_initial_')) continue;
     if (execution.triggerSource === 'webhook' || execution.stepsExecuted?.some(step => step.toolId === 'n8n_webhook')) {
       platforms.webhooks.webhookActions += 1;
     }
@@ -73,12 +75,16 @@ export function buildVerifiedEarningsSummary(entries: VerifiedEarningEntry[]) {
   );
   const sources: Record<string, number> = {};
   let taxableAmount = 0, cgst = 0, sgst = 0, igst = 0;
+  const gstRateBreakdown: Record<string, { taxableAmount: number; cgst: number; sgst: number; igst: number }> = {};
   for (const entry of verified) {
     taxableAmount += entry.taxableAmount;
     sources[entry.source] = (sources[entry.source] || 0) + entry.taxableAmount;
     const tax = entry.taxableAmount * entry.gstRate / 100;
-    if (entry.supplyType === 'inter_state') igst += tax;
-    else { cgst += tax / 2; sgst += tax / 2; }
+    const rateKey = entry.gstRate + '%';
+    const rateRow = gstRateBreakdown[rateKey] || (gstRateBreakdown[rateKey] = { taxableAmount: 0, cgst: 0, sgst: 0, igst: 0 });
+    rateRow.taxableAmount += entry.taxableAmount;
+    if (entry.supplyType === 'inter_state') { igst += tax; rateRow.igst += tax; }
+    else { cgst += tax / 2; sgst += tax / 2; rateRow.cgst += tax / 2; rateRow.sgst += tax / 2; }
   }
   return {
     currency: 'INR',
@@ -87,6 +93,7 @@ export function buildVerifiedEarningsSummary(entries: VerifiedEarningEntry[]) {
     taxableAmount, cgst, sgst, igst,
     totalGst: cgst + sgst + igst,
     sourceWiseEarnings: sources,
+    gstRateBreakdown,
     dataStatus: verified.length ? 'verified_ledger_entries' : 'no_verified_ledger_entries'
   };
 }
