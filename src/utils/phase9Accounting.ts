@@ -17,7 +17,7 @@ export function canAutoPostDailyContent(candidate: AutoPostCandidate): boolean {
   }
 }
 
-type PlatformPost = { platform?: string; status?: string; publishedAt?: string };
+type PlatformPost = { platform?: string; status?: string; publishedAt?: string; publicationConfirmed?: boolean };
 type PlatformTask = { id?: string; platform?: string; status?: string };
 type PlatformExecution = { id?: string; triggerSource?: string; status?: string; stepsExecuted?: Array<{ toolId?: string }> };
 
@@ -28,7 +28,7 @@ export function buildMultiPlatformAnalytics(posts: PlatformPost[], tasks: Platfo
     webhooks: { publishedPosts: 0, tasks: 0, webhookActions: 0 }
   };
   for (const post of posts) {
-    if (post.status !== 'published' || !post.publishedAt) continue;
+    if (post.status !== 'published' || !post.publishedAt || post.publicationConfirmed !== true) continue;
     const key = post.platform === 'youtube' ? 'youtube' : 'socialMedia';
     platforms[key].publishedPosts += 1;
   }
