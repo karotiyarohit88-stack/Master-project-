@@ -153,12 +153,15 @@ export default function App() {
       });
   }, []);
 
-  // Sync the server-authoritative AutoPilot safety switch only after AuthGate
-  // has mounted this application with a valid OTP-issued session.
+  // AuthGate renders App only after /api/auth/me confirms an OTP-issued session.
+  // The server remains authoritative for the Safety & Security switch.
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/autopilot/config', { credentials: 'same-origin' })
-      .then((response) => response.ok ? response.json() : null)
+    fetch('/api/auth/me', { credentials: 'same-origin' })
+      .then((sessionResponse) => sessionResponse.ok
+        ? fetch('/api/autopilot/config', { credentials: 'same-origin' })
+        : null)
+      .then((response) => response?.ok ? response.json() : null)
       .then((data) => {
         if (cancelled || typeof data?.config?.safetyEnabled !== 'boolean') return;
         setSettings((prev) => ({
@@ -170,6 +173,33 @@ export default function App() {
       .catch((error) => console.warn('AutoPilot safety status unavailable:', error));
     return () => { cancelled = true; };
   }, []);
+
+  // "Always Active after Login" is a local opt-in. AutoPilot can start only
+  // when this authenticated app session is valid and the server safety switch is ON.
+  useEffect(() => {
+    if (!settings.alwaysActiveAfterLogin || !settings.safetyControlsEnabled) return;
+    let cancelled = false;
+    fetch('/api/auth/me', { credentials: 'same-origin' })
+      .then(async (sessionResponse) => {
+        if (!sessionResponse.ok) return null;
+        const configResponse = await fetch('/api/autopilot/config', { credentials: 'same-origin' });
+        return configResponse.ok ? configResponse.json() : null;
+      })
+      .then(async (data) => {
+        if (cancelled || !data?.config?.safetyEnabled || data.config.isRunning) return;
+        const response = await fetch('/api/autopilot/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ isRunning: true })
+        });
+        if (!cancelled && response.ok) {
+          window.dispatchEvent(new CustomEvent('aaksh:autopilot-activated'));
+        }
+      })
+      .catch((error) => console.warn('AutoPilot post-login activation unavailable:', error));
+    return () => { cancelled = true; };
+  }, [settings.alwaysActiveAfterLogin, settings.safetyControlsEnabled]);
 
   // Save conversations to localStorage
   useEffect(() => {
@@ -307,6 +337,12 @@ I am your central AI assistant and command center. You can manage engineering ta
   };
 
   const handleResetSettings = () => {
+    fetch('/api/autopilot/safety', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ safetyEnabled: false })
+    }).catch((error) => console.warn('Could not reset server safety switch:', error));
     setSettings(DEFAULT_SETTINGS);
   };
 
@@ -851,7 +887,6 @@ I am your central AI assistant and command center. You can manage engineering ta
           <AutoPilotCenter
             voiceAssistantEnabled={Boolean(settings.voiceAssistantEnabled && settings.safetyControlsEnabled)}
             safetyControlsEnabled={Boolean(settings.safetyControlsEnabled)}
-            alwaysActiveAfterLogin={Boolean(settings.alwaysActiveAfterLogin)}
           />
         )}
 
