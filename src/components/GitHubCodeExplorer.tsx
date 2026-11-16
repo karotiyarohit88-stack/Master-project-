@@ -903,7 +903,7 @@ export const GitHubCodeExplorer: React.FC<GitHubCodeExplorerProps> = ({ onAskCha
               </div>
 
               {authError && (
-                <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700">
+                <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800">
                   {authError}
                 </div>
               )}
@@ -921,7 +921,7 @@ export const GitHubCodeExplorer: React.FC<GitHubCodeExplorerProps> = ({ onAskCha
                   <button
                     type="button"
                     onClick={handleDisconnect}
-                    className="px-3 py-2 rounded-xl text-xs font-medium text-rose-600 hover:bg-rose-50 border border-rose-200 cursor-pointer"
+                    className="px-3 py-2 rounded-xl text-xs font-medium text-amber-700 hover:bg-amber-50 border border-amber-200 cursor-pointer"
                   >
                     Disconnect Token
                   </button>
@@ -1008,7 +1008,7 @@ export const GitHubCodeExplorer: React.FC<GitHubCodeExplorerProps> = ({ onAskCha
                     {activeProposal.diff.split('\n').map((dLine, idx) => {
                       let lineClass = 'text-slate-300';
                       if (dLine.startsWith('+')) lineClass = 'text-emerald-400 bg-emerald-950/40';
-                      if (dLine.startsWith('-')) lineClass = 'text-rose-400 bg-rose-950/40';
+                      if (dLine.startsWith('-')) lineClass = 'text-amber-500 bg-amber-950/40';
                       if (dLine.startsWith('@@')) lineClass = 'text-blue-400';
                       return (
                         <div key={idx} className={`${lineClass} px-1 whitespace-pre-wrap`}>
