@@ -86,6 +86,13 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
     }
   }, []);
 
+  useEffect(() => {
+    if (!voiceAssistantEnabled && isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+    }
+  }, [voiceAssistantEnabled, isListening]);
+
   const toggleMic = () => {
     if (!voiceAssistantEnabled || !recognitionRef.current) return;
     if (isListening) {
@@ -317,7 +324,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={isLoading}
+                disabled={isLoading || !voiceAssistantEnabled}
                 className="p-2 text-slate-500 hover:text-emerald-600 transition-colors rounded-xl hover:bg-slate-100 cursor-pointer flex-shrink-0"
                 title="Attach photo"
               >
