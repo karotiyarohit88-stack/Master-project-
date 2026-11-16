@@ -175,6 +175,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
 
+          {/* Voice Assistant consent and privacy controls */}
+          <div className="space-y-2.5 pt-2 border-t border-slate-100">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1.5">
+              <Bot className="w-3.5 h-3.5 text-emerald-600" />
+              Voice Assistant & Privacy
+            </h4>
+            <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-slate-50 border border-slate-200">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs sm:text-sm font-semibold text-slate-800">Voice Assistant</p>
+                <p className="text-[11px] text-slate-500">Allows microphone input only when you tap the mic. No background or always-on listening.</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={Boolean(settings.voiceAssistantEnabled)}
+                onClick={() => onUpdateSettings({ voiceAssistantEnabled: !settings.voiceAssistantEnabled })}
+                className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors flex-shrink-0 ${settings.voiceAssistantEnabled ? 'bg-emerald-600' : 'bg-slate-300'}`}
+                aria-label="Turn Voice Assistant on or off"
+              >
+                <span className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${settings.voiceAssistantEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+              </button>
+            </div>
+            <p className="text-[10px] text-slate-500">This setting is currently saved on this browser/device. Cross-device account sync and native Android Accessibility support are separate implementation steps.</p>
+          </div>
+
           {/* Section 2: Honest Integration Status */}
           <div className="space-y-2.5 pt-2 border-t border-slate-100">
             <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1.5">
