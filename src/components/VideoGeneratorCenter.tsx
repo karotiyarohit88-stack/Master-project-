@@ -234,7 +234,7 @@ export const VideoGeneratorCenter: React.FC = () => {
           <div className={`mt-3 p-2.5 rounded-xl text-xs flex items-center gap-2 ${
             notification.type === 'success' ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' :
             notification.type === 'warning' ? 'bg-amber-50 border border-amber-200 text-amber-900' :
-            'bg-rose-50 border border-rose-200 text-rose-800'
+            'bg-amber-50 border border-amber-200 text-amber-900'
           }`}>
             {notification.type === 'success' ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" /> : <AlertCircle className="w-4 h-4 flex-shrink-0" />}
             <span className="truncate">{notification.message}</span>
@@ -450,7 +450,7 @@ export const VideoGeneratorCenter: React.FC = () => {
                       job.status === 'processing' ? 'bg-amber-100 text-amber-800 animate-pulse' :
                       job.status === 'waiting_credentials' ? 'bg-amber-100 text-amber-900' :
                       job.status === 'queued' ? 'bg-slate-200 text-slate-800' :
-                      'bg-rose-100 text-rose-800'
+                      'bg-amber-100 text-amber-900'
                     }`}>
                       {job.status === 'waiting_credentials' ? 'Needs Credentials' : job.status}
                     </span>
