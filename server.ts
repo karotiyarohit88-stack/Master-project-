@@ -2857,7 +2857,7 @@ app.get('/api/video/jobs', (req: Request, res: Response) => {
 // -----------------------------------------------------------------------------
 
 // POST /api/autopilot/safety: Owner-controlled global automation safety switch.
-app.post('/api/autopilot/safety', (req: Request, res: Response) => {
+app.post('/api/autopilot/safety', authGuards.requireCsrf, (req: Request, res: Response) => {
   const enabled = req.body?.safetyEnabled;
   if (typeof enabled !== 'boolean') {
     return res.status(400).json({ error: 'safetyEnabled must be a boolean.' });
