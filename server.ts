@@ -751,6 +751,7 @@ interface PublishingPost {
   status: 'draft' | 'waiting_approval' | 'approved' | 'published' | 'failed';
   dailyContent?: boolean;
   videoAssetVerified?: boolean;
+  publicationConfirmed?: boolean;
   createdAt: string;
   approvedAt?: string;
   publishedAt?: string;
@@ -3687,6 +3688,8 @@ app.post('/api/publishing/attach-verified-asset', authGuards.requireCsrf, (req: 
       post.status = 'published';
       post.publishedAt = new Date().toISOString();
       post.externalPostId = providerData.externalPostId;
+      post.publicationConfirmed = true;
+      post.publicationConfirmed = true;
     } catch {
       return res.status(502).json({ error: 'Publishing provider unavailable. Draft remains unpublished.', post });
     }
@@ -3768,6 +3771,7 @@ app.post('/api/publishing/publish', async (req: Request, res: Response) => {
   if (!post) {
     return res.status(404).json({ error: 'Post draft not found.' });
   }
+  if (post.status === 'published') return res.status(409).json({ error: 'Post is already marked as published.' });
   const autoPostEligible = canAutoPostDailyContent({ enabled: serverStore.autopilot.autoPostDailyContentEnabled, safetyEnabled: serverStore.autopilot.safetyEnabled, isDailyContent: post.dailyContent === true, videoUrl: post.videoUrl, videoAssetVerified: post.videoAssetVerified });
 
   // Prompt-only content pipeline drafts are never publishable without a real rendered asset.
@@ -3820,6 +3824,7 @@ app.post('/api/publishing/publish', async (req: Request, res: Response) => {
     }
   } else {
     post.externalPostId = 'manual_post_' + crypto.randomBytes(6).toString('hex');
+    post.publicationConfirmed = false;
   }
   post.status = 'published';
   post.publishedAt = new Date().toISOString();
