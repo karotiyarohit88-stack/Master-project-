@@ -28,6 +28,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
   const [otpChallenge, setOtpChallenge] = useState<{ challengeToken: string; purpose: AuthMode } | null>(null);
   const [otp, setOtp] = useState('');
   const [resendSeconds, setResendSeconds] = useState(0);
+  const [resendAvailableAt, setResendAvailableAt] = useState<number | null>(null);
   const [otpExpiresAt, setOtpExpiresAt] = useState<number | null>(null);
   const [otpSecondsLeft, setOtpSecondsLeft] = useState(0);
 
@@ -81,7 +82,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
       }
       setOtpChallenge({ challengeToken: data.challengeToken, purpose: mode });
       setOtp('');
-      setResendSeconds(60);
+      setResendAvailableAt(Date.now() + 60 * 1000);
       setOtpExpiresAt(Date.now() + 10 * 60 * 1000);
       setOtpSecondsLeft(600);
       setNotice('A 6-digit verification code has been sent to your registered email address.');
@@ -106,7 +107,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
       });
       await readResponse(response);
       const purpose = otpChallenge.purpose;
-      setOtpChallenge(null); setOtp(''); setOtpExpiresAt(null);
+      setOtpChallenge(null); setOtp(''); setOtpExpiresAt(null); setResendAvailableAt(null);
       if (purpose === 'invite') {
         setMode('login');
         setNotice('Email verified and invitation accepted. You can now sign in.');
@@ -129,7 +130,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
       });
       await readResponse(response);
       setOtp('');
-      setResendSeconds(60);
+      setResendAvailableAt(Date.now() + 60 * 1000);
       setOtpExpiresAt(Date.now() + 10 * 60 * 1000);
       setNotice('A new verification code has been sent. The previous code is no longer valid.');
     } catch (err) {
@@ -138,7 +139,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
   };
 
   const cancelOtp = () => {
-    setOtpChallenge(null); setOtp(''); setOtpExpiresAt(null); setError('');
+    setOtpChallenge(null); setOtp(''); setOtpExpiresAt(null); setResendAvailableAt(null); setError('');
     setNotice('Verification cancelled. Submit the form again to request a new code.');
   };
 
@@ -208,11 +209,11 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
             <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center"><ShieldCheck className="w-7 h-7" /></div>
             <div><h1 className="text-xl font-bold text-slate-900">AAKSH AI</h1><p className="text-xs text-slate-500">Secure Master Project workspace</p></div>
           </div>
-          <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-xl mb-5">
+          {!otpChallenge && <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-xl mb-5">
             <button type="button" onClick={() => { setMode('login'); setError(''); }} className={`rounded-lg py-2 text-xs font-semibold ${mode === 'login' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-600'}`}>Login</button>
             <button type="button" onClick={() => { setMode('bootstrap'); setError(''); }} className={`rounded-lg py-2 text-xs font-semibold ${mode === 'bootstrap' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-600'}`}>First Owner</button>
             <button type="button" onClick={() => { setMode('invite'); setError(''); }} className={`rounded-lg py-2 text-xs font-semibold ${mode === 'invite' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-600'}`}>Invitation</button>
-          </div>
+          </div>}
           {otpChallenge ? (
             <div className="space-y-5">
               <div className="mb-5">
