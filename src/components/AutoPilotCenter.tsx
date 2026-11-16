@@ -353,32 +353,32 @@ export const AutoPilotCenter: React.FC<{ voiceAssistantEnabled?: boolean }> = ({
       return;
     }
     const recognition = new SpeechRecognition();
-    recognition.lang = 'en-US';
+    recognition.lang = 'hi-IN';
     recognition.continuous = false;
     recognition.interimResults = false;
     setIsListeningForCommand(true);
-    setVoiceCommandStatus('Listening for a scheduled-task command...');
+    setVoiceCommandStatus('Listening in Hindi. Try: “ऑटोपायलट रोक दो”, “ऑटोपायलट चालू करो”, “हर दिन चलाओ”, “हर छह घंटे”, or “केवल मैन्युअल”.');
     recognition.onresult = (event: any) => {
       const transcript = String(event.results?.[0]?.[0]?.transcript || '').toLowerCase().trim();
       let nextConfig: AutoPilotConfig | null = null;
-      if (/\b(pause|stop)\s+(the\s+)?autopilot\b/.test(transcript)) {
+      if (/\b(pause|stop)\s+(the\s+)?autopilot\b/.test(transcript) || /(ऑटोपायलट|ऑटो पायलट).*(रोक|बंद).*(दो|करो)?/.test(transcript) || /(autopilot|auto pilot).*(roko|band karo|rok do)/.test(transcript)) {
         nextConfig = { ...config, isRunning: false };
-      } else if (/\b(start|resume)\s+(the\s+)?autopilot\b/.test(transcript)) {
+      } else if (/\b(start|resume)\s+(the\s+)?autopilot\b/.test(transcript) || /(ऑटोपायलट|ऑटो पायलट).*(चालू|शुरू).*(करो|कर दो)?/.test(transcript) || /(autopilot|auto pilot).*(chalu karo|shuru karo|phir se chalao)/.test(transcript)) {
         nextConfig = { ...config, isRunning: true };
-      } else if (/\b(hourly|every hour)\b/.test(transcript)) {
+      } else if (/\b(hourly|every hour)\b/.test(transcript) || /हर\s*(एक\s*)?घंटे|प्रति\s*घंटे/.test(transcript) || /har\s*(ek\s*)?ghante|prati ghante/.test(transcript)) {
         nextConfig = { ...config, frequency: 'hourly' };
-      } else if (/\b(daily|every day)\b/.test(transcript)) {
+      } else if (/\b(daily|every day)\b/.test(transcript) || /हर दिन|रोज़?|प्रतिदिन/.test(transcript) || /har din|roj|pratidin/.test(transcript)) {
         nextConfig = { ...config, frequency: 'daily' };
-      } else if (/\b(every six hours|every 6 hours|six hourly)\b/.test(transcript)) {
+      } else if (/\b(every six hours|every 6 hours|six hourly)\b/.test(transcript) || /हर\s*(छह|6)\s*घंटे/.test(transcript) || /har\s*(chhe|6|cheh)\s*ghante/.test(transcript)) {
         nextConfig = { ...config, frequency: 'every_6_hours' };
-      } else if (/\b(manual only|manual mode)\b/.test(transcript)) {
+      } else if (/\b(manual only|manual mode)\b/.test(transcript) || /केवल\s*मैन्युअल|मैनुअल\s*मोड|सिर्फ\s*मैन्युअल/.test(transcript) || /keval\s*manual|sirf\s*manual|manual\s*mode/.test(transcript)) {
         nextConfig = { ...config, frequency: 'manual_only' };
       }
       if (nextConfig) {
         setPendingVoiceConfig(nextConfig);
         setVoiceCommandStatus('Heard: "' + transcript + '". Review and confirm the change below.');
       } else {
-        setVoiceCommandStatus('Command not recognized. Try: pause AutoPilot, resume AutoPilot, or set schedule daily.');
+        setVoiceCommandStatus('Command not recognized. Hindi: “ऑटोपायलट रोक दो”, “ऑटोपायलट चालू करो”, “हर दिन चलाओ”, “हर छह घंटे”, “केवल मैन्युअल”. English commands are also accepted.');
       }
     };
     recognition.onerror = () => {
