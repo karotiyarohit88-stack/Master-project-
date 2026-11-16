@@ -15,7 +15,7 @@ class MemoryAuthDb {
   sentCodes: string[] = [];
 
   private run(sql: string, values: any[] = []): { rows: Row[] } {
-    const q = sql.replace(/\\s+/g, ' ').trim().toLowerCase();
+    const q = sql.replace(/\s+/g, ' ').trim().toLowerCase();
     if (q.includes('from app_sessions s') && q.includes('join app_users u')) {
       const session = this.sessions.find(x => x.session_token_hash === values[0] && !x.revoked_at && new Date(x.expires_at).getTime() > Date.now());
       const user = session && this.users.find(x => x.id === session.user_id && x.status === 'active');
@@ -59,7 +59,7 @@ class MemoryAuthDb {
   async connect() {
     return {
       query: async (sql: string, values: any[] = []): Promise<{ rows: Row[] }> => {
-        const q = sql.replace(/\\s+/g, ' ').trim().toLowerCase();
+        const q = sql.replace(/\s+/g, ' ').trim().toLowerCase();
         if (['begin', 'commit', 'rollback'].includes(q) || q.startsWith('lock table')) return { rows: [] };
         if (q.startsWith("select count(*)::text as count from app_users where role = 'owner'")) return { rows: [{ count: String(this.users.filter(x => x.role === 'owner').length) }] };
         if (q.includes('from app_email_otp_challenges') && q.includes('for update')) {
