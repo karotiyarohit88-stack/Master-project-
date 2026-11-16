@@ -12,6 +12,8 @@ interface ChatInputProps {
   selectedLanguage?: string;
   onLanguageChange?: (lang: string) => void;
   onActionClick?: (actionType: 'help' | 'next_step' | 'run_task' | 'open_tools' | 'view_results') => void;
+  voiceAssistantEnabled?: boolean;
+  onVoiceAssistantToggle?: () => void;
 }
 
 export const ChatInput: React.FC<ChatInputProps> = ({
@@ -23,7 +25,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   sendOnEnter = true,
   selectedLanguage = 'auto',
   onLanguageChange,
-  onActionClick
+  onActionClick,
+  voiceAssistantEnabled = false,
+  onVoiceAssistantToggle
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -64,7 +68,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   }, [setInput]);
 
   const toggleMic = () => {
-    if (!recognitionRef.current) return;
+    if (!voiceAssistantEnabled || !recognitionRef.current) return;
     if (isListening) {
       recognitionRef.current.stop();
       setIsListening(false);
@@ -115,7 +119,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   return (
     <div className="w-full max-w-full min-w-0 space-y-2">
       {/* Quick Actions & Language Selector Toolbar */}
-      {(onActionClick || onLanguageChange) && (
+      {(onActionClick || onLanguageChange || onVoiceAssistantToggle) && (
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
           {/* Language Selector Dropdown */}
           {onLanguageChange && (
@@ -134,6 +138,19 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 ))}
               </select>
             </div>
+          )}
+
+          {onVoiceAssistantToggle && (
+            <button
+              type="button"
+              onClick={onVoiceAssistantToggle}
+              className={`px-2.5 py-1 rounded-xl border font-semibold transition-colors cursor-pointer flex items-center gap-1 flex-shrink-0 text-[11px] ${voiceAssistantEnabled ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-700 border-slate-300'}`}
+              aria-pressed={voiceAssistantEnabled}
+              title="Voice Assistant controls microphone access; it does not listen in the background"
+            >
+              <Mic className="w-3 h-3" />
+              <span>Voice {voiceAssistantEnabled ? 'ON' : 'OFF'}</span>
+            </button>
           )}
 
           {onActionClick && (
