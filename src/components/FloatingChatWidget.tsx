@@ -302,7 +302,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
                 <button
                   type="button"
                   onClick={() => setImagePreview(null)}
-                  className="absolute -top-1.5 -right-1.5 bg-slate-900 text-white rounded-full p-0.5 hover:bg-rose-600"
+                  className="absolute -top-1.5 -right-1.5 bg-slate-900 text-white rounded-full p-0.5 hover:bg-amber-600"
                 >
                   <XCircle className="w-3.5 h-3.5" />
                 </button>
@@ -353,7 +353,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
                   onClick={toggleMic}
                   disabled={isLoading}
                   className={`p-2 transition-colors rounded-xl cursor-pointer flex-shrink-0 ${
-                    isListening ? 'bg-rose-100 text-rose-600 animate-pulse' : 'text-slate-500 hover:text-emerald-600 hover:bg-slate-100'
+                    isListening ? 'bg-amber-100 text-amber-700 animate-pulse' : 'text-slate-500 hover:text-emerald-600 hover:bg-slate-100'
                   }`}
                   title={!voiceAssistantEnabled ? 'Turn Voice Assistant ON first' : (isListening ? 'Stop listening' : 'Voice input')}
                 >
