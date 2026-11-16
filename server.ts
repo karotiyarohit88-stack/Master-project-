@@ -15,6 +15,7 @@ import { createAuthGuards, createAuthRouter } from './auth.ts';
 import { createSecretsRouter } from './secrets.ts';
 import { createAutoPilotSafetyGuard } from './src/utils/autoPilotSafetyGuard.ts';
 import { buildAutomatedContentPackage } from './src/utils/automatedContentPipeline.ts';
+import { canAutoPostDailyContent, buildMultiPlatformAnalytics, buildVerifiedEarningsSummary, evaluatePayoutGuard, type VerifiedEarningEntry } from './src/utils/phase9Accounting.ts';
 
 const execAsync = promisify(exec);
 
@@ -60,7 +61,7 @@ app.use('/api', (req, res, next) => {
       /^\/autopilot\/workflows\/[^/]+\/(toggle|run)$/,
       /^\/autopilot\/queue\/[^/]+\/(pause|resume|stop)$/,
       /^\/autopilot\/executions\/[^/]+\/(approve|retry)$/,
-      /^\/publishing\/(approve|publish)$/,
+      /^\/publishing\/(approve|publish|auto-post-policy|attach-verified-asset)$/,\n      /^\/accounting\/payout-requests(?:\/[^/]+\/approve)?$/,
       /^\/github\/auth\/(token|disconnect)$/,
       /^\/github\/select$/,
       /^\/github\/commit$/,
@@ -168,6 +169,7 @@ const serverStore = {
   },
   autopilot: {
     safetyEnabled: false,
+    autoPostDailyContentEnabled: false,
     isRunning: false,
     topic: 'Next-Gen AI & Tech Architecture',
     frequency: 'every_6_hours' as const,
@@ -449,6 +451,7 @@ interface VideoJob {
   voiceId: string;
   voiceProvider: 'elevenlabs' | 'gemini_tts' | 'prototype';
   status: 'queued' | 'processing' | 'completed' | 'failed' | 'waiting_credentials';
+  dailyContent?: boolean;
   progress: number;
   videoUrl?: string;
   audioUrl?: string;
@@ -745,6 +748,8 @@ interface PublishingPost {
   videoUrl?: string;
   thumbnailUrl?: string;
   status: 'draft' | 'waiting_approval' | 'approved' | 'published' | 'failed';
+  dailyContent?: boolean;
+  videoAssetVerified?: boolean;
   createdAt: string;
   approvedAt?: string;
   publishedAt?: string;
@@ -767,6 +772,11 @@ const publishingQueue: PublishingPost[] = [
     createdAt: new Date(Date.now() - 3400000).toISOString()
   }
 ];
+
+// Financial records are read-only in this phase: only verified invoice/earning integrations may append.
+const verifiedEarningLedger: VerifiedEarningEntry[] = [];
+interface PayoutRequest { id: string; amount: number; currency: 'INR'; purpose: string; status: 'pending_owner_approval' | 'blocked_native_service_unverified'; createdAt: string; ownerApprovedAt?: string; }
+const payoutRequests: PayoutRequest[] = [];
 
 // Google Sheets Sync Buffer (In-memory record mirror)
 interface SheetsRecord {
@@ -1300,6 +1310,39 @@ app.get('/api/analytics', (req: Request, res: Response) => {
       github: serverStore.github.token ? 'Connected Token' : 'Demo Sandbox'
     }
   });
+});
+
+// GET /api/analytics/multi-platform: counts from actual in-memory records only.
+app.get('/api/analytics/multi-platform', (req: Request, res: Response) => {
+  res.json(buildMultiPlatformAnalytics(publishingQueue, autoPilotTasks, workflowExecutions));
+});
+
+// GET /api/accounting/summary: verified ledger only; no demo balances or inferred earnings.
+app.get('/api/accounting/summary', (req: Request, res: Response) => {
+  res.json({ ...buildVerifiedEarningsSummary(verifiedEarningLedger), gstNote: 'GST is calculated only from verified INR ledger entries. No verified entries means no reported earnings.' });
+});
+app.get('/api/accounting/payout-requests', (req: Request, res: Response) => {
+  res.json({ requests: payoutRequests, executionMode: 'manual_owner_approval_only', autoPayoutAvailable: false, autoPayoutReason: 'Requires Native Android Service Verification' });
+});
+app.post('/api/accounting/payout-requests', authGuards.requireCsrf, (req: Request, res: Response) => {
+  const amount = Number(req.body?.amount);
+  const purpose = typeof req.body?.purpose === 'string' ? req.body.purpose.trim().slice(0, 240) : '';
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 100000000 || !purpose) return res.status(400).json({ error: 'A valid positive INR amount and purpose are required.' });
+  const request: PayoutRequest = { id: 'payout_' + crypto.randomBytes(8).toString('hex'), amount, currency: 'INR', purpose, status: 'pending_owner_approval', createdAt: new Date().toISOString() };
+  payoutRequests.unshift(request);
+  recordAudit({ category: 'approval', action: 'Payout Request Created', status: 'warning', details: 'Payout request ' + request.id + ' staged for mandatory Owner approval. No transfer was initiated.' });
+  return res.status(202).json({ success: true, request, message: 'Request staged. No money has been transferred.' });
+});
+app.post('/api/accounting/payout-requests/:id/approve', authGuards.requireCsrf, (req: Request, res: Response) => {
+  const request = payoutRequests.find(item => item.id === req.params.id);
+  if (!request) return res.status(404).json({ error: 'Payout request not found.' });
+  if (request.status !== 'pending_owner_approval') return res.status(409).json({ error: 'Payout request is not pending approval.' });
+  if (req.body?.ownerConfirmation !== true) return res.status(400).json({ error: 'Explicit Owner confirmation is required.' });
+  request.ownerApprovedAt = new Date().toISOString();
+  const guard = evaluatePayoutGuard({ ownerApproved: true, accessibilityServiceVerified: false });
+  request.status = 'blocked_native_service_unverified';
+  recordAudit({ category: 'approval', action: 'Owner Approved Payout Request But Transfer Blocked', status: 'blocked', details: 'Owner approval recorded for ' + request.id + '; transfer remains blocked: ' + guard.reason });
+  return res.status(423).json({ success: false, request, error: guard.reason, transferExecuted: false });
 });
 
 // POST /api/automation/trigger: Explicit trigger entry point for workflows
@@ -3601,9 +3644,39 @@ app.post('/api/autopilot/executions/:id/retry', (req: Request, res: Response) =>
 // PUBLISHING WORKFLOW & APPROVAL GATE
 // -----------------------------------------------------------------------------
 
+// Owner-controlled daily auto-post policy. Safety remains a separate mandatory switch.
+app.get('/api/publishing/auto-post-policy', (req: Request, res: Response) => {
+  res.json({ enabled: serverStore.autopilot.autoPostDailyContentEnabled, safetyEnabled: serverStore.autopilot.safetyEnabled, mode: 'daily_content_only', requiresVerifiedVideoAsset: true });
+});
+app.post('/api/publishing/auto-post-policy', authGuards.requireCsrf, (req: Request, res: Response) => {
+  if (typeof req.body?.enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be a boolean.' });
+  serverStore.autopilot.autoPostDailyContentEnabled = req.body.enabled;
+  recordAudit({ category: 'security', action: req.body.enabled ? 'Daily Auto-Post Enabled' : 'Daily Auto-Post Disabled', status: req.body.enabled ? 'warning' : 'info', details: 'Owner changed daily auto-post policy. Safety switch and verified video asset checks remain mandatory.' });
+  return res.json({ success: true, enabled: serverStore.autopilot.autoPostDailyContentEnabled, safetyEnabled: serverStore.autopilot.safetyEnabled });
+});
+
 // GET /api/publishing/queue: Get publishing drafts
 app.get('/api/publishing/queue', (req: Request, res: Response) => {
   res.json({ queue: publishingQueue });
+});
+
+// Attach an asset only when it matches a completed non-prototype backend video job.
+app.post('/api/publishing/attach-verified-asset', authGuards.requireCsrf, (req: Request, res: Response) => {
+  const { postId, videoJobId } = req.body || {};
+  const post = publishingQueue.find(item => item.id === postId);
+  const job = videoJobs.find(item => item.id === videoJobId);
+  if (!post || !job) return res.status(404).json({ error: 'Publishing post or video job not found.' });
+  if (post.videoJobId !== job.id || job.status !== 'completed' || job.providerName === 'Prototype Adapter' || !job.videoUrl) {
+    post.videoAssetVerified = false;
+    return res.status(409).json({ error: 'Video asset is not verified by a completed live provider job.' });
+  }
+  let parsed: URL;
+  try { parsed = new URL(job.videoUrl); } catch { return res.status(400).json({ error: 'Video URL is invalid.' }); }
+  if (parsed.protocol !== 'https:' || ['storage.googleapis.com', 'example.com', 'localhost'].includes(parsed.hostname)) return res.status(409).json({ error: 'Prototype or non-HTTPS video assets cannot be verified.' });
+  post.videoUrl = job.videoUrl;
+  post.videoAssetVerified = true;
+  recordAudit({ category: 'publishing', action: 'Daily Video Asset Verified', status: 'success', details: 'Matched publishing post ' + post.id + ' to completed live provider job ' + job.id + '.' });
+  return res.json({ success: true, post, autoPostEligible: canAutoPostDailyContent({ enabled: serverStore.autopilot.autoPostDailyContentEnabled, safetyEnabled: serverStore.autopilot.safetyEnabled, isDailyContent: post.dailyContent === true, videoUrl: post.videoUrl, videoAssetVerified: post.videoAssetVerified }) });
 });
 
 // POST /api/publishing/prepare: Prepare captions and hashtags
@@ -3679,6 +3752,7 @@ app.post('/api/publishing/publish', (req: Request, res: Response) => {
   if (!post) {
     return res.status(404).json({ error: 'Post draft not found.' });
   }
+  const autoPostEligible = canAutoPostDailyContent({ enabled: serverStore.autopilot.autoPostDailyContentEnabled, safetyEnabled: serverStore.autopilot.safetyEnabled, isDailyContent: post.dailyContent === true, videoUrl: post.videoUrl, videoAssetVerified: post.videoAssetVerified });
 
   // Prompt-only content pipeline drafts are never publishable without a real rendered asset.
   if (post.videoJobId?.startsWith('content_') && !post.videoUrl) {
@@ -3688,8 +3762,8 @@ app.post('/api/publishing/publish', (req: Request, res: Response) => {
     });
   }
 
-  // Safety Gate: Must have been approved first!
-  if (post.status !== 'approved') {
+  // Only eligible daily content with a verified asset may bypass per-post approval.
+  if (!autoPostEligible && post.status !== 'approved') {
     return res.status(403).json({
       error: 'Safety Gate Enforced: Post must be explicitly approved by human operator before publishing.'
     });
@@ -3713,23 +3787,39 @@ app.post('/api/publishing/publish', (req: Request, res: Response) => {
     });
   }
 
-  // Live Publishing dispatch
+  // Auto-post requires an explicit provider confirmation; never infer a successful publication.
+  if (autoPostEligible) {
+    if (!serverStore.publishing.webhookEndpoint) return res.status(503).json({ error: 'Daily auto-post is blocked until a live publishing webhook is configured.' });
+    try {
+      const providerResponse = await fetch(serverStore.publishing.webhookEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(serverStore.publishing.apiKey ? { Authorization: 'Bearer ' + serverStore.publishing.apiKey } : {}) }, body: JSON.stringify({ event: 'aaksh.daily_content.publish', post: { id: post.id, platform: post.platform, topic: post.topic, caption: post.caption, videoUrl: post.videoUrl } }), signal: AbortSignal.timeout(10000) });
+      const providerData: any = await providerResponse.json().catch(() => ({}));
+      if (!providerResponse.ok || providerData?.success !== true || typeof providerData?.externalPostId !== 'string' || !providerData.externalPostId.trim()) {
+        recordAudit({ category: 'publishing', action: 'Daily Auto-Post Provider Confirmation Missing', status: 'blocked', details: 'Provider did not return explicit publication confirmation for ' + post.id + '.' });
+        return res.status(502).json({ error: 'Publishing provider did not confirm publication. Draft remains unpublished.' });
+      }
+      post.externalPostId = providerData.externalPostId;
+    } catch {
+      recordAudit({ category: 'publishing', action: 'Daily Auto-Post Dispatch Failed', status: 'blocked', details: 'Publishing webhook failed or timed out for ' + post.id + '.' });
+      return res.status(502).json({ error: 'Publishing provider is unavailable. Draft remains unpublished.' });
+    }
+  } else {
+    post.externalPostId = 'manual_post_' + crypto.randomBytes(6).toString('hex');
+  }
   post.status = 'published';
   post.publishedAt = new Date().toISOString();
-  post.externalPostId = 'live_post_' + crypto.randomBytes(6).toString('hex');
 
   recordAudit({
     category: 'publishing',
     action: `Live Social Publication Dispatched [${postId}]`,
     status: 'success',
-    details: `Dispatched to platform ${post.platform} via configured publisher credentials.`
+    details: `Dispatched to platform ${post.platform} via configured publisher credentials${autoPostEligible ? ' with provider confirmation' : ''}.`
   });
 
   res.json({
     success: true,
     post,
-    mode: 'live_confirmed',
-    message: `Verified live publication confirmation received from ${post.platform} provider adapter.`
+    mode: autoPostEligible ? 'daily_auto_post_provider_confirmed' : 'manual_approval_path',
+    message: autoPostEligible ? `Provider confirmed daily publication to ${post.platform}.` : `Publication processed for ${post.platform}.`
   });
 });
 
