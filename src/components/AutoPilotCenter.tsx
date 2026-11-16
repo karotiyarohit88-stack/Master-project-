@@ -42,8 +42,7 @@ import {
 export const AutoPilotCenter: React.FC<{
   voiceAssistantEnabled?: boolean;
   safetyControlsEnabled?: boolean;
-  alwaysActiveAfterLogin?: boolean;
-}> = ({ voiceAssistantEnabled = false, safetyControlsEnabled = false, alwaysActiveAfterLogin = false }) => {
+}> = ({ voiceAssistantEnabled = false, safetyControlsEnabled = false }) => {
   // Navigation & View States
   const [activeTab, setActiveTab] = useState<'workflows' | 'history' | 'queue' | 'trigger' | 'config'>('workflows');
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -139,25 +138,7 @@ export const AutoPilotCenter: React.FC<{
     return () => clearInterval(interval);
   }, []);
 
-  // The page is mounted inside AuthGate; the backend independently validates
-  // the OTP-issued session. Auto-enable only after explicit user opt-in.
-  useEffect(() => {
-    if (!safetyControlsEnabled || !alwaysActiveAfterLogin) return;
-    let cancelled = false;
-    fetch('/api/autopilot/config')
-      .then((response) => response.ok ? response.json() : null)
-      .then(async (data) => {
-        if (cancelled || !data?.config || data.config.isRunning) return;
-        const response = await fetch('/api/autopilot/config', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ isRunning: true })
-        });
-        if (!cancelled && response.ok) fetchData();
-      })
-      .catch(() => setActionMessage({ type: 'error', text: 'Could not activate AutoPilot after login. Check your Owner access and session.' }));
-    return () => { cancelled = true; };
-  }, [safetyControlsEnabled, alwaysActiveAfterLogin]);
+
 
   // Reset Builder Form
   const resetBuilder = () => {
