@@ -165,7 +165,7 @@ export const PublishingCenter: React.FC = () => {
           <div className={`mt-3 p-2.5 rounded-xl text-xs flex items-center gap-2 ${
             notification.type === 'success' ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' :
             notification.type === 'warning' ? 'bg-amber-50 border border-amber-200 text-amber-900' :
-            'bg-rose-50 border border-rose-200 text-rose-800'
+            'bg-amber-50 border border-amber-200 text-amber-900'
           }`}>
             {notification.type === 'success' ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" /> : <AlertTriangle className="w-4 h-4 flex-shrink-0" />}
             <span className="truncate">{notification.text}</span>
@@ -369,7 +369,7 @@ export const PublishingCenter: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => setIsReviewingGate(false)}
-                          className="px-3 py-2.5 rounded-xl bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 text-xs font-semibold transition-all cursor-pointer"
+                          className="px-3 py-2.5 rounded-xl bg-white hover:bg-amber-50 text-amber-800 border border-amber-300 text-xs font-semibold transition-all cursor-pointer"
                         >
                           रद्द करें (Cancel)
                         </button>
