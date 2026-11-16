@@ -39,7 +39,11 @@ import {
   WorkflowToolId 
 } from '../types';
 
-export const AutoPilotCenter: React.FC<{ voiceAssistantEnabled?: boolean }> = ({ voiceAssistantEnabled = false }) => {
+export const AutoPilotCenter: React.FC<{
+  voiceAssistantEnabled?: boolean;
+  safetyControlsEnabled?: boolean;
+  alwaysActiveAfterLogin?: boolean;
+}> = ({ voiceAssistantEnabled = false, safetyControlsEnabled = false, alwaysActiveAfterLogin = false }) => {
   // Navigation & View States
   const [activeTab, setActiveTab] = useState<'workflows' | 'history' | 'queue' | 'trigger' | 'config'>('workflows');
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -135,6 +139,26 @@ export const AutoPilotCenter: React.FC<{ voiceAssistantEnabled?: boolean }> = ({
     return () => clearInterval(interval);
   }, []);
 
+  // The page is mounted inside AuthGate; the backend independently validates
+  // the OTP-issued session. Auto-enable only after explicit user opt-in.
+  useEffect(() => {
+    if (!safetyControlsEnabled || !alwaysActiveAfterLogin) return;
+    let cancelled = false;
+    fetch('/api/autopilot/config')
+      .then((response) => response.ok ? response.json() : null)
+      .then(async (data) => {
+        if (cancelled || !data?.config || data.config.isRunning) return;
+        const response = await fetch('/api/autopilot/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ isRunning: true })
+        });
+        if (!cancelled && response.ok) fetchData();
+      })
+      .catch(() => setActionMessage({ type: 'error', text: 'Could not activate AutoPilot after login. Check your Owner access and session.' }));
+    return () => { cancelled = true; };
+  }, [safetyControlsEnabled, alwaysActiveAfterLogin]);
+
   // Reset Builder Form
   const resetBuilder = () => {
     setBuilderStep(1);
@@ -167,6 +191,7 @@ export const AutoPilotCenter: React.FC<{ voiceAssistantEnabled?: boolean }> = ({
 
   // Save New Workflow
   const handleSaveWorkflow = async () => {
+    if (!safetyControlsEnabled) { setActionMessage({ type: 'warning', text: 'Safe Chat-Only Mode is ON. Enable Safety & Security first.' }); return; }
     if (!formName.trim()) {
       setActionMessage({ type: 'error', text: 'Please enter a workflow name.' });
       return;
@@ -215,6 +240,7 @@ export const AutoPilotCenter: React.FC<{ voiceAssistantEnabled?: boolean }> = ({
 
   // Toggle Enable/Pause Workflow
   const handleToggleWorkflow = async (workflowId: string, e?: React.MouseEvent) => {
+    if (!safetyControlsEnabled) { setActionMessage({ type: 'warning', text: 'Safe Chat-Only Mode is ON. Enable Safety & Security first.' }); return; }
     if (e) e.stopPropagation();
     try {
       const res = await fetch(`/api/autopilot/workflows/${workflowId}/toggle`, { method: 'POST' });
@@ -228,6 +254,7 @@ export const AutoPilotCenter: React.FC<{ voiceAssistantEnabled?: boolean }> = ({
 
   // Delete Workflow
   const handleDeleteWorkflow = async (workflowId: string, e?: React.MouseEvent) => {
+    if (!safetyControlsEnabled) { setActionMessage({ type: 'warning', text: 'Safe Chat-Only Mode is ON. Enable Safety & Security first.' }); return; }
     if (e) e.stopPropagation();
     if (!confirm('Are you sure you want to delete this workflow?')) return;
     try {
@@ -246,6 +273,7 @@ export const AutoPilotCenter: React.FC<{ voiceAssistantEnabled?: boolean }> = ({
 
   // Execute Workflow Pipeline Immediately
   const handleRunWorkflow = async (workflowId: string, e?: React.MouseEvent) => {
+    if (!safetyControlsEnabled) { setActionMessage({ type: 'warning', text: 'Safe Chat-Only Mode is ON. Enable Safety & Security first.' }); return; }
     if (e) e.stopPropagation();
     try {
       const res = await fetch(`/api/autopilot/workflows/${workflowId}/run`, { method: 'POST' });
@@ -271,6 +299,7 @@ export const AutoPilotCenter: React.FC<{ voiceAssistantEnabled?: boolean }> = ({
 
   // Approve Staged Execution
   const handleApproveExecution = async (executionId: string) => {
+    if (!safetyControlsEnabled) { setActionMessage({ type: 'warning', text: 'Safe Chat-Only Mode is ON. Enable Safety & Security first.' }); return; }
     try {
       const res = await fetch(`/api/autopilot/executions/${executionId}/approve`, { method: 'POST' });
       const data = await res.json();
@@ -292,6 +321,7 @@ export const AutoPilotCenter: React.FC<{ voiceAssistantEnabled?: boolean }> = ({
 
   // Manual Trigger Run from Queue tab
   const handleManualTrigger = async () => {
+    if (!safetyControlsEnabled) { setActionMessage({ type: 'warning', text: 'Safe Chat-Only Mode is ON. Enable Safety & Security first.' }); return; }
     setIsTriggering(true);
     try {
       const res = await fetch('/api/autopilot/trigger/manual', {
@@ -317,6 +347,7 @@ export const AutoPilotCenter: React.FC<{ voiceAssistantEnabled?: boolean }> = ({
 
   // Task Actions (pause/resume/stop)
   const handleTaskAction = async (taskId: string, action: 'pause' | 'resume' | 'stop') => {
+    if (!safetyControlsEnabled) { setActionMessage({ type: 'warning', text: 'Safe Chat-Only Mode is ON. Enable Safety & Security first.' }); return; }
     try {
       await fetch(`/api/autopilot/queue/${taskId}/${action}`, { method: 'POST' });
       fetchData();
@@ -327,6 +358,7 @@ export const AutoPilotCenter: React.FC<{ voiceAssistantEnabled?: boolean }> = ({
 
   // Save Global Config
   const handleSaveConfig = async () => {
+    if (!safetyControlsEnabled) { setActionMessage({ type: 'warning', text: 'Safe Chat-Only Mode is ON. Enable Safety & Security first.' }); return; }
     try {
       const res = await fetch('/api/autopilot/config', {
         method: 'POST',
@@ -440,7 +472,17 @@ export const AutoPilotCenter: React.FC<{ voiceAssistantEnabled?: boolean }> = ({
             </div>
           </div>
 
-          {/* Action Header Controls */}
+          {!safetyControlsEnabled && (
+        <div className="mb-3 flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-950">
+          <Lock className="mt-0.5 h-4 w-4 flex-shrink-0" />
+          <div className="min-w-0">
+            <p className="text-xs font-bold">Safe Chat-Only Mode</p>
+            <p className="text-[11px]">AutoPilot workflows, triggers and execution controls are locked. Normal AI chat remains available. Turn Safety & Security ON in the Floating Chat header to enable them.</p>
+          </div>
+        </div>
+      )}
+
+      {/* Action Header Controls */}
           <div className="flex items-center gap-2 flex-wrap">
             {voiceCommandStatus && (
               <div className="w-full basis-full rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-[11px] text-emerald-900">
