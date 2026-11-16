@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, randomInt } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomInt } from 'node:crypto';
 
 export type OtpChallengeMaterial = {
   challengeToken: string;
