@@ -61,6 +61,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   soundEffects: false,
   selectedLanguage: 'auto',
   voiceAssistantEnabled: false,
+  voiceLanguage: 'en-US',
+  voiceGender: 'female',
 };
 
 export default function App() {
