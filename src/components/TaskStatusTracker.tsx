@@ -47,7 +47,7 @@ export const TaskStatusTracker: React.FC<TaskStatusTrackerProps> = ({ currentSta
       key: currentStatus === 'Failed' ? 'Failed' : 'Completed',
       label: currentStatus === 'Failed' ? 'Failed' : 'Completed',
       icon: currentStatus === 'Failed' ? <AlertCircle className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />,
-      color: currentStatus === 'Failed' ? 'text-rose-800 border-rose-400 bg-rose-50' : 'text-emerald-900 border-emerald-600 bg-emerald-50'
+      color: currentStatus === 'Failed' ? 'text-amber-900 border-amber-400 bg-amber-50' : 'text-emerald-900 border-emerald-600 bg-emerald-50'
     }
   ];
 
@@ -77,7 +77,7 @@ export const TaskStatusTracker: React.FC<TaskStatusTrackerProps> = ({ currentSta
         </span>
         <span className={`text-[11px] sm:text-xs px-2 sm:px-2.5 py-0.5 rounded-full font-mono font-semibold uppercase tracking-wide border flex-shrink-0 ${
           currentStatus === 'Completed' ? 'bg-emerald-50 text-emerald-800 border-emerald-300' :
-          currentStatus === 'Failed' ? 'bg-rose-50 text-rose-800 border-rose-300' :
+          currentStatus === 'Failed' ? 'bg-amber-50 text-amber-900 border-amber-300' :
           currentStatus === 'Waiting for Approval' ? 'bg-amber-50 text-amber-800 border-amber-300 animate-pulse' :
           'bg-emerald-50 text-emerald-700 border-emerald-200'
         }`}>
@@ -99,7 +99,7 @@ export const TaskStatusTracker: React.FC<TaskStatusTrackerProps> = ({ currentSta
                   : state === 'done'
                   ? 'bg-slate-50 border-slate-200 text-slate-400 line-through opacity-75'
                   : state === 'failed'
-                  ? 'bg-rose-50 border-rose-300 text-rose-700'
+                  ? 'bg-amber-50 border-amber-300 text-amber-800'
                   : 'bg-white border-slate-200 text-slate-400'
               }`}
             >
