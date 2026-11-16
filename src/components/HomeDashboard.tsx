@@ -141,14 +141,14 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
           </div>
 
           {/* Quick status pills */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200/80 text-xs font-mono text-slate-700">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping flex-shrink-0" />
-              <span>Backend: <strong>Online</strong></span>
+          <div className="flex items-center gap-2 flex-wrap w-full lg:w-auto lg:justify-end min-w-0">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200/80 text-xs font-mono text-slate-700 min-w-0">
+              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${serverHealth?.status === 'ok' ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+              <span>Backend: <strong>{serverHealth?.status === 'ok' ? 'Online' : 'Status unavailable'}</strong></span>
             </div>
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-mono text-emerald-800">
-              <Zap className="w-3.5 h-3.5 text-emerald-600 fill-current" />
-              <span>Gemini: <strong>3.8 Flash</strong></span>
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200/80 text-xs font-mono text-slate-700 min-w-0">
+              <Zap className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+              <span>AI: <strong className="truncate">{serverHealth?.model || connectionsData?.gemini?.model || 'Model status unavailable'}</strong></span>
             </div>
             <button
               type="button"
