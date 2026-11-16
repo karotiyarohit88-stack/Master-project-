@@ -182,6 +182,8 @@ export default function App() {
     fetch('/api/auth/me', { credentials: 'same-origin' })
       .then(async (sessionResponse) => {
         if (!sessionResponse.ok) return null;
+        const sessionData = await sessionResponse.json();
+        if (sessionData?.user?.role !== 'owner') return null;
         const configResponse = await fetch('/api/autopilot/config', { credentials: 'same-origin' });
         return configResponse.ok ? configResponse.json() : null;
       })
