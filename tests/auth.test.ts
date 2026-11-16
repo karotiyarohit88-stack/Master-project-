@@ -1,9 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
-import { createHash } from 'node:crypto';
 import { createAuthGuards, createAuthRouter, hashPassword } from '../auth.ts';
-import { hashEmailOtp } from '../authOtp.ts';
 
 type Row = Record<string, any>;
 const PEPPER = 'unit-test-otp-pepper-value-at-least-32-characters';
@@ -110,7 +108,6 @@ async function withServer(run: (url: string, db: MemoryAuthDb) => Promise<void>)
   try { await run(`http://127.0.0.1:${address.port}`, db); }
   finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 }
-const digest = (v: string) => createHash('sha256').update(v).digest('hex');
 async function post(url: string, path: string, body: Row, headers: Record<string,string> = {}) {
   return fetch(`${url}/api/auth/${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
 }
@@ -154,8 +151,15 @@ test('login rejects incorrect credentials without revealing account existence', 
   assert.equal(a.status, 401); assert.deepEqual(await a.json(), await b.json());
 }));
 test('invalid OTP increments attempts; fifth failure invalidates challenge and blocks further verification', async () => withServer(async (url, db) => {
+  const startedAt = Date.now();
   const start = await bootstrap(url); const body = await start.json() as Row;
-  for (let i=0;i<5;i++) assert.equal((await verify(url, body.challengeToken, '000000')).status, 400);
+  const challenge = db.challenges[0];
+  assert.ok(new Date(challenge.expires_at).getTime() - startedAt >= 599000);
+  assert.ok(new Date(challenge.expires_at).getTime() - startedAt <= 601000);
+  assert.ok(new Date(challenge.resend_after).getTime() - startedAt >= 59000);
+  assert.ok(new Date(challenge.resend_after).getTime() - startedAt <= 61000);
+  const wrongCode = latestCode(db) === '000000' ? '000001' : '000000';
+  for (let i=0;i<5;i++) assert.equal((await verify(url, body.challengeToken, wrongCode)).status, 400);
   const c = db.challenges[0]; assert.equal(c.attempts, 5); assert.ok(c.invalidated_at);
   assert.equal((await verify(url, body.challengeToken, latestCode(db))).status, 400);
   assert.equal(db.users.length, 0);
