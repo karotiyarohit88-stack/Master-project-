@@ -279,7 +279,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-slate-50 border border-slate-200">
               <div className="min-w-0 flex-1">
                 <p className="text-xs sm:text-sm font-semibold text-slate-800">Always Active after Login</p>
-                <p className="text-[11px] text-slate-500">When enabled, AutoPilot is enabled after a successful OTP-authenticated login, but only while Safety & Security is ON.</p>
+                <p className="text-[11px] text-slate-500">Owner accounts only. When enabled, AutoPilot starts after a successful OTP login, but only while Safety & Security is ON.</p>
               </div>
               <button
                 type="button"
