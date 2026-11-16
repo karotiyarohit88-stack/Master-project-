@@ -87,12 +87,12 @@ test('Safety OFF blocks AutoPilot mutations with 423 while ordinary chat remains
     assert.equal(blocked.status, 423);
 
     const trigger = await fetch(`${url}/api/automation/trigger`, {
-      method: 'POST', headers: headers(), body: '{}'
+      method: 'POST', headers: headers(url), body: '{}'
     });
     assert.equal(trigger.status, 423);
 
     const chat = await fetch(`${url}/api/chat`, {
-      method: 'POST', headers: headers(), body: JSON.stringify({ message: 'Hello' })
+      method: 'POST', headers: headers(url), body: JSON.stringify({ message: 'Hello' })
     });
     assert.equal(chat.status, 200);
     assert.deepEqual(await chat.json(), { reply: 'chat remains available' });
@@ -118,12 +118,12 @@ test('Safety switch and AutoPilot cannot be activated without an authenticated s
 test('non-Owner authenticated sessions cannot enable Safety or mutate AutoPilot', async () =>
   withServer('member', async url => {
     const safety = await fetch(`${url}/api/autopilot/safety`, {
-      method: 'POST', headers: headers(), body: JSON.stringify({ safetyEnabled: true })
+      method: 'POST', headers: headers(url), body: JSON.stringify({ safetyEnabled: true })
     });
     assert.equal(safety.status, 403);
 
     const autopilot = await fetch(`${url}/api/autopilot/config`, {
-      method: 'POST', headers: headers(), body: JSON.stringify({ isRunning: true })
+      method: 'POST', headers: headers(url), body: JSON.stringify({ isRunning: true })
     });
     assert.equal(autopilot.status, 403);
   }));
@@ -131,13 +131,13 @@ test('non-Owner authenticated sessions cannot enable Safety or mutate AutoPilot'
 test('authenticated Owner session can enable Safety with CSRF, then AutoPilot mutation is allowed', async () =>
   withServer('owner', async url => {
     const enabled = await fetch(`${url}/api/autopilot/safety`, {
-      method: 'POST', headers: headers(), body: JSON.stringify({ safetyEnabled: true })
+      method: 'POST', headers: headers(url), body: JSON.stringify({ safetyEnabled: true })
     });
     assert.equal(enabled.status, 200);
     assert.deepEqual(await enabled.json(), { safetyEnabled: true });
 
     const started = await fetch(`${url}/api/autopilot/config`, {
-      method: 'POST', headers: headers(), body: JSON.stringify({ isRunning: true })
+      method: 'POST', headers: headers(url), body: JSON.stringify({ isRunning: true })
     });
     assert.equal(started.status, 200);
   }));
@@ -146,7 +146,7 @@ test('Safety endpoint rejects a missing or invalid CSRF token', async () =>
   withServer('owner', async url => {
     const response = await fetch(`${url}/api/autopilot/safety`, {
       method: 'POST',
-      headers: { cookie: `aaksh_session=${SESSION}; aaksh_csrf=${CSRF}`, origin: ORIGIN, 'content-type': 'application/json' },
+      headers: { cookie: `aaksh_session=${SESSION}; aaksh_csrf=${CSRF}`, origin: new URL(url).origin, 'content-type': 'application/json' },
       body: JSON.stringify({ safetyEnabled: true })
     });
     assert.equal(response.status, 403);
