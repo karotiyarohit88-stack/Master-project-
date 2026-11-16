@@ -50,6 +50,17 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
   }, []);
 
   useEffect(() => {
+    if (!otpChallenge) return;
+    const updateCountdowns = () => {
+      setResendSeconds(resendAvailableAt ? Math.max(0, Math.ceil((resendAvailableAt - Date.now()) / 1000)) : 0);
+      setOtpSecondsLeft(otpExpiresAt ? Math.max(0, Math.ceil((otpExpiresAt - Date.now()) / 1000)) : 0);
+    };
+    updateCountdowns();
+    const timer = window.setInterval(updateCountdowns, 1000);
+    return () => window.clearInterval(timer);
+  }, [otpChallenge, otpExpiresAt, resendAvailableAt]);
+
+  useEffect(() => {
     void checkSession();
     const handleExpired = () => { setUser(null); setMode('login'); setChecking(false); setNotice('Your session has expired. Please sign in again.'); };
     window.addEventListener('aaksh:session-expired', handleExpired);
