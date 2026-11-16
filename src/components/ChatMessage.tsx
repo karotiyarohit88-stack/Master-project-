@@ -33,6 +33,20 @@ interface ChatMessageProps {
   onNavigateToView?: (view: AppView) => void;
 }
 
+const extractInlineImages = (content: string): { text: string; images: string[] } => {
+  const images: string[] = [];
+  const imageDataUrl = /data:image\\/(?:png|jpe?g|webp|gif|avif);base64,[A-Za-z0-9+/=\\r\\n]+/gi;
+  const text = content.replace(imageDataUrl, (value) => {
+    const compact = value.replace(/\\s/g, '');
+    const payload = compact.slice(compact.indexOf(',') + 1);
+    if (payload.length > 12 * 1024 * 1024 || payload.length < 16 || payload.length % 4 !== 0) return '[Image omitted: invalid or oversized image data]';
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(payload)) return '[Image omitted: invalid image data]';
+    images.push(compact);
+    return '';
+  });
+  return { text: text.replace(/\\n{3,}/g, '\\n\\n').trim(), images };
+};
+
 export const ChatMessage: React.FC<ChatMessageProps> = ({
   message,
   onApproveAction,
@@ -47,6 +61,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   const [copied, setCopied] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const isUser = message.role === 'user';
+  const renderedContent = extractInlineImages(message.content);
 
   const copyContent = async () => {
     const success = await copyToClipboard(message.content);
@@ -178,11 +193,13 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
         >
           {isUser ? (
             <p className={`whitespace-pre-wrap ${fontSizeClass} leading-relaxed break-words max-w-full overflow-hidden`}>
-              {message.content}
+              {renderedContent.text}
             </p>
+            {renderedContent.images.map((src, index) => <img key={index} src={src} alt={`Attached image ${index + 1}`} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="mt-2 block max-w-full w-auto max-h-72 rounded-xl border border-white/30 object-contain" />)}
           ) : (
             <div className={`overflow-hidden max-w-full min-w-0 ${fontSizeClass}`}>
-              <MarkdownRenderer content={message.content} />
+              <MarkdownRenderer content={renderedContent.text} />
+              {renderedContent.images.map((src, index) => <figure key={index} className="mt-2 max-w-full"><img src={src} alt={`Generated image ${index + 1}`} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="block max-w-full max-h-80 rounded-xl border border-slate-200 object-contain" /><figcaption className="mt-1 text-[10px] text-slate-400">Image attachment</figcaption></figure>)}
             </div>
           )}
 
