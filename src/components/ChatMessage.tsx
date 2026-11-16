@@ -35,16 +35,16 @@ interface ChatMessageProps {
 
 const extractInlineImages = (content: string): { text: string; images: string[] } => {
   const images: string[] = [];
-  const imageDataUrl = /data:image\\/(?:png|jpe?g|webp|gif|avif);base64,[A-Za-z0-9+/=\\r\\n]+/gi;
+  const imageDataUrl = /data:image\/(?:png|jpe?g|webp|gif|avif);base64,[A-Za-z0-9+/=\r\n]+/gi;
   const text = content.replace(imageDataUrl, (value) => {
-    const compact = value.replace(/\\s/g, '');
+    const compact = value.replace(/\s/g, '');
     const payload = compact.slice(compact.indexOf(',') + 1);
     if (payload.length > 12 * 1024 * 1024 || payload.length < 16 || payload.length % 4 !== 0) return '[Image omitted: invalid or oversized image data]';
     if (!/^[A-Za-z0-9+/]+={0,2}$/.test(payload)) return '[Image omitted: invalid image data]';
     images.push(compact);
     return '';
   });
-  return { text: text.replace(/\\n{3,}/g, '\\n\\n').trim(), images };
+  return { text: text.replace(/\n{3,}/g, '\n\n').trim(), images };
 };
 
 export const ChatMessage: React.FC<ChatMessageProps> = ({
