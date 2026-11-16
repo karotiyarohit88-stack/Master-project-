@@ -61,7 +61,8 @@ app.use('/api', (req, res, next) => {
       /^\/autopilot\/workflows\/[^/]+\/(toggle|run)$/,
       /^\/autopilot\/queue\/[^/]+\/(pause|resume|stop)$/,
       /^\/autopilot\/executions\/[^/]+\/(approve|retry)$/,
-      /^\/publishing\/(approve|publish|auto-post-policy|attach-verified-asset)$/,\n      /^\/accounting\/payout-requests(?:\/[^/]+\/approve)?$/,
+      /^\/publishing\/(approve|publish|auto-post-policy|attach-verified-asset)$/,
+      /^\/accounting\/payout-requests(?:\/[^/]+\/approve)?$/,
       /^\/github\/auth\/(token|disconnect)$/,
       /^\/github\/select$/,
       /^\/github\/commit$/,
@@ -3252,8 +3253,8 @@ app.post('/api/autopilot/content-pipeline/prepare', authGuards.requireCsrf, asyn
   const shortId = 'pub_' + contentPackage.id + '_short';
   const longId = 'pub_' + contentPackage.id + '_long';
   publishingQueue.unshift(
-    { id: longId, topic: 'Political News Funny / Satire — 15-minute 3D cartoon', platform: 'youtube', caption: contentPackage.formats.long.scriptPrompt, hashtags: ['#PoliticalSatire','#3DCartoon','#FactCheck'], videoJobId: contentPackage.id, status: 'waiting_approval', createdAt: now.toISOString(), auditReport: 'Draft prompts only. Human approval required before paid generation or publication.' },
-    { id: shortId, topic: 'Political News Funny / Satire — YouTube Short', platform: 'youtube', caption: contentPackage.formats.short.scriptPrompt, hashtags: ['#PoliticalSatire','#YouTubeShorts','#FactCheck'], videoJobId: contentPackage.id, status: 'waiting_approval', createdAt: now.toISOString(), auditReport: 'Draft prompts only. Human approval required before paid generation or publication.' }
+    { id: longId, topic: 'Political News Funny / Satire — 15-minute 3D cartoon', platform: 'youtube', caption: contentPackage.formats.long.scriptPrompt, hashtags: ['#PoliticalSatire','#3DCartoon','#FactCheck'], videoJobId: contentPackage.id, dailyContent: true, videoAssetVerified: false, status: 'waiting_approval', createdAt: now.toISOString(), auditReport: 'Draft prompts only. Human approval required before paid generation or publication.' },
+    { id: shortId, topic: 'Political News Funny / Satire — YouTube Short', platform: 'youtube', caption: contentPackage.formats.short.scriptPrompt, hashtags: ['#PoliticalSatire','#YouTubeShorts','#FactCheck'], videoJobId: contentPackage.id, dailyContent: true, videoAssetVerified: false, status: 'waiting_approval', createdAt: now.toISOString(), auditReport: 'Draft prompts only. Human approval required before paid generation or publication.' }
   );
   let n8nDelivery: {status:'delivered'|'not_configured'|'failed';message:string} = {status:'not_configured',message:'n8n receiver is not configured. Draft package remains available for review.'};
   if (serverStore.n8n.webhookUrl) {
@@ -3666,7 +3667,7 @@ app.post('/api/publishing/attach-verified-asset', authGuards.requireCsrf, (req: 
   const post = publishingQueue.find(item => item.id === postId);
   const job = videoJobs.find(item => item.id === videoJobId);
   if (!post || !job) return res.status(404).json({ error: 'Publishing post or video job not found.' });
-  if (post.videoJobId !== job.id || job.status !== 'completed' || job.providerName === 'Prototype Adapter' || !job.videoUrl) {
+  if (!(post.videoJobId === job.id || (post.dailyContent === true && post.videoJobId?.startsWith('content_'))) || job.status !== 'completed' || job.providerName === 'Prototype Adapter' || !job.videoUrl) {
     post.videoAssetVerified = false;
     return res.status(409).json({ error: 'Video asset is not verified by a completed live provider job.' });
   }
@@ -3674,6 +3675,7 @@ app.post('/api/publishing/attach-verified-asset', authGuards.requireCsrf, (req: 
   try { parsed = new URL(job.videoUrl); } catch { return res.status(400).json({ error: 'Video URL is invalid.' }); }
   if (parsed.protocol !== 'https:' || ['storage.googleapis.com', 'example.com', 'localhost'].includes(parsed.hostname)) return res.status(409).json({ error: 'Prototype or non-HTTPS video assets cannot be verified.' });
   post.videoUrl = job.videoUrl;
+  post.videoJobId = job.id;
   post.videoAssetVerified = true;
   recordAudit({ category: 'publishing', action: 'Daily Video Asset Verified', status: 'success', details: 'Matched publishing post ' + post.id + ' to completed live provider job ' + job.id + '.' });
   return res.json({ success: true, post, autoPostEligible: canAutoPostDailyContent({ enabled: serverStore.autopilot.autoPostDailyContentEnabled, safetyEnabled: serverStore.autopilot.safetyEnabled, isDailyContent: post.dailyContent === true, videoUrl: post.videoUrl, videoAssetVerified: post.videoAssetVerified }) });
@@ -3745,7 +3747,7 @@ app.post('/api/publishing/approve', (req: Request, res: Response) => {
 });
 
 // POST /api/publishing/publish: Publish via platform adapter
-app.post('/api/publishing/publish', (req: Request, res: Response) => {
+app.post('/api/publishing/publish', async (req: Request, res: Response) => {
   const { postId } = req.body;
   const post = publishingQueue.find(p => p.id === postId);
 
