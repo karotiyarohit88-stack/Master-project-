@@ -179,17 +179,6 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
             </div>
 
             <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
-              {onVoiceAssistantToggle && (
-                <button
-                  type="button"
-                  onClick={onVoiceAssistantToggle}
-                  aria-pressed={voiceAssistantEnabled}
-                  title="Voice Assistant ON/OFF"
-                  className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-colors ${voiceAssistantEnabled ? 'bg-white text-emerald-800 border-white' : 'bg-emerald-800/40 text-white border-emerald-200/60'}`}
-                >
-                  Voice {voiceAssistantEnabled ? 'ON' : 'OFF'}
-                </button>
-              )}
               {/* New Chat Button */}
               {onNewChat && (
                 <button
@@ -324,7 +313,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={isLoading || !voiceAssistantEnabled}
+                disabled={isLoading}
                 className="p-2 text-slate-500 hover:text-emerald-600 transition-colors rounded-xl hover:bg-slate-100 cursor-pointer flex-shrink-0"
                 title="Attach photo"
               >
@@ -352,6 +341,17 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
                   title={!voiceAssistantEnabled ? 'Turn Voice Assistant ON first' : (isListening ? 'Stop listening' : 'Voice input')}
                 >
                   {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                </button>
+              )}
+              {onVoiceAssistantToggle && (
+                <button
+                  type="button"
+                  onClick={onVoiceAssistantToggle}
+                  aria-pressed={voiceAssistantEnabled}
+                  title="Voice Assistant ON/OFF"
+                  className={`px-2 py-1 rounded-lg text-[10px] font-bold border flex-shrink-0 transition-colors ${voiceAssistantEnabled ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-100 text-slate-600 border-slate-200'}`}
+                >
+                  {voiceAssistantEnabled ? 'Voice ON' : 'Voice OFF'}
                 </button>
               )}
 
