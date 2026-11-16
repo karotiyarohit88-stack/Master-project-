@@ -33,14 +33,12 @@ const authGuards = createAuthGuards();
 const requireSession = authGuards.requireSession;
 const requireOwner = authGuards.requireRole('owner');
 
-// All API routes require an application session except the public health probe,
-// the auth router (which applies endpoint-specific controls), and the existing
-// shared-secret AutoPilot webhook.
+// Every application API, including AutoPilot webhooks, requires a valid
+// application session. Login sessions are issued only after email OTP verification.
 app.use('/api', (req, res, next) => {
   const publicHealth = req.path === '/health';
   const authEndpoint = req.path === '/auth' || req.path.startsWith('/auth/');
-  const sharedSecretWebhook = req.method === 'POST' && /^\/autopilot\/webhook\/[^/]+$/.test(req.path);
-  if (publicHealth || authEndpoint || sharedSecretWebhook) return next();
+  if (publicHealth || authEndpoint) return next();
   return requireSession(req, res, next);
 });
 
@@ -54,6 +52,7 @@ app.use('/api', (req, res, next) => {
       /^\/connections\/(save|test)$/,
       /^\/registry\/(test-connection|update)$/,
       /^\/autopilot\/config$/,
+      /^\/autopilot\/safety$/,
       /^\/autopilot\/workflows$/,
       /^\/autopilot\/workflows\/[^/]+\/(toggle|run)$/,
       /^\/autopilot\/queue\/[^/]+\/(pause|resume|stop)$/,
@@ -70,6 +69,18 @@ app.use('/api', (req, res, next) => {
     (method === 'DELETE' && /^\/autopilot\/workflows\/[^/]+$/.test(path));
   if (!ownerOnly) return next();
   return requireOwner(req, res, next);
+});
+
+// AutoPilot mutations stay locked until the authenticated Owner explicitly
+// enables Safety & Security. Read-only status and configuration remain available.
+app.use('/api', (req, res, next) => {
+  if (!req.path.startsWith('/autopilot/') || req.method === 'GET' || req.path === '/autopilot/safety') {
+    return next();
+  }
+  if (!serverStore.autopilot.safetyEnabled) {
+    return res.status(423).json({ error: 'AutoPilot is locked in Safe Chat-Only Mode. Enable Safety & Security after OTP login.' });
+  }
+  next();
 });
 
 // Secret Manager: all routes require an authenticated Owner; mutations also require CSRF.
@@ -161,7 +172,8 @@ const serverStore = {
     firebaseConfig: process.env.FIREBASE_CONFIG || '',
   },
   autopilot: {
-    isRunning: true,
+    safetyEnabled: false,
+    isRunning: false,
     topic: 'Next-Gen AI & Tech Architecture',
     frequency: 'every_6_hours' as const,
     platform: 'youtube_shorts' as const,
@@ -2843,6 +2855,25 @@ app.get('/api/video/jobs', (req: Request, res: Response) => {
 // -----------------------------------------------------------------------------
 // AUTO PILOT & TRIGGER CENTER
 // -----------------------------------------------------------------------------
+
+// POST /api/autopilot/safety: Owner-controlled global automation safety switch.
+app.post('/api/autopilot/safety', (req: Request, res: Response) => {
+  const enabled = req.body?.safetyEnabled;
+  if (typeof enabled !== 'boolean') {
+    return res.status(400).json({ error: 'safetyEnabled must be a boolean.' });
+  }
+  serverStore.autopilot.safetyEnabled = enabled;
+  if (!enabled) serverStore.autopilot.isRunning = false;
+  recordAudit({
+    category: 'security',
+    action: enabled ? 'AutoPilot Safety Enabled' : 'AutoPilot Safety Disabled',
+    status: enabled ? 'success' : 'warning',
+    details: enabled
+      ? 'Owner enabled AutoPilot controls after authenticated session.'
+      : 'AutoPilot mutations locked; ordinary chat remains available.'
+  });
+  res.json({ success: true, safetyEnabled: serverStore.autopilot.safetyEnabled, isRunning: serverStore.autopilot.isRunning });
+});
 
 // GET /api/autopilot/config
 app.get('/api/autopilot/config', (req: Request, res: Response) => {
