@@ -72,3 +72,29 @@ body {
 p, span, h1, h2, h3, h4, h5, h6, li, td, th {
   overflow-wrap: anywhere;
 }
+
+/* Responsive application frame: support mobile browser chrome, desktop and notched devices. */
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #root {
+  min-width: 0;
+  min-height: 100%;
+  max-width: 100%;
+}
+html { min-height: 100%; }
+body { min-height: 100vh; min-height: 100dvh; }
+#root { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
+img, video, canvas, svg { max-width: 100%; }
+button, input, textarea, select { max-width: 100%; }
+pre, code { max-width: 100%; overflow-wrap: anywhere; }
+main, section, article, aside, header, footer, nav { min-width: 0; }
+@supports (padding: max(0px)) {
+  body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+}
+@media (max-width: 640px) {
+  #root { overflow-x: clip; }
+  body { font-size: 14px; }
+  input, select, textarea { min-width: 0; }
+}
+@media (min-width: 641px) {
+  body { overflow-x: clip; }
+}
