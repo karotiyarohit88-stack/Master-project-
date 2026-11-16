@@ -44,7 +44,20 @@ const extractInlineImages = (content: string): { text: string; images: string[] 
     images.push(compact);
     return '';
   });
-  return { text: text.replace(/\n{3,}/g, '\n\n').trim(), images };
+  let safeText = text.replace(/\n{3,}/g, '\n\n').trim();
+  if (images.length === 0) {
+    const candidate = safeText.trim();
+    const detectedMime = candidate.startsWith('iVBORw0KGgo') ? 'image/png'
+      : candidate.startsWith('/9j/') ? 'image/jpeg'
+      : candidate.startsWith('R0lGOD') ? 'image/gif'
+      : candidate.startsWith('UklGR') ? 'image/webp'
+      : null;
+    if (detectedMime && candidate.length >= 256 && candidate.length <= 12 * 1024 * 1024 && candidate.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(candidate)) {
+      images.push(`data:${detectedMime};base64,${candidate}`);
+      safeText = '';
+    }
+  }
+  return { text: safeText, images };
 };
 
 export const ChatMessage: React.FC<ChatMessageProps> = ({
