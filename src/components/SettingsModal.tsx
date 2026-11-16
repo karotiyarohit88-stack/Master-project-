@@ -14,6 +14,7 @@ import {
   Image as ImageIcon
 } from 'lucide-react';
 import { AppSettings, ServerHealth } from '../types';
+import { checkAndroidAccessibilityPermission, AndroidAccessibilityPermissionState } from '../utils/androidAccessibilityBridge';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -40,6 +41,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 }) => {
 
   const [voicePreviewMessage, setVoicePreviewMessage] = React.useState<string>('');
+  const [accessibilityPermission, setAccessibilityPermission] = React.useState<AndroidAccessibilityPermissionState>('unknown');
+  const [checkingAccessibility, setCheckingAccessibility] = React.useState(false);
+
+  const refreshAccessibilityPermission = async () => {
+    setCheckingAccessibility(true);
+    try {
+      setAccessibilityPermission(await checkAndroidAccessibilityPermission());
+    } finally {
+      setCheckingAccessibility(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (isOpen) void refreshAccessibilityPermission();
+  }, [isOpen]);
 
   const previewSelectedVoice = () => {
     if (!('speechSynthesis' in window) || !('SpeechSynthesisUtterance' in window)) {
@@ -277,6 +293,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </button>
             </div>
             <p className="text-[10px] text-slate-500">Voice input requires Safety & Security to be ON. It listens only after you tap the microphone; no background listening. These preferences are stored on this browser/device.</p>
+            <div className="p-3 rounded-xl border border-slate-200 bg-white space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-slate-800">Android Accessibility Bridge</p>
+                  <p className="text-[10px] text-slate-500">Checks for a companion Android native bridge. This web app cannot grant Android Accessibility permission.</p>
+                </div>
+                <button type="button" onClick={() => void refreshAccessibilityPermission()} disabled={checkingAccessibility} className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-[10px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                  {checkingAccessibility ? 'Checking…' : 'Check'}
+                </button>
+              </div>
+              <p className={`text-[10px] font-semibold ${accessibilityPermission === 'enabled' ? 'text-emerald-700' : 'text-amber-700'}`}>
+                Permission status: {accessibilityPermission === 'enabled' ? 'Enabled' : accessibilityPermission === 'disabled' ? 'Disabled' : accessibilityPermission === 'unavailable' ? 'Native Android bridge unavailable' : 'Unknown — fail-closed'}
+              </p>
+              <p className="text-[10px] text-slate-500">Only allowlisted read/scroll actions are available in the bridge contract. Element taps require human confirmation; destructive or sensitive actions are not allowlisted.</p>
+            </div>
             <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
               <div className="flex items-center gap-3">
                 <div className="w-14 h-14 rounded-full overflow-hidden border border-emerald-200 bg-white flex items-center justify-center flex-shrink-0">
