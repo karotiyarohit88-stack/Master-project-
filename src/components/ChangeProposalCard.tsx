@@ -56,7 +56,7 @@ export const ChangeProposalCard: React.FC<ChangeProposalCardProps> = ({
 
         <span className={`text-[10px] uppercase font-mono px-2 py-0.5 rounded-full font-bold flex-shrink-0 ${
           proposal.status === 'applied' ? 'bg-emerald-100 text-emerald-800' :
-          proposal.status === 'rejected' ? 'bg-rose-100 text-rose-800' :
+          proposal.status === 'rejected' ? 'bg-amber-100 text-amber-900' :
           'bg-amber-100 text-amber-900'
         }`}>
           {proposal.status === 'proposed' ? 'Action Required' : proposal.status}
@@ -123,7 +123,7 @@ export const ChangeProposalCard: React.FC<ChangeProposalCardProps> = ({
           <button
             type="button"
             onClick={() => onReject(proposal.proposalId)}
-            className="w-full sm:w-auto px-3 py-2 rounded-xl text-xs text-slate-600 hover:text-rose-700 hover:bg-rose-50 border border-transparent hover:border-rose-200 transition-colors cursor-pointer"
+            className="w-full sm:w-auto px-3 py-2 rounded-xl text-xs text-slate-600 hover:text-amber-800 hover:bg-amber-50 border border-transparent hover:border-amber-200 transition-colors cursor-pointer"
           >
             Reject Proposal
           </button>
