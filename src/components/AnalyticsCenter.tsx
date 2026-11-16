@@ -57,8 +57,8 @@ export const AnalyticsCenter: React.FC = () => {
       </div>
 
       {error && (
-        <div className="p-3 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-center gap-2 mb-4">
-          <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+        <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-amber-950 text-xs flex items-center gap-2 mb-4">
+          <AlertCircle className="w-4 h-4 text-amber-700 flex-shrink-0" />
           <span>{error}</span>
         </div>
       )}
