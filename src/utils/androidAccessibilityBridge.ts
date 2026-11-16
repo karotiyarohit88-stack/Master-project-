@@ -85,8 +85,23 @@ export async function executeSafeAccessibilityAction(
   const bridge = getAndroidAccessibilityBridge();
   if (!bridge) return { ok: false, message: 'Android native accessibility bridge is unavailable.' };
 
+  const safePayload: Record<string, string | number | boolean> = {};
+  if (action === 'tap_accessible_element') {
+    const elementId = payload.elementId;
+    if (typeof elementId !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(elementId)) {
+      return { ok: false, message: 'A valid accessible element ID is required.' };
+    }
+    safePayload.elementId = elementId;
+  } else if (action === 'read_visible_text') {
+    const maxChars = payload.maxChars;
+    if (maxChars !== undefined && (typeof maxChars !== 'number' || !Number.isInteger(maxChars) || maxChars < 1 || maxChars > 4000)) {
+      return { ok: false, message: 'Text read limit must be between 1 and 4000 characters.' };
+    }
+    safePayload.maxChars = typeof maxChars === 'number' ? maxChars : 2000;
+  }
+
   try {
-    return await bridge.performAction(action, payload);
+    return await bridge.performAction(action, safePayload);
   } catch {
     return { ok: false, message: 'Android accessibility action failed safely.' };
   }
