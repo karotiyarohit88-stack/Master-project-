@@ -849,7 +849,7 @@ I am your central AI assistant and command center. You can manage engineering ta
         {/* VIEW 3: Auto Pilot & Trigger Center */}
         {activeView === 'autopilot' && (
           <AutoPilotCenter
-            voiceAssistantEnabled={Boolean(settings.voiceAssistantEnabled)}
+            voiceAssistantEnabled={Boolean(settings.voiceAssistantEnabled && settings.safetyControlsEnabled)}
             safetyControlsEnabled={Boolean(settings.safetyControlsEnabled)}
             alwaysActiveAfterLogin={Boolean(settings.alwaysActiveAfterLogin)}
           />
