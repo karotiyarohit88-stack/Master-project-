@@ -9,7 +9,9 @@ import {
   Database, 
   Globe, 
   Lock, 
-  Bot 
+  Bot,
+  Volume2,
+  Image as ImageIcon
 } from 'lucide-react';
 import { AppSettings, ServerHealth } from '../types';
 
@@ -36,6 +38,66 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onOpenConnections,
   onOpenGitHub
 }) => {
+
+  const [voicePreviewMessage, setVoicePreviewMessage] = React.useState<string>('');
+
+  const previewSelectedVoice = () => {
+    if (!('speechSynthesis' in window) || !('SpeechSynthesisUtterance' in window)) {
+      setVoicePreviewMessage('Speech preview is not supported by this browser.');
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const language = settings.voiceLanguage || 'en-US';
+    const prefix = language.split('-')[0].toLowerCase();
+    const voices = window.speechSynthesis.getVoices();
+    const matching = voices.filter((voice) => voice.lang.toLowerCase().startsWith(prefix));
+    const terms = settings.voiceGender === 'male'
+      ? /male|man|david|james|daniel|alex|george|thomas|aaron|guy/i
+      : /female|woman|zira|samantha|victoria|karen|susan|aria|jenny|ava/i;
+    const chosen = matching.find((voice) => terms.test(voice.name)) || matching[0];
+    const utterance = new SpeechSynthesisUtterance('Hello! I am your AAKSH AI assistant. How can I help you today?');
+    utterance.lang = language;
+    if (chosen) utterance.voice = chosen;
+    utterance.onstart = () => setVoicePreviewMessage(chosen ? 'Previewing ' + chosen.name + ' (' + chosen.lang + ').' : 'Previewing the browser default voice for ' + language + '.');
+    utterance.onerror = () => setVoicePreviewMessage('Voice preview could not be played. Check device audio settings.');
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const handleAvatarUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setVoicePreviewMessage('Please select an image file.');
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setVoicePreviewMessage('Choose an image smaller than 10 MB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const image = new Image();
+      image.onload = () => {
+        const canvas = document.createElement('canvas');
+        const scale = Math.min(1, 512 / Math.max(image.width, image.height));
+        canvas.width = Math.max(1, Math.round(image.width * scale));
+        canvas.height = Math.max(1, Math.round(image.height * scale));
+        const context = canvas.getContext('2d');
+        if (!context) {
+          setVoicePreviewMessage('Could not process this image on the device.');
+          return;
+        }
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        onUpdateSettings({ assistantAvatarDataUrl: canvas.toDataURL('image/jpeg', 0.78) });
+        setVoicePreviewMessage('Custom avatar saved in this browser on this device.');
+      };
+      image.onerror = () => setVoicePreviewMessage('Could not read this image. Please choose another.');
+      image.src = String(reader.result || '');
+    };
+    reader.onerror = () => setVoicePreviewMessage('Could not load the selected image.');
+    reader.readAsDataURL(file);
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -198,6 +260,52 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </button>
             </div>
             <p className="text-[10px] text-slate-500">This setting is currently saved on this browser/device. Cross-device account sync and native Android Accessibility support are separate implementation steps.</p>
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="w-14 h-14 rounded-full overflow-hidden border border-emerald-200 bg-white flex items-center justify-center flex-shrink-0">
+                  {settings.assistantAvatarDataUrl ? <img src={settings.assistantAvatarDataUrl} alt="Custom AI avatar" className="w-full h-full object-cover" /> : <Bot className="w-7 h-7 text-emerald-600" />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold text-slate-800">Custom AI Face / Avatar</p>
+                  <p className="text-[10px] text-slate-500">Upload a gallery photo. It is resized and saved locally in this browser.</p>
+                  <label className="inline-flex items-center gap-1.5 mt-2 px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-[11px] font-semibold text-slate-700 cursor-pointer hover:bg-slate-100">
+                    <ImageIcon className="w-3.5 h-3.5" /> Choose from gallery
+                    <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
+                  </label>
+                  {settings.assistantAvatarDataUrl && <button type="button" onClick={() => onUpdateSettings({ assistantAvatarDataUrl: '' })} className="ml-2 text-[10px] text-rose-600 font-semibold">Remove</button>}
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <label className="text-[11px] font-medium text-slate-700">Speech language
+                  <select value={settings.voiceLanguage || 'en-US'} onChange={(e) => onUpdateSettings({ voiceLanguage: e.target.value })} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 text-xs">
+                    <option value="en-US">English (US)</option>
+                    <option value="en-GB">English (UK)</option>
+                    <option value="hi-IN">हिन्दी (भारत)</option>
+                    <option value="pa-IN">ਪੰਜਾਬੀ</option>
+                    <option value="ur-PK">اردو</option>
+                    <option value="bn-IN">বাংলা</option>
+                    <option value="ta-IN">தமிழ்</option>
+                    <option value="te-IN">తెలుగు</option>
+                    <option value="gu-IN">ગુજરાતી</option>
+                    <option value="mr-IN">मराठी</option>
+                    <option value="es-ES">Español</option>
+                    <option value="fr-FR">Français</option>
+                    <option value="de-DE">Deutsch</option>
+                  </select>
+                </label>
+                <label className="text-[11px] font-medium text-slate-700">Voice preference
+                  <select value={settings.voiceGender || 'female'} onChange={(e) => onUpdateSettings({ voiceGender: e.target.value as 'female' | 'male' })} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 text-xs">
+                    <option value="female">Female voice</option>
+                    <option value="male">Male voice</option>
+                  </select>
+                </label>
+              </div>
+              <button type="button" onClick={previewSelectedVoice} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700">
+                <Volume2 className="w-3.5 h-3.5" /> Preview voice
+              </button>
+              {voicePreviewMessage && <p className="text-[10px] text-slate-600" role="status">{voicePreviewMessage}</p>}
+              <p className="text-[10px] text-slate-500">Preview uses speech voices installed on your device/browser. Voice gender and quality depend on the available voice engine. Neural streaming speech and real-time lip-sync are not yet connected.</p>
+            </div>
           </div>
 
           {/* Section 2: Honest Integration Status */}
