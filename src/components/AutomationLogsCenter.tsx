@@ -138,7 +138,7 @@ export const AutomationLogsCenter: React.FC = () => {
                   <div className="flex items-center gap-2 min-w-0 flex-1">
                     <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
                       entry.status === 'success' ? 'bg-emerald-500' :
-                      entry.status === 'blocked' ? 'bg-rose-500' :
+                      entry.status === 'blocked' ? 'bg-amber-500' :
                       entry.status === 'warning' ? 'bg-amber-500' :
                       'bg-blue-500'
                     }`} />
