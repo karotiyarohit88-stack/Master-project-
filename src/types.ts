@@ -140,6 +140,9 @@ export interface AppSettings {
   selectedLanguage?: string;
   /** User-controlled voice input consent on this device; does not enable background listening. */
   voiceAssistantEnabled?: boolean;
+  voiceLanguage?: string;
+  voiceGender?: 'female' | 'male';
+  assistantAvatarDataUrl?: string;
 }
 
 export interface SupportedLanguageOption {
