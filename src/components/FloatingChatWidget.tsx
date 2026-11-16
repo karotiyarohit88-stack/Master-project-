@@ -164,7 +164,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
 
       {/* Floating Help Chat Window Overlay / Drawer */}
       {isOpen && (
-        <div className="fixed inset-x-0 top-[env(safe-area-inset-top)] bottom-0 sm:inset-x-auto sm:top-auto sm:bottom-6 sm:right-6 w-full sm:w-[min(28rem,calc(100vw-3rem))] h-[calc(100dvh-env(safe-area-inset-top))] sm:h-[min(48rem,calc(100dvh-3rem))] max-h-full bg-slate-50 shadow-2xl z-[70] flex flex-col border border-slate-200 text-slate-800 overflow-hidden sm:rounded-2xl animate-in slide-in-from-right duration-200 min-w-0>
+        <div className="fixed inset-x-0 top-[env(safe-area-inset-top)] bottom-0 sm:inset-x-auto sm:top-auto sm:bottom-6 sm:right-6 w-full sm:w-[min(28rem,calc(100vw-3rem))] h-[calc(100dvh-env(safe-area-inset-top))] sm:h-[min(48rem,calc(100dvh-3rem))] max-h-full bg-slate-50 shadow-2xl z-[70] flex flex-col border border-slate-200 text-slate-800 overflow-hidden sm:rounded-2xl animate-in slide-in-from-right duration-200 min-w-0">
           
           {/* Header */}
           <div className="p-3 sm:p-4 pt-[max(0.75rem,env(safe-area-inset-top))] bg-[#0b7a3e] text-white flex justify-between items-center shadow-xs flex-shrink-0 gap-2 min-w-0">

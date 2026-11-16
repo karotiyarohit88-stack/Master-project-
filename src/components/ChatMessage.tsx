@@ -205,10 +205,12 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
           }`}
         >
           {isUser ? (
-            <p className={`whitespace-pre-wrap ${fontSizeClass} leading-relaxed break-words max-w-full overflow-hidden`}>
-              {renderedContent.text}
-            </p>
-            {renderedContent.images.map((src, index) => <img key={index} src={src} alt={`Attached image ${index + 1}`} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="mt-2 block max-w-full w-auto max-h-72 rounded-xl border border-white/30 object-contain" />)}
+            <>
+              <p className={`whitespace-pre-wrap ${fontSizeClass} leading-relaxed break-words max-w-full overflow-hidden`}>
+                {renderedContent.text}
+              </p>
+              {renderedContent.images.map((src, index) => <img key={index} src={src} alt={`Attached image ${index + 1}`} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="mt-2 block max-w-full w-auto max-h-72 rounded-xl border border-white/30 object-contain" />)}
+            </>
           ) : (
             <div className={`overflow-hidden max-w-full min-w-0 ${fontSizeClass}`}>
               <MarkdownRenderer content={renderedContent.text} />
