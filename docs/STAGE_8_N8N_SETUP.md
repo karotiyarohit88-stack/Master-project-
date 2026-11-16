@@ -4,7 +4,7 @@ Import n8n/automated-content-pipeline.schedule.json into the intended n8n worksp
 
 Configure protected n8n environment values:
 - MASTER_PROJECT_API_URL: existing Master Project base URL.
-- MASTER_PROJECT_OWNER_SESSION_COOKIE: current OTP-authenticated Owner session cookie string.
+- MASTER_PROJECT_OWNER_SESSION_COOKIE: current OTP-authenticated Owner cookies, including both aaksh_session and aaksh_csrf cookie values.
 - MASTER_PROJECT_CSRF_TOKEN: matching CSRF token.
 
 The API retains Owner session, CSRF and Safety ON checks; no unauthenticated webhook bypass is introduced. Session expiry or missing credentials fails closed; refresh the Owner session values in n8n when needed.
