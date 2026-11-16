@@ -193,8 +193,8 @@ export default function App() {
           credentials: 'same-origin',
           body: JSON.stringify({ isRunning: true })
         });
-        if (!cancelled && response.ok) {
-          window.dispatchEvent(new CustomEvent('aaksh:autopilot-activated'));
+        if (!cancelled && !response.ok) {
+          console.warn('AutoPilot post-login activation was rejected:', response.status);
         }
       })
       .catch((error) => console.warn('AutoPilot post-login activation unavailable:', error));
