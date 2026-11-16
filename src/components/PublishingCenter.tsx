@@ -25,6 +25,9 @@ export const PublishingCenter: React.FC = () => {
   const [newPlatform, setNewPlatform] = useState<'youtube' | 'tiktok' | 'x' | 'instagram' | 'linkedin'>('youtube');
   const [notification, setNotification] = useState<{ type: 'success' | 'warning' | 'error'; text: string } | null>(null);
   const [isReviewingGate, setIsReviewingGate] = useState<boolean>(false);
+  const [autoPostEnabled, setAutoPostEnabled] = useState<boolean>(false);
+  const [autoPostSafetyEnabled, setAutoPostSafetyEnabled] = useState<boolean>(false);
+  const [isSavingAutoPost, setIsSavingAutoPost] = useState<boolean>(false);
 
   const fetchQueue = async () => {
     try {
@@ -41,9 +44,26 @@ export const PublishingCenter: React.FC = () => {
     }
   };
 
+  const readAutoPostPolicy = async () => {
+    try { const res = await fetch('/api/publishing/auto-post-policy'); if (res.ok) { const data = await res.json(); setAutoPostEnabled(data.enabled === true); setAutoPostSafetyEnabled(data.safetyEnabled === true); } } catch { /* policy remains OFF on read failure */ }
+  };
+
+  const updateAutoPostPolicy = async (enabled: boolean) => {
+    setIsSavingAutoPost(true);
+    try {
+      const csrf = document.cookie.split('; ').find(value => value.startsWith('aaksh_csrf='))?.split('=').slice(1).join('=') || '';
+      const res = await fetch('/api/publishing/auto-post-policy', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': decodeURIComponent(csrf) }, body: JSON.stringify({ enabled }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not update Auto-Post policy.');
+      setAutoPostEnabled(data.enabled === true); setAutoPostSafetyEnabled(data.safetyEnabled === true);
+      setNotification({ type: 'success', text: enabled ? 'Daily Auto-Post policy enabled. Safety and verified live video checks remain mandatory.' : 'Daily Auto-Post disabled. Posts use Human Approval Gate.' });
+    } catch (error: any) { setNotification({ type: 'error', text: error?.message || 'Auto-Post policy update failed.' }); }
+    finally { setIsSavingAutoPost(false); }
+  };
+
   useEffect(() => {
-    fetchQueue();
-    const interval = setInterval(fetchQueue, 4000);
+    fetchQueue(); readAutoPostPolicy();
+    const interval = setInterval(() => { fetchQueue(); readAutoPostPolicy(); }, 4000);
     return () => clearInterval(interval);
   }, []);
 
@@ -158,6 +178,17 @@ export const PublishingCenter: React.FC = () => {
               <RefreshCw className="w-4 h-4" />
             </button>
           </div>
+        </div>
+
+        <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h4 className="text-xs font-bold text-slate-900">Auto-Post Daily Content</h4>
+            <p className="text-[11px] text-slate-600 mt-1">Owner-controlled. Requires Safety ON, a verified live-provider video asset and provider confirmation. Otherwise Human Approval remains required.</p>
+            <p className="text-[10px] font-semibold text-amber-800 mt-1">{autoPostSafetyEnabled ? 'Safety Switch: ON' : 'Safety Switch: OFF — auto-post is blocked'}</p>
+          </div>
+          <button type="button" disabled={isSavingAutoPost} onClick={() => updateAutoPostPolicy(!autoPostEnabled)} aria-pressed={autoPostEnabled} className={`shrink-0 px-4 py-2 rounded-xl text-xs font-bold border transition-colors disabled:opacity-50 ${autoPostEnabled ? 'bg-emerald-600 border-emerald-700 text-white' : 'bg-white border-slate-300 text-slate-700'}`}>
+            {isSavingAutoPost ? 'Saving...' : autoPostEnabled ? 'ON · Turn OFF' : 'OFF · Turn ON'}
+          </button>
         </div>
 
         {/* Notification feedback */}
