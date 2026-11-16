@@ -33,6 +33,8 @@ interface FloatingChatWidgetProps {
   settings?: AppSettings;
   selectedLanguage?: string;
   onLanguageChange?: (lang: string) => void;
+  voiceAssistantEnabled?: boolean;
+  onVoiceAssistantToggle?: () => void;
 }
 
 export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
@@ -44,7 +46,9 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
   onNavigateToView,
   settings,
   selectedLanguage = 'auto',
-  onLanguageChange
+  onLanguageChange,
+  voiceAssistantEnabled = false,
+  onVoiceAssistantToggle
 }) => {
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [input, setInput] = useState<string>('');
@@ -83,7 +87,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
   }, []);
 
   const toggleMic = () => {
-    if (!recognitionRef.current) return;
+    if (!voiceAssistantEnabled || !recognitionRef.current) return;
     if (isListening) {
       recognitionRef.current.stop();
       setIsListening(false);
@@ -168,6 +172,17 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
             </div>
 
             <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
+              {onVoiceAssistantToggle && (
+                <button
+                  type="button"
+                  onClick={onVoiceAssistantToggle}
+                  aria-pressed={voiceAssistantEnabled}
+                  title="Voice Assistant ON/OFF"
+                  className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-colors ${voiceAssistantEnabled ? 'bg-white text-emerald-800 border-white' : 'bg-emerald-800/40 text-white border-emerald-200/60'}`}
+                >
+                  Voice {voiceAssistantEnabled ? 'ON' : 'OFF'}
+                </button>
+              )}
               {/* New Chat Button */}
               {onNewChat && (
                 <button
@@ -327,7 +342,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
                   className={`p-2 transition-colors rounded-xl cursor-pointer flex-shrink-0 ${
                     isListening ? 'bg-rose-100 text-rose-600 animate-pulse' : 'text-slate-500 hover:text-emerald-600 hover:bg-slate-100'
                   }`}
-                  title={isListening ? 'Stop listening' : 'Voice input'}
+                  title={!voiceAssistantEnabled ? 'Turn Voice Assistant ON first' : (isListening ? 'Stop listening' : 'Voice input')}
                 >
                   {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                 </button>
