@@ -836,8 +836,8 @@ I am your central AI assistant and command center. You can manage engineering ta
                 selectedLanguage={settings.selectedLanguage || 'auto'}
                 onLanguageChange={handleLanguageChange}
                 onActionClick={handleChatActionClick}
-                voiceAssistantEnabled={Boolean(settings.voiceAssistantEnabled)}
-                onVoiceAssistantToggle={() => handleUpdateSettings({ voiceAssistantEnabled: !settings.voiceAssistantEnabled })}
+                voiceAssistantEnabled={Boolean(settings.voiceAssistantEnabled && settings.safetyControlsEnabled)}
+                onVoiceAssistantToggle={settings.safetyControlsEnabled ? () => handleUpdateSettings({ voiceAssistantEnabled: !settings.voiceAssistantEnabled }) : undefined}
               />
             </div>
           </main>
