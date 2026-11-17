@@ -64,6 +64,64 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [visualViewportBounds, setVisualViewportBounds] = useState(() => ({
+    height: typeof window !== 'undefined'
+      ? (window.visualViewport?.height ?? window.innerHeight)
+      : 0,
+    offsetTop: typeof window !== 'undefined'
+      ? (window.visualViewport?.offsetTop ?? 0)
+      : 0
+  }));
+
+  // Track the visible viewport, which shrinks or pans independently of the
+  // layout viewport when Android's on-screen keyboard is shown.
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const updateViewportBounds = () => {
+      const height = Math.max(1, Math.round(viewport?.height ?? window.innerHeight));
+      const offsetTop = Math.max(0, Math.round(viewport?.offsetTop ?? 0));
+      setVisualViewportBounds((current) =>
+        current.height === height && current.offsetTop === offsetTop
+          ? current
+          : { height, offsetTop }
+      );
+    };
+
+    updateViewportBounds();
+    viewport?.addEventListener('resize', updateViewportBounds);
+    viewport?.addEventListener('scroll', updateViewportBounds);
+    window.addEventListener('resize', updateViewportBounds);
+    window.addEventListener('orientationchange', updateViewportBounds);
+
+    return () => {
+      viewport?.removeEventListener('resize', updateViewportBounds);
+      viewport?.removeEventListener('scroll', updateViewportBounds);
+      window.removeEventListener('resize', updateViewportBounds);
+      window.removeEventListener('orientationchange', updateViewportBounds);
+    };
+  }, []);
+
+  // Focus the composer when the floating chat opens; viewport updates then
+  // resize the drawer around the keyboard without stealing focus again.
+  useEffect(() => {
+    if (!isOpen) return;
+    const focusTimer = window.setTimeout(() => {
+      inputRef.current?.focus({ preventScroll: true });
+    }, 80);
+    return () => window.clearTimeout(focusTimer);
+  }, [isOpen]);
+
+  // Let multi-line floating messages remain readable while keeping the
+  // composer bounded so the message list retains its own scroll area.
+  useEffect(() => {
+    const textarea = inputRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    const nextHeight = Math.min(textarea.scrollHeight, 112);
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 112 ? 'auto' : 'hidden';
+  }, [input, isOpen]);
 
   // Initialize Speech Recognition if supported
   useEffect(() => {
@@ -164,7 +222,13 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
 
       {/* Floating Help Chat Window Overlay / Drawer */}
       {isOpen && (
-        <div className="fixed inset-x-0 top-[env(safe-area-inset-top)] bottom-0 sm:inset-x-auto sm:top-auto sm:bottom-6 sm:right-6 w-full sm:w-[min(28rem,calc(100vw-3rem))] h-[calc(100dvh-env(safe-area-inset-top))] sm:h-[min(48rem,calc(100dvh-3rem))] max-h-full bg-slate-50 shadow-2xl z-[70] flex flex-col border border-slate-200 text-slate-800 overflow-hidden sm:rounded-2xl animate-in slide-in-from-right duration-200 min-w-0">
+        <div
+          className="fixed inset-x-0 top-[var(--chat-visual-offset,0px)] bottom-auto sm:inset-x-auto sm:top-auto sm:bottom-6 sm:right-6 w-full sm:w-[min(28rem,calc(100vw-3rem))] h-[var(--chat-visual-height,100dvh)] sm:h-[min(48rem,calc(100dvh-3rem))] max-h-full bg-slate-50 shadow-2xl z-[70] flex flex-col border border-slate-200 text-slate-800 overflow-hidden sm:rounded-2xl animate-in slide-in-from-right duration-200 min-w-0"
+          style={{
+            '--chat-visual-height': `${visualViewportBounds.height}px`,
+            '--chat-visual-offset': `${visualViewportBounds.offsetTop}px`
+          } as React.CSSProperties}
+        >
           
           {/* Header */}
           <div className="p-3 sm:p-4 pt-[max(0.75rem,env(safe-area-inset-top))] bg-[#0b7a3e] text-white flex justify-between items-center shadow-xs flex-shrink-0 gap-2 min-w-0">
@@ -361,13 +425,21 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
                 </button>
               )}
 
-              <input 
-                type="text" 
+              <textarea
+                ref={inputRef}
+                rows={1}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSubmit();
+                  }
+                }}
                 disabled={isLoading}
-                placeholder={isListening ? 'Listening...' : 'Ask AI or type command...'} 
-                className="flex-1 min-w-0 border border-slate-300 rounded-full px-3 py-2.5 text-xs focus:outline-none focus:border-emerald-500 bg-slate-50 font-sans"
+                placeholder={isListening ? 'Listening...' : 'Ask AI or type command...'}
+                aria-label="Help Chat message"
+                className="flex-1 min-w-0 max-h-28 resize-none overflow-y-auto border border-slate-300 rounded-2xl px-3 py-2.5 text-xs leading-relaxed focus:outline-none focus:border-emerald-500 bg-slate-50 font-sans"
               />
 
               <button 
