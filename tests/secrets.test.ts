@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import express from 'express';
 import { createHash, randomBytes } from 'node:crypto';
 import { createAuthGuards } from '../auth.ts';
-import { createSecretsRouter, decryptSecret, encryptSecret, maskSecret } from '../secrets.ts';
+import { createSecretsRouter, decryptSecret, encryptSecret, maskSecret, resolveActiveSecretsForOwner, saveSecretForOwner } from '../secrets.ts';
 
 type Row = Record<string, any>;
 const OWNER_ID = '11111111-1111-4111-8111-111111111111';
@@ -32,9 +32,8 @@ class MemorySecretsDb {
         role: owner ? 'owner' : 'member'
       }] };
     }
-    if (normalized.startsWith('create table if not exists app_secrets') ||
-        normalized.startsWith('create index if not exists app_secrets_owner_active_idx')) {
-      return { rows: [] };
+    if (normalized.startsWith('create table') || normalized.startsWith('create index')) {
+      throw new Error('Runtime secret routes must never execute schema DDL.');
     }
     if (normalized.startsWith('insert into app_secrets')) {
       const row = {
@@ -178,4 +177,41 @@ test('Owner cannot read or revoke another owner account secret', async () => {
     assert.equal(deleted.status, 404);
     assert.equal(db.rows[0].revoked_at, null);
   });
+});
+
+test('two Owners save and resolve separate encrypted keys without runtime DDL', async () => {
+  const key = randomBytes(32);
+  const ownerA = OWNER_ID;
+  const ownerB = MEMBER_ID;
+  const rows: Row[] = [];
+  const statements: string[] = [];
+  const pool = {
+    async query(sql: string, values: any[] = []) {
+      statements.push(sql);
+      assert.equal(/^\s*(create|alter|drop)\b/i.test(sql), false, 'runtime secret calls must not perform DDL');
+      if (sql.trim().toLowerCase().startsWith('insert into app_secrets')) {
+        rows.push({
+          id: values[0], owner_id: values[1], name: values[2], provider: values[3],
+          masked_preview: values[4], ciphertext: values[5], nonce: values[6], auth_tag: values[7],
+          revoked_at: null
+        });
+        return { rows: [] };
+      }
+      assert.match(sql, /where owner_id = \$1 and revoked_at is null/i);
+      return { rows: rows.filter(row => row.owner_id === values[0]) };
+    }
+  };
+  await Promise.all([
+    saveSecretForOwner(ownerA, 'OpenAI API Key', 'openai', 'owner-a-openai-key', { pool, encryptionKey: key.toString('base64') }),
+    saveSecretForOwner(ownerB, 'OpenAI API Key', 'openai', 'owner-b-openai-key', { pool, encryptionKey: key.toString('base64') })
+  ]);
+  const [a, b] = await Promise.all([
+    resolveActiveSecretsForOwner(ownerA, { pool, encryptionKey: key.toString('base64') }),
+    resolveActiveSecretsForOwner(ownerB, { pool, encryptionKey: key.toString('base64') })
+  ]);
+  assert.equal(a.openai, 'owner-a-openai-key');
+  assert.equal(b.openai, 'owner-b-openai-key');
+  assert.notEqual(a.openai, b.openai);
+  assert.equal(rows.length, 2);
+  assert.equal(statements.some(sql => /^\s*(create|alter|drop)\b/i.test(sql)), false);
 });
