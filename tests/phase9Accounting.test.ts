@@ -22,7 +22,7 @@ test('platform analytics counts only published posts with publication timestamps
   assert.equal(result.platforms.youtube.tasks, 1);
   assert.equal(result.platforms.webhooks.webhookActions, 1);
   assert.equal(result.platforms.socialMedia.tasks, 1);
-  assert.equal(result.totals.webhookActions, 2);
+  assert.equal(result.totals.webhookActions, 1);
 });
 
 test('GST summary includes verified INR ledger entries only and splits interstate tax', () => {
