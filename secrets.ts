@@ -18,22 +18,6 @@ type EncryptedSecret = {
   authTag: string;
 };
 
-const TABLE_DDL = `
-  CREATE TABLE IF NOT EXISTS app_secrets (
-    id UUID PRIMARY KEY,
-    owner_id UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
-    name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 80),
-    provider TEXT NOT NULL DEFAULT 'custom' CHECK (length(provider) BETWEEN 1 AND 40),
-    masked_preview TEXT NOT NULL,
-    ciphertext TEXT NOT NULL,
-    nonce TEXT NOT NULL,
-    auth_tag TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    revoked_at TIMESTAMPTZ
-  )
-`;
-
 function getEncryptionKey(configuredKey: string): Buffer {
   const value = configuredKey.trim();
   let key: Buffer;
@@ -77,22 +61,6 @@ export function decryptSecret(encrypted: EncryptedSecret, key: Buffer, associate
   ]).toString('utf8');
 }
 
-const schemaReadyPools = new WeakSet<object>();
-const schemaPromises = new WeakMap<object, Promise<void>>();
-
-async function ensureSecretsTable(pool: SecretsDbPool): Promise<void> {
-  if (schemaReadyPools.has(pool)) return;
-  let pending = schemaPromises.get(pool);
-  if (!pending) {
-    pending = (async () => {
-      await pool.query(TABLE_DDL);
-      await pool.query('CREATE INDEX IF NOT EXISTS app_secrets_owner_active_idx ON app_secrets (owner_id, created_at DESC) WHERE revoked_at IS NULL');
-      schemaReadyPools.add(pool);
-    })().finally(() => { schemaPromises.delete(pool); });
-    schemaPromises.set(pool, pending);
-  }
-  await pending;
-}
 
 function safeError(res: Response, error: unknown) {
   // Never return database errors, SQL, encryption material, or secret values.
@@ -127,7 +95,6 @@ export function createSecretsRouter(options: SecretsRouterOptions = {}) {
 
     try {
       const key = getEncryptionKey(configuredKey);
-      await ensureSecretsTable(pool);
       const id = randomUUID();
       const encrypted = encryptSecret(secret, key, `${ownerId}:${id}`);
       const preview = maskSecret(secret);
@@ -148,7 +115,6 @@ export function createSecretsRouter(options: SecretsRouterOptions = {}) {
     if (!ownerId) return res.status(401).json({ error: 'Authentication required.' });
     if (!pool) return res.status(503).json({ error: 'PostgreSQL is not configured.' });
     try {
-      await ensureSecretsTable(pool);
       const result = await pool.query(
         `SELECT id, name, provider, masked_preview, created_at
            FROM app_secrets
@@ -171,7 +137,6 @@ export function createSecretsRouter(options: SecretsRouterOptions = {}) {
     }
     if (!pool) return res.status(503).json({ error: 'PostgreSQL is not configured.' });
     try {
-      await ensureSecretsTable(pool);
       const result = await pool.query(
         `UPDATE app_secrets SET revoked_at = NOW(), updated_at = NOW()
           WHERE id = $1 AND owner_id = $2 AND revoked_at IS NULL
@@ -188,6 +153,34 @@ export function createSecretsRouter(options: SecretsRouterOptions = {}) {
   return router;
 }
 
+export async function saveSecretForOwner(
+  ownerId: string,
+  name: string,
+  provider: string,
+  secret: string,
+  options: SecretsRouterOptions = {}
+): Promise<{ id: string; name: string; provider: string; masked_preview: string }> {
+  const pool = options.pool === undefined
+    ? (getPostgresPool() as unknown as SecretsDbPool | null)
+    : options.pool;
+  const configuredKey = options.encryptionKey ?? process.env.AAKSH_SECRETS_ENCRYPTION_KEY ?? '';
+  if (!ownerId || !pool) throw new Error('Secret storage is not configured.');
+  if (!name || name.length > 80 || !provider || provider.length > 40 ||
+      !secret || secret.length > 8192 || secret.includes('\u0000')) {
+    throw new Error('Invalid secret metadata or value.');
+  }
+  const key = getEncryptionKey(configuredKey);
+  const id = randomUUID();
+  const encrypted = encryptSecret(secret, key, `${ownerId}:${id}`);
+  const masked_preview = maskSecret(secret);
+  await pool.query(
+    `INSERT INTO app_secrets (id, owner_id, name, provider, masked_preview, ciphertext, nonce, auth_tag)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [id, ownerId, name, provider, masked_preview, encrypted.ciphertext, encrypted.nonce, encrypted.authTag]
+  );
+  return { id, name, provider, masked_preview };
+}
+
 export async function resolveActiveSecretsForOwner(
   ownerId: string,
   options: SecretsRouterOptions = {}
@@ -200,7 +193,6 @@ export async function resolveActiveSecretsForOwner(
 
   try {
     const key = getEncryptionKey(configuredKey);
-    await ensureSecretsTable(pool);
     const result = await pool.query(
       `SELECT id, provider, name, ciphertext, nonce, auth_tag
        FROM app_secrets
@@ -216,8 +208,23 @@ export async function resolveActiveSecretsForOwner(
           key,
           `${ownerId}:${row.id}`
         );
-        if (row.provider) resolved[String(row.provider).toLowerCase()] = plain;
-        if (row.name) resolved[String(row.name)] = plain;
+        if (row.provider) {
+          const provider = String(row.provider).trim().toLowerCase();
+          const canonical =
+            /gemini/.test(provider) ? 'gemini' :
+            /open.?ai/.test(provider) ? 'openai' :
+            /runway|video/.test(provider) ? 'video' :
+            /eleven.?labs/.test(provider) ? 'elevenlabs' :
+            /n8n/.test(provider) ? 'n8n' :
+            /publish|social/.test(provider) ? 'publishing' : provider;
+          resolved[canonical] = plain;
+          resolved[provider] = plain;
+        }
+        if (row.name) {
+          const name = String(row.name);
+          resolved[name] = plain;
+          resolved[name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_')] = plain;
+        }
       } catch {
         // Skip corrupted or mismatched key entries safely
       }
