@@ -17,7 +17,7 @@ test('security middleware emits baseline headers', async () => {
     assert.equal(response.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
     assert.equal(response.headers.get('x-powered-by'), null);
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 });
 
@@ -29,5 +29,5 @@ test('API rate limiter returns 429 after configured request limit', async () => 
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   const url = `http://127.0.0.1:${address.port}/private`;
   try { assert.equal((await fetch(url)).status, 200); assert.equal((await fetch(url)).status, 429); }
-  finally { await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); }
+  finally { await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); }
 });
