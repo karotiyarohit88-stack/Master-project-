@@ -3663,7 +3663,7 @@ app.get('/api/publishing/queue', (req: Request, res: Response) => {
 });
 
 // Attach an asset only when it matches a completed non-prototype backend video job.
-app.post('/api/publishing/attach-verified-asset', authGuards.requireCsrf, (req: Request, res: Response) => {
+app.post('/api/publishing/attach-verified-asset', authGuards.requireCsrf, async (req: Request, res: Response) => {
   const { postId, videoJobId } = req.body || {};
   const post = publishingQueue.find(item => item.id === postId);
   const job = videoJobs.find(item => item.id === videoJobId);
@@ -3688,7 +3688,6 @@ app.post('/api/publishing/attach-verified-asset', authGuards.requireCsrf, (req: 
       post.status = 'published';
       post.publishedAt = new Date().toISOString();
       post.externalPostId = providerData.externalPostId;
-      post.publicationConfirmed = true;
       post.publicationConfirmed = true;
     } catch {
       return res.status(502).json({ error: 'Publishing provider unavailable. Draft remains unpublished.', post });
