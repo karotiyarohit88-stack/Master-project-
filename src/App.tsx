@@ -115,6 +115,42 @@ export default function App() {
   const [serverHealth, setServerHealth] = useState<ServerHealth | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [visualViewportBounds, setVisualViewportBounds] = useState(() => ({
+    height: typeof window !== 'undefined'
+      ? (window.visualViewport?.height ?? window.innerHeight)
+      : 0,
+    offsetTop: typeof window !== 'undefined'
+      ? (window.visualViewport?.offsetTop ?? 0)
+      : 0
+  }));
+
+  // Keep the app frame inside the actually visible mobile viewport when the
+  // on-screen keyboard opens, closes, or pans the visual viewport.
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const updateViewportBounds = () => {
+      const height = Math.max(1, Math.round(viewport?.height ?? window.innerHeight));
+      const offsetTop = Math.max(0, Math.round(viewport?.offsetTop ?? 0));
+      setVisualViewportBounds((current) =>
+        current.height === height && current.offsetTop === offsetTop
+          ? current
+          : { height, offsetTop }
+      );
+    };
+
+    updateViewportBounds();
+    viewport?.addEventListener('resize', updateViewportBounds);
+    viewport?.addEventListener('scroll', updateViewportBounds);
+    window.addEventListener('resize', updateViewportBounds);
+    window.addEventListener('orientationchange', updateViewportBounds);
+
+    return () => {
+      viewport?.removeEventListener('resize', updateViewportBounds);
+      viewport?.removeEventListener('scroll', updateViewportBounds);
+      window.removeEventListener('resize', updateViewportBounds);
+      window.removeEventListener('orientationchange', updateViewportBounds);
+    };
+  }, []);
 
   // Load conversations on mount
   useEffect(() => {
@@ -697,7 +733,17 @@ I am your central AI assistant and command center. You can manage engineering ta
   };
 
   return (
-    <div className="flex flex-col h-[100dvh] w-full max-w-full bg-slate-50 text-slate-800 font-sans overflow-hidden antialiased selection:bg-emerald-500/20 selection:text-emerald-950">
+    <div
+      className="flex flex-col w-full max-w-full bg-slate-50 text-slate-800 font-sans overflow-hidden antialiased selection:bg-emerald-500/20 selection:text-emerald-950"
+      style={{
+        position: 'fixed',
+        top: `${visualViewportBounds.offsetTop}px`,
+        left: 0,
+        right: 0,
+        height: visualViewportBounds.height ? `${visualViewportBounds.height}px` : '100dvh',
+        minHeight: 0
+      }}
+    >
       {/* Top Header with Module Navigation */}
       <Header
         onOpenDrawer={() => setIsDrawerOpen(true)}
