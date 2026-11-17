@@ -221,13 +221,12 @@ export const GitHubCodeExplorer: React.FC<GitHubCodeExplorerProps> = ({ onAskCha
       const [owner, repo] = selectedRepo.split('/');
       const res = await fetch('/api/github/auth/token', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(() => {
-            const cookie = document.cookie.split(';').map((part) => part.trim()).find((part) => part.startsWith('aaksh_csrf='));
-            return cookie ? { 'x-csrf-token': decodeURIComponent(cookie.slice('aaksh_csrf='.length)) } : {};
-          })()
-        },
+        headers: (() : Record<string, string> => {
+          const cookie = document.cookie.split(';').map((part) => part.trim()).find((part) => part.startsWith('aaksh_csrf='));
+          const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+          if (cookie) headers['x-csrf-token'] = decodeURIComponent(cookie.slice('aaksh_csrf='.length));
+          return headers;
+        })(),
         body: JSON.stringify({
           token: tokenInput.trim(),
           owner,
@@ -258,9 +257,11 @@ export const GitHubCodeExplorer: React.FC<GitHubCodeExplorerProps> = ({ onAskCha
     try {
       await fetch('/api/github/auth/disconnect', {
         method: 'POST',
-        headers: (() => {
+        headers: (() : Record<string, string> => {
           const cookie = document.cookie.split(';').map((part) => part.trim()).find((part) => part.startsWith('aaksh_csrf='));
-          return cookie ? { 'x-csrf-token': decodeURIComponent(cookie.slice('aaksh_csrf='.length)) } : {};
+          const headers: Record<string, string> = {};
+          if (cookie) headers['x-csrf-token'] = decodeURIComponent(cookie.slice('aaksh_csrf='.length));
+          return headers;
         })()
       });
       setNoticeMessage('Switched back to Demo Sandbox Mode.');
