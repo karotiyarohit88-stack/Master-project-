@@ -12,8 +12,9 @@ import { promisify } from 'util';
 import { GoogleGenAI } from '@google/genai';
 import { applyPendingPostgresMigrations, checkPostgresConnection, getPostgresMigrationStatus } from './database.ts';
 import { createAuthGuards, createAuthRouter } from './auth.ts';
-import { createSecretsRouter, resolveActiveSecretsForOwner } from './secrets.ts';
-import createSecurityMiddleware from './server/config/security.middleware.js';
+import { createSecretsRouter, resolveActiveSecretsForOwner, saveSecretForOwner } from './secrets.ts';
+import createSecurityMiddleware, { createRateLimitMiddleware } from './server/config/security.middleware.js';
+import { createRuntimeSecretsMiddleware, getRuntimeSecret } from './server/runtime-secrets-context.ts';
 import { createAutoPilotSafetyGuard } from './src/utils/autoPilotSafetyGuard.ts';
 import { buildAutomatedContentPackage } from './src/utils/automatedContentPipeline.ts';
 import { canAutoPostDailyContent, buildMultiPlatformAnalytics, buildVerifiedEarningsSummary, evaluatePayoutGuard, type VerifiedEarningEntry } from './src/utils/phase9Accounting.ts';
@@ -28,7 +29,19 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
+// Trust only an explicitly configured number of ingress proxy hops; default to 0.
+const trustProxyHops = Number.parseInt(process.env.TRUST_PROXY_HOPS || '0', 10);
+if (!Number.isSafeInteger(trustProxyHops) || trustProxyHops < 0 || trustProxyHops > 5) {
+  throw new Error('TRUST_PROXY_HOPS must be an integer from 0 to 5.');
+}
+app.set('trust proxy', trustProxyHops);
 app.use(createSecurityMiddleware());
+app.use('/api', createRateLimitMiddleware({
+  windowMs: 60_000,
+  maxRequests: 180,
+  maxEntries: 10_000,
+  skip: (req) => req.path === '/health' || req.method === 'OPTIONS'
+}));
 app.use(express.json({ limit: '8mb' }));
 
 // Application authentication endpoints; legacy business routes remain unchanged in Phase 1.
@@ -84,24 +97,8 @@ app.use('/api', createAutoPilotSafetyGuard(() => serverStore.autopilot.safetyEna
 
 // Secret Manager: all routes require an authenticated Owner; mutations also require CSRF.
 
-// Runtime Secret Integration: hydrate active decrypted secrets for authenticated owner
-app.use('/api', async (req, res, next) => {
-  try {
-    const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id;
-    if (!ownerId) return next();
-    const secrets = await resolveActiveSecretsForOwner(ownerId);
-    res.locals.runtimeSecrets = secrets;
-    if (secrets.gemini || secrets.GEMINI_API_KEY) serverStore.gemini.apiKey = secrets.gemini || secrets.GEMINI_API_KEY;
-    if (secrets.openai || secrets.OPENAI_API_KEY) serverStore.openai.apiKey = secrets.openai || secrets.OPENAI_API_KEY;
-    if (secrets.video || secrets.runway || secrets.RUNWAY_API_KEY) serverStore.video.apiKey = secrets.video || secrets.runway || secrets.RUNWAY_API_KEY;
-    if (secrets.elevenlabs || secrets.ELEVENLABS_API_KEY) serverStore.elevenlabs.apiKey = secrets.elevenlabs || secrets.ELEVENLABS_API_KEY;
-    if (secrets.publishing || secrets.PUBLISHING_API_KEY) serverStore.publishing.apiKey = secrets.publishing || secrets.PUBLISHING_API_KEY;
-    if (secrets.n8n || secrets.N8N_API_KEY) serverStore.n8n.authToken = secrets.n8n || secrets.N8N_API_KEY;
-  } catch {
-    // Non-blocking fallback to env variables
-  }
-  return next();
-});
+// Decrypted owner credentials remain request-scoped; never write them into serverStore.
+app.use('/api', createRuntimeSecretsMiddleware(resolveActiveSecretsForOwner));
 
 app.use('/api/secrets', requireOwner, (req, res, next) => {
   if (req.method === 'GET') return next();
@@ -130,6 +127,22 @@ const requireAdminToken: express.RequestHandler = (req, res, next) => {
   return next();
 };
 
+
+function getOwnerSecret(provider: string, fallback = ''): string {
+  const aliases: Record<string, string[]> = {
+    gemini: ['gemini', 'google_gemini', 'GEMINI_API_KEY'],
+    openai: ['openai', 'open_ai', 'OPENAI_API_KEY'],
+    video: ['video', 'runway', 'video_provider', 'RUNWAY_API_KEY', 'VIDEO_PROVIDER_API_KEY'],
+    elevenlabs: ['elevenlabs', 'eleven_labs', 'ELEVENLABS_API_KEY'],
+    publishing: ['publishing', 'social_publishing', 'PUBLISHING_API_KEY'],
+    n8n: ['n8n', 'N8N_API_KEY', 'N8N_AUTH_TOKEN']
+  };
+  for (const key of aliases[provider] || [provider]) {
+    const value = getRuntimeSecret(key) || getRuntimeSecret(key.toUpperCase());
+    if (value) return value;
+  }
+  return fallback;
+}
 
 // In-Memory Secure Store for Server Credentials & Config (Never sent unmasked to browser)
 const serverStore = {
@@ -947,21 +960,13 @@ function checkRateLimit(ip: string): boolean {
 }
 
 // Gemini Client initialization
-let ai: GoogleGenAI | null = null;
-let activeAiKey = '';
 function getGenAI(): GoogleGenAI | null {
-  const key = serverStore.gemini.apiKey || process.env.GEMINI_API_KEY;
+  const key = getOwnerSecret('gemini', serverStore.gemini.apiKey || process.env.GEMINI_API_KEY);
   if (!key) return null;
-  if (!ai || activeAiKey !== key) {
-    activeAiKey = key;
-    ai = new GoogleGenAI({
-      apiKey: key,
-      httpOptions: {
-        headers: { 'User-Agent': 'aistudio-build' }
-      }
-    });
-  }
-  return ai;
+  return new GoogleGenAI({
+    apiKey: key,
+    httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+  });
 }
 
 // Master System Prompt for Gemini
@@ -1237,7 +1242,7 @@ app.get('/api/health', async (req: Request, res: Response) => {
   res.json({
     status: 'ok',
     appName: 'Master Project AI Agent',
-    hasApiKey: Boolean(serverStore.gemini.apiKey || process.env.GEMINI_API_KEY),
+    hasApiKey: Boolean(getOwnerSecret('gemini', serverStore.gemini.apiKey) || process.env.GEMINI_API_KEY),
     model: serverStore.gemini.model,
     sandboxMode: 'Prototype Sandbox (Safety Hardened)',
     database: {
@@ -1252,10 +1257,10 @@ app.get('/api/health', async (req: Request, res: Response) => {
       error: database.error
     },
     activeConnectors: {
-      gemini: serverStore.gemini.apiKey ? 'Connected (Server)' : 'Awaiting API Key',
+      gemini: getOwnerSecret('gemini', serverStore.gemini.apiKey) ? 'Connected (Server)' : 'Awaiting API Key',
       n8n: serverStore.n8n.webhookUrl ? 'Configured' : 'Local Fallback Mode',
       video: serverStore.video.providerName,
-      elevenlabs: serverStore.elevenlabs.apiKey ? 'Configured' : 'Prototype Audio',
+      elevenlabs: getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey) ? 'Configured' : 'Prototype Audio',
       publishing: 'Approval Gate Enforced',
       sheets: serverStore.sheets.spreadsheetId ? 'Configured' : 'Local Memory Mirror'
     }
@@ -1327,10 +1332,10 @@ app.get('/api/analytics', (req: Request, res: Response) => {
       proposalsCount: changeProposals.length
     },
     activeTools: {
-      gemini: Boolean(serverStore.gemini.apiKey || process.env.GEMINI_API_KEY) ? 'Connected' : 'Missing Key',
+      gemini: Boolean(getOwnerSecret('gemini', serverStore.gemini.apiKey) || process.env.GEMINI_API_KEY) ? 'Connected' : 'Missing Key',
       n8n: Boolean(serverStore.n8n.webhookUrl) ? 'Configured' : 'Local Fallback Mode',
       video: serverStore.video.providerName,
-      elevenlabs: Boolean(serverStore.elevenlabs.apiKey) ? 'Configured' : 'Prototype Audio',
+      elevenlabs: Boolean(getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey)) ? 'Configured' : 'Prototype Audio',
       publishing: 'Approval Gate Enforced',
       sheets: Boolean(serverStore.sheets.spreadsheetId) ? 'Configured' : 'Local Memory Mirror',
       github: serverStore.github.token ? 'Connected Token' : 'Demo Sandbox'
@@ -1413,7 +1418,7 @@ app.post('/api/automation/trigger', (req: Request, res: Response) => {
 
 // GET /api/connections: Return status with masked secrets
 app.get('/api/connections', async (req: Request, res: Response) => {
-  const hasGemini = Boolean(serverStore.gemini.apiKey || process.env.GEMINI_API_KEY);
+  const hasGemini = Boolean(getOwnerSecret('gemini', serverStore.gemini.apiKey) || process.env.GEMINI_API_KEY);
   const databaseCheck = await checkPostgresConnection();
   let migrationCheck = { migrationTableExists: false, appliedMigrations: [] as string[] };
   if (databaseCheck.connected) {
@@ -1428,38 +1433,38 @@ app.get('/api/connections', async (req: Request, res: Response) => {
       lastTested: new Date().toISOString()
     },
     openai: {
-      configured: Boolean(serverStore.openai.apiKey),
+      configured: Boolean(getOwnerSecret('openai', serverStore.openai.apiKey)),
       model: serverStore.openai.model,
       provider: serverStore.openai.provider,
-      status: Boolean(serverStore.openai.apiKey) ? 'connected' : 'unconfigured',
+      status: Boolean(getOwnerSecret('openai', serverStore.openai.apiKey)) ? 'connected' : 'unconfigured',
       lastTested: new Date().toISOString()
     },
     n8n: {
-      configured: Boolean(serverStore.n8n.webhookUrl || serverStore.n8n.authToken),
+      configured: Boolean(serverStore.n8n.webhookUrl || getOwnerSecret('n8n', serverStore.n8n.authToken)),
       endpoint: serverStore.n8n.webhookUrl ? maskSecret(serverStore.n8n.webhookUrl) : '',
-      hasAuthHeader: Boolean(serverStore.n8n.authToken),
-      status: (serverStore.n8n.webhookUrl || serverStore.n8n.authToken) ? 'connected' : 'unconfigured',
-      message: (serverStore.n8n.webhookUrl || serverStore.n8n.authToken) ? 'Ready for webhook triggers' : 'Using Local Fallback Mode (Demo)'
+      hasAuthHeader: Boolean(getOwnerSecret('n8n', serverStore.n8n.authToken)),
+      status: (serverStore.n8n.webhookUrl || getOwnerSecret('n8n', serverStore.n8n.authToken)) ? 'connected' : 'unconfigured',
+      message: (serverStore.n8n.webhookUrl || getOwnerSecret('n8n', serverStore.n8n.authToken)) ? 'Ready for webhook triggers' : 'Using Local Fallback Mode (Demo)'
     },
     video: {
-      configured: Boolean(serverStore.video.apiKey),
+      configured: Boolean(getOwnerSecret('video', serverStore.video.apiKey)),
       providerName: serverStore.video.providerName,
       endpoint: serverStore.video.endpoint,
-      hasApiKey: Boolean(serverStore.video.apiKey),
-      status: serverStore.video.apiKey ? 'connected' : 'mock_adapter'
+      hasApiKey: Boolean(getOwnerSecret('video', serverStore.video.apiKey)),
+      status: getOwnerSecret('video', serverStore.video.apiKey) ? 'connected' : 'mock_adapter'
     },
     elevenlabs: {
-      configured: Boolean(serverStore.elevenlabs.apiKey),
-      hasApiKey: Boolean(serverStore.elevenlabs.apiKey),
+      configured: Boolean(getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey)),
+      hasApiKey: Boolean(getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey)),
       selectedVoiceId: serverStore.elevenlabs.selectedVoiceId,
-      status: serverStore.elevenlabs.apiKey ? 'connected' : 'unconfigured',
+      status: getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey) ? 'connected' : 'unconfigured',
       availableVoices: serverStore.elevenlabs.availableVoices
     },
     publishing: {
-      configured: Boolean(serverStore.publishing.webhookEndpoint || serverStore.publishing.apiKey),
+      configured: Boolean(serverStore.publishing.webhookEndpoint || getOwnerSecret('publishing', serverStore.publishing.apiKey)),
       enabledPlatforms: serverStore.publishing.enabledPlatforms,
       webhookEndpoint: serverStore.publishing.webhookEndpoint ? maskSecret(serverStore.publishing.webhookEndpoint) : '',
-      hasCredentials: Boolean(serverStore.publishing.apiKey),
+      hasCredentials: Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey)),
       status: 'ready'
     },
     sheets: {
@@ -1508,33 +1513,33 @@ app.get('/api/connections', async (req: Request, res: Response) => {
 });
 
 // POST /api/connections/save: Save connection settings on server (secrets never stored in localStorage)
-app.post('/api/connections/save', requireOwner, (req: Request, res: Response) => {
+app.post('/api/connections/save', requireOwner, authGuards.requireCsrf, async (req: Request, res: Response) => {
   const { provider, config } = req.body;
 
   if (!provider || !config) {
     return res.status(400).json({ error: 'Provider and config are required.' });
   }
 
+  const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id;
+  if (!ownerId) return res.status(401).json({ error: 'Authentication required.' });
+
   try {
     if (provider === 'gemini') {
-      if (config.apiKey && config.apiKey !== '••••••') {
-        serverStore.gemini.apiKey = config.apiKey.trim();
-        ai = null; // reset client to pick up new key
-      }
+      if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, 'Gemini API Key', 'gemini', config.apiKey.trim());
       if (config.model) serverStore.gemini.model = config.model;
     } else if (provider === 'n8n') {
       if (config.webhookUrl !== undefined) serverStore.n8n.webhookUrl = config.webhookUrl.trim();
-      if (config.authToken && config.authToken !== '••••••') serverStore.n8n.authToken = config.authToken.trim();
+      if (config.authToken && config.authToken !== '••••••') await saveSecretForOwner(ownerId, 'n8n API Key', 'n8n', config.authToken.trim());
     } else if (provider === 'video') {
       if (config.providerName) serverStore.video.providerName = config.providerName;
       if (config.endpoint) serverStore.video.endpoint = config.endpoint.trim();
-      if (config.apiKey && config.apiKey !== '••••••') serverStore.video.apiKey = config.apiKey.trim();
+      if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, 'Video Provider API Key', 'video', config.apiKey.trim());
     } else if (provider === 'elevenlabs') {
-      if (config.apiKey && config.apiKey !== '••••••') serverStore.elevenlabs.apiKey = config.apiKey.trim();
+      if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, 'ElevenLabs API Key', 'elevenlabs', config.apiKey.trim());
       if (config.selectedVoiceId) serverStore.elevenlabs.selectedVoiceId = config.selectedVoiceId;
     } else if (provider === 'publishing') {
       if (config.webhookEndpoint !== undefined) serverStore.publishing.webhookEndpoint = config.webhookEndpoint.trim();
-      if (config.apiKey && config.apiKey !== '••••••') serverStore.publishing.apiKey = config.apiKey.trim();
+      if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, 'Publishing API Key', 'publishing', config.apiKey.trim());
       if (config.enabledPlatforms) serverStore.publishing.enabledPlatforms = { ...serverStore.publishing.enabledPlatforms, ...config.enabledPlatforms };
     } else if (provider === 'sheets') {
       if (config.spreadsheetId !== undefined) serverStore.sheets.spreadsheetId = config.spreadsheetId.trim();
@@ -1551,7 +1556,7 @@ app.post('/api/connections/save', requireOwner, (req: Request, res: Response) =>
       if (config.repo) serverStore.github.repo = config.repo.trim();
       if (config.branch) serverStore.github.branch = config.branch.trim();
     } else if (provider === 'openai') {
-      if (config.apiKey && config.apiKey !== '••••••') serverStore.openai.apiKey = config.apiKey.trim();
+      if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, 'OpenAI API Key', 'openai', config.apiKey.trim());
       if (config.model) serverStore.openai.model = config.model;
     } else if (provider === 'workspace') {
       if (config.clientId) serverStore.workspace.clientId = config.clientId.trim();
@@ -1571,8 +1576,8 @@ app.post('/api/connections/save', requireOwner, (req: Request, res: Response) =>
     });
 
     res.json({ success: true, message: `Settings for ${provider} saved securely.` });
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Failed to update settings.' });
+  } catch {
+    res.status(503).json({ error: 'Credential storage is unavailable or not configured. Settings were not confirmed saved.' });
   }
 });
 
@@ -1642,7 +1647,7 @@ app.post('/api/connections/test', requireOwner, async (req: Request, res: Respon
   }
 
   if (provider === 'openai') {
-    if (!serverStore.openai.apiKey) {
+    if (!getOwnerSecret('openai', serverStore.openai.apiKey)) {
       return res.json({
         success: false,
         status: 'unconfigured',
@@ -1652,7 +1657,7 @@ app.post('/api/connections/test', requireOwner, async (req: Request, res: Respon
 
     try {
       const resp = await fetch('https://api.openai.com/v1/models', {
-        headers: { 'Authorization': `Bearer ${serverStore.openai.apiKey}` }
+        headers: { 'Authorization': `Bearer ${getOwnerSecret('openai', serverStore.openai.apiKey)}` }
       });
       if (resp.ok) {
         return res.json({
@@ -1729,7 +1734,7 @@ app.post('/api/connections/test', requireOwner, async (req: Request, res: Respon
         headers: {
           'Content-Type': 'application/json',
           'User-Agent': 'MasterProjectAIAgent/1.0',
-          ...(serverStore.n8n.authToken ? { 'Authorization': `Bearer ${serverStore.n8n.authToken}` } : {})
+          ...(getOwnerSecret('n8n', serverStore.n8n.authToken) ? { 'Authorization': `Bearer ${getOwnerSecret('n8n', serverStore.n8n.authToken)}` } : {})
         },
         body: JSON.stringify({ event: 'ping', testMode: true, timestamp: new Date().toISOString() }),
         signal: controller.signal
@@ -1759,7 +1764,7 @@ app.post('/api/connections/test', requireOwner, async (req: Request, res: Respon
   }
 
   if (provider === 'elevenlabs') {
-    if (!serverStore.elevenlabs.apiKey) {
+    if (!getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey)) {
       return res.json({
         success: false,
         status: 'unconfigured',
@@ -1769,7 +1774,7 @@ app.post('/api/connections/test', requireOwner, async (req: Request, res: Respon
 
     try {
       const resp = await fetch('https://api.elevenlabs.io/v1/user', {
-        headers: { 'xi-api-key': serverStore.elevenlabs.apiKey }
+        headers: { 'xi-api-key': getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey) }
       });
       if (resp.ok) {
         const userData = await resp.json();
@@ -1802,7 +1807,7 @@ app.post('/api/connections/test', requireOwner, async (req: Request, res: Respon
         message: 'Prototype Video Adapter active. Clean provider interface ready for live video API credentials.'
       });
     }
-    if (!serverStore.video.apiKey) {
+    if (!getOwnerSecret('video', serverStore.video.apiKey)) {
       return res.json({
         success: false,
         status: 'unconfigured',
@@ -2146,7 +2151,7 @@ Please review the proposed parameters below. You may either **Approve with Verif
         duration: 30,
         aspectRatio: '9:16',
         voiceId: '21m00Tcm4TlvDq8ikWAM',
-        voiceProvider: serverStore.elevenlabs.apiKey ? 'elevenlabs' : 'prototype',
+        voiceProvider: getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey) ? 'elevenlabs' : 'prototype',
         status: 'queued',
         progress: 15,
         createdAt: new Date().toISOString(),
@@ -2289,11 +2294,11 @@ Your generated poster is rendered directly in the chat card below with instant *
     const isConsequential = Boolean(generatedTaskCard.requiresApproval || generatedTaskCard.type === 'publishing' || generatedTaskCard.status === 'waiting_approval');
 
     const toolReadiness = {
-      gemini: Boolean(serverStore.gemini.apiKey || process.env.GEMINI_API_KEY) ? '✅ Configured (Gemini 3.8 Flash)' : '⚠️ Setup Required (Connections)',
-      elevenlabs: Boolean(serverStore.elevenlabs.apiKey) ? '✅ Configured (ElevenLabs)' : 'ℹ️ Prototype Voice (Setup in Settings for Live Voice)',
+      gemini: Boolean(getOwnerSecret('gemini', serverStore.gemini.apiKey) || process.env.GEMINI_API_KEY) ? '✅ Configured (Gemini 3.8 Flash)' : '⚠️ Setup Required (Connections)',
+      elevenlabs: Boolean(getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey)) ? '✅ Configured (ElevenLabs)' : 'ℹ️ Prototype Voice (Setup in Settings for Live Voice)',
       n8n: Boolean(serverStore.n8n.webhookUrl) ? '✅ Configured (Active Webhook)' : '⚠️ Setup Required (Connections)',
       video: '✅ Connected (Video Pipeline Adapter)',
-      publishing: Boolean(serverStore.publishing.apiKey || serverStore.publishing.webhookEndpoint) ? '✅ Configured (Platform API Ready)' : 'ℹ️ Sandbox Mode (Connect API in Connections for Live Publish)',
+      publishing: Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey) || serverStore.publishing.webhookEndpoint) ? '✅ Configured (Platform API Ready)' : 'ℹ️ Sandbox Mode (Connect API in Connections for Live Publish)',
       sheets: Boolean(serverStore.sheets.spreadsheetId) ? '✅ Configured' : 'ℹ️ Local Cache (Setup in Connections)'
     };
 
@@ -2729,12 +2734,12 @@ app.post('/api/video/generate-voice', async (req: Request, res: Response) => {
   const selectedVoice = voiceId || serverStore.elevenlabs.selectedVoiceId;
 
   // If ElevenLabs API Key is present, call ElevenLabs API
-  if (serverStore.elevenlabs.apiKey) {
+  if (getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey)) {
     try {
       const resp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${selectedVoice}`, {
         method: 'POST',
         headers: {
-          'xi-api-key': serverStore.elevenlabs.apiKey,
+          'xi-api-key': getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey),
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -2792,7 +2797,7 @@ app.post('/api/video/render', (req: Request, res: Response) => {
   const provider = serverStore.video.providerName;
 
   // If external provider is selected but has no API Key, do NOT pretend it rendered!
-  if (provider !== 'Prototype Adapter' && !serverStore.video.apiKey) {
+  if (provider !== 'Prototype Adapter' && !getOwnerSecret('video', serverStore.video.apiKey)) {
     const unconfiguredJob: VideoJob = {
       id: jobId,
       topic,
@@ -2801,7 +2806,7 @@ app.post('/api/video/render', (req: Request, res: Response) => {
       duration,
       aspectRatio,
       voiceId,
-      voiceProvider: serverStore.elevenlabs.apiKey ? 'elevenlabs' : 'prototype',
+      voiceProvider: getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey) ? 'elevenlabs' : 'prototype',
       status: 'waiting_credentials',
       progress: 0,
       createdAt: new Date().toISOString(),
@@ -2834,7 +2839,7 @@ app.post('/api/video/render', (req: Request, res: Response) => {
     duration,
     aspectRatio,
     voiceId,
-    voiceProvider: serverStore.elevenlabs.apiKey ? 'elevenlabs' : 'prototype',
+    voiceProvider: getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey) ? 'elevenlabs' : 'prototype',
     status: 'queued',
     progress: 10,
     createdAt: new Date().toISOString(),
@@ -3209,8 +3214,8 @@ app.get('/api/autopilot/tools-status', (req: Request, res: Response) => {
       id: 'gemini_ai',
       name: 'Google Gemini AI',
       role: 'Content synthesis, scripting, prompt engineering',
-      configured: Boolean(serverStore.gemini.apiKey || process.env.GEMINI_API_KEY),
-      status: Boolean(serverStore.gemini.apiKey || process.env.GEMINI_API_KEY) ? 'connected' : 'unconfigured',
+      configured: Boolean(getOwnerSecret('gemini', serverStore.gemini.apiKey) || process.env.GEMINI_API_KEY),
+      status: Boolean(getOwnerSecret('gemini', serverStore.gemini.apiKey) || process.env.GEMINI_API_KEY) ? 'connected' : 'unconfigured',
       setupLocation: 'Connections / Settings (Gemini API Key)'
     },
     video_generator: {
@@ -3225,8 +3230,8 @@ app.get('/api/autopilot/tools-status', (req: Request, res: Response) => {
       id: 'elevenlabs_voice',
       name: 'ElevenLabs Voice Studio',
       role: 'Lifelike narration & voice synthesis',
-      configured: Boolean(serverStore.elevenlabs.apiKey),
-      status: Boolean(serverStore.elevenlabs.apiKey) ? 'connected' : 'setup_required',
+      configured: Boolean(getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey)),
+      status: Boolean(getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey)) ? 'connected' : 'setup_required',
       setupLocation: 'Settings > ElevenLabs API Key'
     },
     n8n_webhook: {
@@ -3241,8 +3246,8 @@ app.get('/api/autopilot/tools-status', (req: Request, res: Response) => {
       id: 'social_publisher',
       name: 'Social Media Publisher',
       role: 'Multi-platform draft & dispatch (YouTube, X, LinkedIn)',
-      configured: Boolean(serverStore.publishing.apiKey || serverStore.publishing.webhookEndpoint),
-      status: Boolean(serverStore.publishing.apiKey || serverStore.publishing.webhookEndpoint) ? 'connected' : 'setup_required',
+      configured: Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey) || serverStore.publishing.webhookEndpoint),
+      status: Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey) || serverStore.publishing.webhookEndpoint) ? 'connected' : 'setup_required',
       setupLocation: 'Connections > Social Publishing API Key'
     },
     google_sheets: {
@@ -3286,7 +3291,7 @@ app.post('/api/autopilot/content-pipeline/prepare', authGuards.requireCsrf, asyn
     try {
       const response = await fetch(serverStore.n8n.webhookUrl, {
         method:'POST',
-        headers:{'Content-Type':'application/json',...(serverStore.n8n.authToken?{Authorization:'Bearer '+serverStore.n8n.authToken}:{})},
+        headers:{'Content-Type':'application/json',...(getOwnerSecret('n8n', serverStore.n8n.authToken)?{Authorization:'Bearer '+getOwnerSecret('n8n', serverStore.n8n.authToken)}:{})},
         body:JSON.stringify({event:'aaksh.content_pipeline.draft_ready',contentPackage,publishingDraftIds:[shortId,longId],policy:contentPackage.executionPolicy}),
         signal:AbortSignal.timeout(8000)
       });
@@ -3346,7 +3351,7 @@ app.post('/api/autopilot/workflows', (req: Request, res: Response) => {
       toolId: 'gemini_ai',
       action: 'Synthesize Script via Gemini',
       description: `Drafts technical content, visual cues, and hashtags on topic: "${topic}".`,
-      configured: Boolean(serverStore.gemini.apiKey || process.env.GEMINI_API_KEY)
+      configured: Boolean(getOwnerSecret('gemini', serverStore.gemini.apiKey) || process.env.GEMINI_API_KEY)
     }
   ];
 
@@ -3357,7 +3362,7 @@ app.post('/api/autopilot/workflows', (req: Request, res: Response) => {
       toolId: 'elevenlabs_voice',
       action: 'Render Voiceover Audio',
       description: 'Generates narration audio stream using ElevenLabs or prototype speech.',
-      configured: Boolean(serverStore.elevenlabs.apiKey)
+      configured: Boolean(getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey))
     });
   }
 
@@ -3392,7 +3397,7 @@ app.post('/api/autopilot/workflows', (req: Request, res: Response) => {
       description: requireApprovalBeforePublish
         ? 'Enforces human operator token before any external publishing.'
         : 'Dispatches live post to social channels.',
-      configured: Boolean(serverStore.publishing.apiKey || serverStore.publishing.webhookEndpoint),
+      configured: Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey) || serverStore.publishing.webhookEndpoint),
       requiresApproval: requireApprovalBeforePublish
     });
   }
@@ -3529,7 +3534,7 @@ app.post('/api/autopilot/workflows/:id/run', async (req: Request, res: Response)
   ];
 
   // Tool availability notices
-  if (wf.tools.includes('elevenlabs_voice') && !serverStore.elevenlabs.apiKey) {
+  if (wf.tools.includes('elevenlabs_voice') && !getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey)) {
     logs.push(`[${now.toLocaleTimeString()}] [Tool Notice] ElevenLabs API Key not configured in Settings. Using prototype speech synthesis.`);
   }
   if (wf.tools.includes('n8n_webhook') && !serverStore.n8n.webhookUrl) {
@@ -3706,7 +3711,7 @@ app.post('/api/publishing/attach-verified-asset', authGuards.requireCsrf, async 
   if (autoPostEligible) {
     if (!serverStore.publishing.webhookEndpoint) return res.status(503).json({ error: 'Daily auto-post remains blocked: live publishing webhook is not configured.', post });
     try {
-      const providerResponse = await fetch(serverStore.publishing.webhookEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(serverStore.publishing.apiKey ? { Authorization: 'Bearer ' + serverStore.publishing.apiKey } : {}) }, body: JSON.stringify({ event: 'aaksh.daily_content.publish', post: { id: post.id, platform: post.platform, topic: post.topic, caption: post.caption, videoUrl: post.videoUrl } }), signal: AbortSignal.timeout(10000) });
+      const providerResponse = await fetch(serverStore.publishing.webhookEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(getOwnerSecret('publishing', serverStore.publishing.apiKey) ? { Authorization: 'Bearer ' + getOwnerSecret('publishing', serverStore.publishing.apiKey) } : {}) }, body: JSON.stringify({ event: 'aaksh.daily_content.publish', post: { id: post.id, platform: post.platform, topic: post.topic, caption: post.caption, videoUrl: post.videoUrl } }), signal: AbortSignal.timeout(10000) });
       const providerData: any = await providerResponse.json().catch(() => ({}));
       if (!providerResponse.ok || providerData?.success !== true || typeof providerData?.externalPostId !== 'string' || !providerData.externalPostId.trim()) return res.status(502).json({ error: 'Provider did not confirm auto-publication. Draft remains unpublished.', post });
       post.status = 'published';
@@ -3813,7 +3818,7 @@ app.post('/api/publishing/publish', async (req: Request, res: Response) => {
   }
 
   // Check if live platform credentials exist
-  const hasLiveCredentials = Boolean(serverStore.publishing.apiKey || serverStore.publishing.webhookEndpoint);
+  const hasLiveCredentials = Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey) || serverStore.publishing.webhookEndpoint);
 
   if (!hasLiveCredentials) {
     recordAudit({
@@ -3834,7 +3839,7 @@ app.post('/api/publishing/publish', async (req: Request, res: Response) => {
   if (autoPostEligible) {
     if (!serverStore.publishing.webhookEndpoint) return res.status(503).json({ error: 'Daily auto-post is blocked until a live publishing webhook is configured.' });
     try {
-      const providerResponse = await fetch(serverStore.publishing.webhookEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(serverStore.publishing.apiKey ? { Authorization: 'Bearer ' + serverStore.publishing.apiKey } : {}) }, body: JSON.stringify({ event: 'aaksh.daily_content.publish', post: { id: post.id, platform: post.platform, topic: post.topic, caption: post.caption, videoUrl: post.videoUrl } }), signal: AbortSignal.timeout(10000) });
+      const providerResponse = await fetch(serverStore.publishing.webhookEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(getOwnerSecret('publishing', serverStore.publishing.apiKey) ? { Authorization: 'Bearer ' + getOwnerSecret('publishing', serverStore.publishing.apiKey) } : {}) }, body: JSON.stringify({ event: 'aaksh.daily_content.publish', post: { id: post.id, platform: post.platform, topic: post.topic, caption: post.caption, videoUrl: post.videoUrl } }), signal: AbortSignal.timeout(10000) });
       const providerData: any = await providerResponse.json().catch(() => ({}));
       if (!providerResponse.ok || providerData?.success !== true || typeof providerData?.externalPostId !== 'string' || !providerData.externalPostId.trim()) {
         recordAudit({ category: 'publishing', action: 'Daily Auto-Post Provider Confirmation Missing', status: 'blocked', details: 'Provider did not return explicit publication confirmation for ' + post.id + '.' });
