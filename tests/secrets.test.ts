@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import express from 'express';
 import { createHash, randomBytes } from 'node:crypto';
 import { createAuthGuards } from '../auth.ts';
-import { createSecretsRouter, decryptSecret, encryptSecret, maskSecret, resolveActiveSecretsForOwner, saveSecretForOwner } from '../secrets.ts';
+import { createSecretsRouter, decryptSecret, encryptSecret, maskSecret, resolveActiveSecretsForOwner, revokeSecretsForOwner, saveSecretForOwner } from '../secrets.ts';
 
 type Row = Record<string, any>;
 const OWNER_ID = '11111111-1111-4111-8111-111111111111';
@@ -214,4 +214,21 @@ test('two Owners save and resolve separate encrypted keys without runtime DDL', 
   assert.notEqual(a.openai, b.openai);
   assert.equal(rows.length, 2);
   assert.equal(statements.some(sql => /^\s*(create|alter|drop)\b/i.test(sql)), false);
+});
+
+test('secret revocation is restricted to the selected Owner and provider', async () => {
+  let capturedSql = '';
+  let capturedValues: any[] = [];
+  const pool = {
+    async query(sql: string, values: any[] = []) {
+      capturedSql = sql;
+      capturedValues = values;
+      return { rows: [] };
+    }
+  };
+  await revokeSecretsForOwner(OWNER_ID, 'github', { pool });
+  assert.match(capturedSql, /update app_secrets/i);
+  assert.match(capturedSql, /owner_id = \$1/i);
+  assert.match(capturedSql, /lower\(provider\) = lower\(\$2\)/i);
+  assert.deepEqual(capturedValues, [OWNER_ID, 'github']);
 });
