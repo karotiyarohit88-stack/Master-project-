@@ -181,6 +181,23 @@ export async function saveSecretForOwner(
   return { id, name, provider, masked_preview };
 }
 
+export async function revokeSecretsForOwner(
+  ownerId: string,
+  provider: string,
+  options: SecretsRouterOptions = {}
+): Promise<void> {
+  const pool = options.pool === undefined
+    ? (getPostgresPool() as unknown as SecretsDbPool | null)
+    : options.pool;
+  if (!ownerId || !provider || !pool) throw new Error('Secret storage is not configured.');
+  await pool.query(
+    `UPDATE app_secrets
+        SET revoked_at = NOW(), updated_at = NOW()
+      WHERE owner_id = $1 AND LOWER(provider) = LOWER($2) AND revoked_at IS NULL`,
+    [ownerId, provider]
+  );
+}
+
 export async function resolveActiveSecretsForOwner(
   ownerId: string,
   options: SecretsRouterOptions = {}
