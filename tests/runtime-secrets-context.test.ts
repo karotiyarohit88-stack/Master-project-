@@ -30,7 +30,7 @@ test('concurrent requests resolve and retain only their own Owner secrets', asyn
     assert.deepEqual(await b.json(), { openai: 'owner-b-openai-secret', gemini: 'owner-b-gemini-secret' });
     assert.equal(getRuntimeSecret('openai'), '');
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 });
 
@@ -48,6 +48,6 @@ test('anonymous requests do not resolve or inherit another Owner secret', async 
     assert.deepEqual(await response.json(), { openai: '' });
     assert.equal(calls, 0);
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 });
