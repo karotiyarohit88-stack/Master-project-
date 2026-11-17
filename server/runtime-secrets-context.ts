@@ -18,7 +18,9 @@ export function createRuntimeSecretsMiddleware(
     return runtimeSecretStorage.run(context, () => {
       const resolution = ownerId ? resolveSecrets(ownerId) : Promise.resolve({});
       void resolution.then((secrets) => {
-        context.secrets = secrets && typeof secrets === 'object' ? secrets : {};
+        context.secrets = secrets && typeof secrets === 'object' && !Array.isArray(secrets)
+          ? secrets as Record<string, string>
+          : {};
         res.locals.runtimeSecrets = context.secrets;
         next();
       }).catch((error) => next(error));
