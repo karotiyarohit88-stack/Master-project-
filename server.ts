@@ -12,7 +12,7 @@ import { promisify } from 'util';
 import { GoogleGenAI } from '@google/genai';
 import { applyPendingPostgresMigrations, checkPostgresConnection, getPostgresMigrationStatus } from './database.ts';
 import { createAuthGuards, createAuthRouter } from './auth.ts';
-import { createSecretsRouter, resolveActiveSecretsForOwner, saveSecretForOwner } from './secrets.ts';
+import { createSecretsRouter, resolveActiveSecretsForOwner, revokeSecretsForOwner, saveSecretForOwner } from './secrets.ts';
 import createSecurityMiddleware, { createRateLimitMiddleware } from './server/config/security.middleware.js';
 import { createRuntimeSecretsMiddleware, getRuntimeSecret } from './server/runtime-secrets-context.ts';
 import { createAutoPilotSafetyGuard } from './src/utils/autoPilotSafetyGuard.ts';
@@ -135,7 +135,15 @@ function getOwnerSecret(provider: string, fallback = ''): string {
     video: ['video', 'runway', 'video_provider', 'RUNWAY_API_KEY', 'VIDEO_PROVIDER_API_KEY'],
     elevenlabs: ['elevenlabs', 'eleven_labs', 'ELEVENLABS_API_KEY'],
     publishing: ['publishing', 'social_publishing', 'PUBLISHING_API_KEY'],
-    n8n: ['n8n', 'N8N_API_KEY', 'N8N_AUTH_TOKEN']
+    n8n: ['n8n', 'N8N_API_KEY', 'N8N_AUTH_TOKEN'],
+    n8n_webhook: ['n8n_webhook'],
+    publishing_webhook: ['publishing_webhook'],
+    github: ['github', 'GITHUB_TOKEN', 'GH_TOKEN'],
+    sheets: ['sheets', 'GOOGLE_SHEETS_KEY'],
+    workspace_client_secret: ['workspace_client_secret', 'GOOGLE_CLIENT_SECRET'],
+    workspace_oauth_token: ['workspace_oauth_token', 'GOOGLE_OAUTH_TOKEN'],
+    database_url: ['database_url', 'DATABASE_URL', 'POSTGRES_URL'],
+    firebase_config: ['firebase_config', 'FIREBASE_CONFIG']
   };
   for (const key of aliases[provider] || [provider]) {
     const value = getRuntimeSecret(key) || getRuntimeSecret(key.toUpperCase());
@@ -1258,7 +1266,7 @@ app.get('/api/health', async (req: Request, res: Response) => {
     },
     activeConnectors: {
       gemini: getOwnerSecret('gemini', serverStore.gemini.apiKey) ? 'Connected (Server)' : 'Awaiting API Key',
-      n8n: serverStore.n8n.webhookUrl ? 'Configured' : 'Local Fallback Mode',
+      n8n: getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl) ? 'Configured' : 'Local Fallback Mode',
       video: serverStore.video.providerName,
       elevenlabs: getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey) ? 'Configured' : 'Prototype Audio',
       publishing: 'Approval Gate Enforced',
@@ -1333,12 +1341,12 @@ app.get('/api/analytics', (req: Request, res: Response) => {
     },
     activeTools: {
       gemini: Boolean(getOwnerSecret('gemini', serverStore.gemini.apiKey) || process.env.GEMINI_API_KEY) ? 'Connected' : 'Missing Key',
-      n8n: Boolean(serverStore.n8n.webhookUrl) ? 'Configured' : 'Local Fallback Mode',
+      n8n: Boolean(getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl)) ? 'Configured' : 'Local Fallback Mode',
       video: serverStore.video.providerName,
       elevenlabs: Boolean(getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey)) ? 'Configured' : 'Prototype Audio',
       publishing: 'Approval Gate Enforced',
       sheets: Boolean(serverStore.sheets.spreadsheetId) ? 'Configured' : 'Local Memory Mirror',
-      github: serverStore.github.token ? 'Connected Token' : 'Demo Sandbox'
+      github: getOwnerSecret('github', serverStore.github.token) ? 'Connected Token' : 'Demo Sandbox'
     }
   });
 });
@@ -1440,11 +1448,11 @@ app.get('/api/connections', async (req: Request, res: Response) => {
       lastTested: new Date().toISOString()
     },
     n8n: {
-      configured: Boolean(serverStore.n8n.webhookUrl || getOwnerSecret('n8n', serverStore.n8n.authToken)),
-      endpoint: serverStore.n8n.webhookUrl ? maskSecret(serverStore.n8n.webhookUrl) : '',
+      configured: Boolean(getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl) || getOwnerSecret('n8n', serverStore.n8n.authToken)),
+      endpoint: getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl) ? maskSecret(getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl)) : '',
       hasAuthHeader: Boolean(getOwnerSecret('n8n', serverStore.n8n.authToken)),
-      status: (serverStore.n8n.webhookUrl || getOwnerSecret('n8n', serverStore.n8n.authToken)) ? 'connected' : 'unconfigured',
-      message: (serverStore.n8n.webhookUrl || getOwnerSecret('n8n', serverStore.n8n.authToken)) ? 'Ready for webhook triggers' : 'Using Local Fallback Mode (Demo)'
+      status: (getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl) || getOwnerSecret('n8n', serverStore.n8n.authToken)) ? 'connected' : 'unconfigured',
+      message: (getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl) || getOwnerSecret('n8n', serverStore.n8n.authToken)) ? 'Ready for webhook triggers' : 'Using Local Fallback Mode (Demo)'
     },
     video: {
       configured: Boolean(getOwnerSecret('video', serverStore.video.apiKey)),
@@ -1461,9 +1469,9 @@ app.get('/api/connections', async (req: Request, res: Response) => {
       availableVoices: serverStore.elevenlabs.availableVoices
     },
     publishing: {
-      configured: Boolean(serverStore.publishing.webhookEndpoint || getOwnerSecret('publishing', serverStore.publishing.apiKey)),
+      configured: Boolean(getOwnerSecret('publishing_webhook', serverStore.publishing.webhookEndpoint) || getOwnerSecret('publishing', serverStore.publishing.apiKey)),
       enabledPlatforms: serverStore.publishing.enabledPlatforms,
-      webhookEndpoint: serverStore.publishing.webhookEndpoint ? maskSecret(serverStore.publishing.webhookEndpoint) : '',
+      webhookEndpoint: getOwnerSecret('publishing_webhook', serverStore.publishing.webhookEndpoint) ? maskSecret(getOwnerSecret('publishing_webhook', serverStore.publishing.webhookEndpoint)) : '',
       hasCredentials: Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey)),
       status: 'ready'
     },
@@ -1472,16 +1480,16 @@ app.get('/api/connections', async (req: Request, res: Response) => {
       spreadsheetIdMasked: serverStore.sheets.spreadsheetId ? maskSecret(serverStore.sheets.spreadsheetId) : '',
       sheetName: serverStore.sheets.sheetName,
       syncEnabled: serverStore.sheets.syncEnabled,
-      hasServiceAccountOrKey: Boolean(serverStore.sheets.serviceAccountKey),
+      hasServiceAccountOrKey: Boolean(getOwnerSecret('sheets', serverStore.sheets.serviceAccountKey)),
       status: serverStore.sheets.spreadsheetId ? 'connected' : 'unconfigured',
       recordsCount: sheetsSyncRecords.length,
       lastSynced: sheetsSyncRecords[0]?.timestamp
     },
     workspace: {
-      configured: Boolean(serverStore.workspace.clientId || serverStore.workspace.oauthToken),
+      configured: Boolean(serverStore.workspace.clientId || getOwnerSecret('workspace_oauth_token', serverStore.workspace.oauthToken)),
       hasClientId: Boolean(serverStore.workspace.clientId),
-      hasClientSecret: Boolean(serverStore.workspace.clientSecret),
-      status: (serverStore.workspace.clientId || serverStore.workspace.oauthToken) ? 'connected' : 'unconfigured'
+      hasClientSecret: Boolean(getOwnerSecret('workspace_client_secret', serverStore.workspace.clientSecret)),
+      status: (serverStore.workspace.clientId || getOwnerSecret('workspace_oauth_token', serverStore.workspace.oauthToken)) ? 'connected' : 'unconfigured'
     },
     database: {
       provider: 'PostgreSQL',
@@ -1496,7 +1504,7 @@ app.get('/api/connections', async (req: Request, res: Response) => {
       error: databaseCheck.error
     },
     github: {
-      configured: Boolean(serverStore.github.token),
+      configured: Boolean(getOwnerSecret('github', serverStore.github.token)),
       owner: serverStore.github.owner,
       repo: serverStore.github.repo,
       branch: serverStore.github.branch,
@@ -1504,8 +1512,8 @@ app.get('/api/connections', async (req: Request, res: Response) => {
       authMethod: serverStore.github.authMethod,
       userLogin: serverStore.github.userLogin,
       rateLimitRemaining: serverStore.github.rateLimitRemaining,
-      tokenMasked: serverStore.github.token ? maskSecret(serverStore.github.token) : '',
-      message: serverStore.github.token
+      tokenMasked: getOwnerSecret('github', serverStore.github.token) ? maskSecret(getOwnerSecret('github', serverStore.github.token)) : '',
+      message: getOwnerSecret('github', serverStore.github.token)
         ? `Connected as @${serverStore.github.userLogin} (${serverStore.github.rateLimitRemaining} req left)`
         : 'Using Demo Sandbox Mode (Real project files loaded from workspace)'
     }
@@ -1528,7 +1536,7 @@ app.post('/api/connections/save', requireOwner, authGuards.requireCsrf, async (r
       if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, 'Gemini API Key', 'gemini', config.apiKey.trim());
       if (config.model) serverStore.gemini.model = config.model;
     } else if (provider === 'n8n') {
-      if (config.webhookUrl !== undefined) serverStore.n8n.webhookUrl = config.webhookUrl.trim();
+      if (config.webhookUrl && config.webhookUrl !== '••••••') await saveSecretForOwner(ownerId, 'n8n Webhook URL', 'n8n_webhook', config.webhookUrl.trim());
       if (config.authToken && config.authToken !== '••••••') await saveSecretForOwner(ownerId, 'n8n API Key', 'n8n', config.authToken.trim());
     } else if (provider === 'video') {
       if (config.providerName) serverStore.video.providerName = config.providerName;
@@ -1538,17 +1546,17 @@ app.post('/api/connections/save', requireOwner, authGuards.requireCsrf, async (r
       if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, 'ElevenLabs API Key', 'elevenlabs', config.apiKey.trim());
       if (config.selectedVoiceId) serverStore.elevenlabs.selectedVoiceId = config.selectedVoiceId;
     } else if (provider === 'publishing') {
-      if (config.webhookEndpoint !== undefined) serverStore.publishing.webhookEndpoint = config.webhookEndpoint.trim();
+      if (config.webhookEndpoint && config.webhookEndpoint !== '••••••') await saveSecretForOwner(ownerId, 'Publishing Webhook URL', 'publishing_webhook', config.webhookEndpoint.trim());
       if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, 'Publishing API Key', 'publishing', config.apiKey.trim());
       if (config.enabledPlatforms) serverStore.publishing.enabledPlatforms = { ...serverStore.publishing.enabledPlatforms, ...config.enabledPlatforms };
     } else if (provider === 'sheets') {
       if (config.spreadsheetId !== undefined) serverStore.sheets.spreadsheetId = config.spreadsheetId.trim();
       if (config.sheetName) serverStore.sheets.sheetName = config.sheetName.trim();
-      if (config.serviceAccountKey && config.serviceAccountKey !== '••••••') serverStore.sheets.serviceAccountKey = config.serviceAccountKey.trim();
+      if (config.serviceAccountKey && config.serviceAccountKey !== '••••••') await saveSecretForOwner(ownerId, 'Google Sheets Service Account Key', 'sheets', config.serviceAccountKey.trim());
       if (config.syncEnabled !== undefined) serverStore.sheets.syncEnabled = Boolean(config.syncEnabled);
     } else if (provider === 'github') {
       if (config.token && config.token !== '••••••') {
-        serverStore.github.token = config.token.trim();
+        await saveSecretForOwner(ownerId, 'GitHub Personal Access Token', 'github', config.token.trim());
         serverStore.github.authMethod = 'token';
         serverStore.github.status = 'connected';
       }
@@ -1560,11 +1568,11 @@ app.post('/api/connections/save', requireOwner, authGuards.requireCsrf, async (r
       if (config.model) serverStore.openai.model = config.model;
     } else if (provider === 'workspace') {
       if (config.clientId) serverStore.workspace.clientId = config.clientId.trim();
-      if (config.clientSecret && config.clientSecret !== '••••••') serverStore.workspace.clientSecret = config.clientSecret.trim();
-      if (config.oauthToken && config.oauthToken !== '••••••') serverStore.workspace.oauthToken = config.oauthToken.trim();
+      if (config.clientSecret && config.clientSecret !== '••••••') await saveSecretForOwner(ownerId, 'Google Workspace Client Secret', 'workspace_client_secret', config.clientSecret.trim());
+      if (config.oauthToken && config.oauthToken !== '••••••') await saveSecretForOwner(ownerId, 'Google Workspace OAuth Token', 'workspace_oauth_token', config.oauthToken.trim());
     } else if (provider === 'database') {
-      if (config.url && config.url !== '••••••') serverStore.database.url = config.url.trim();
-      if (config.firebaseConfig && config.firebaseConfig !== '••••••') serverStore.database.firebaseConfig = config.firebaseConfig.trim();
+      if (config.url && config.url !== '••••••') await saveSecretForOwner(ownerId, 'Database URL', 'database_url', config.url.trim());
+      if (config.firebaseConfig && config.firebaseConfig !== '••••••') await saveSecretForOwner(ownerId, 'Firebase Configuration', 'firebase_config', config.firebaseConfig.trim());
     }
 
     recordAudit({
@@ -1682,7 +1690,7 @@ app.post('/api/connections/test', requireOwner, async (req: Request, res: Respon
   }
 
   if (provider === 'workspace') {
-    if (!serverStore.workspace.clientId && !serverStore.workspace.oauthToken) {
+    if (!serverStore.workspace.clientId && !getOwnerSecret('workspace_oauth_token', serverStore.workspace.oauthToken)) {
       return res.json({
         success: false,
         status: 'unconfigured',
@@ -1697,7 +1705,7 @@ app.post('/api/connections/test', requireOwner, async (req: Request, res: Respon
   }
 
   if (provider === 'database') {
-    const database = await checkPostgresConnection(serverStore.database.url || undefined);
+    const database = await checkPostgresConnection(getOwnerSecret('database_url', serverStore.database.url) || undefined);
     if (!database.connected) {
       return res.status(database.configured ? 503 : 200).json({
         success: false,
@@ -1717,7 +1725,7 @@ app.post('/api/connections/test', requireOwner, async (req: Request, res: Respon
   }
 
   if (provider === 'n8n') {
-    if (!serverStore.n8n.webhookUrl) {
+    if (!getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl)) {
       return res.json({
         success: false,
         status: 'unconfigured',
@@ -1729,7 +1737,7 @@ app.post('/api/connections/test', requireOwner, async (req: Request, res: Respon
       // Safe ping without triggering execution payload
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 4000);
-      const pingResp = await fetch(serverStore.n8n.webhookUrl, {
+      const pingResp = await fetch(getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1837,7 +1845,7 @@ app.post('/api/connections/test', requireOwner, async (req: Request, res: Respon
   }
 
   if (provider === 'github') {
-    if (!serverStore.github.token) {
+    if (!getOwnerSecret('github', serverStore.github.token)) {
       return res.json({
         success: true,
         status: 'connected',
@@ -1850,7 +1858,7 @@ app.post('/api/connections/test', requireOwner, async (req: Request, res: Respon
       const resp = await fetch('https://api.github.com/user', {
         headers: {
           'Accept': 'application/vnd.github.v3+json',
-          'Authorization': `Bearer ${serverStore.github.token}`,
+          'Authorization': `Bearer ${getOwnerSecret('github', serverStore.github.token)}`,
           'User-Agent': 'MasterProjectAIAgent/1.0'
         }
       });
@@ -2296,9 +2304,9 @@ Your generated poster is rendered directly in the chat card below with instant *
     const toolReadiness = {
       gemini: Boolean(getOwnerSecret('gemini', serverStore.gemini.apiKey) || process.env.GEMINI_API_KEY) ? '✅ Configured (Gemini 3.8 Flash)' : '⚠️ Setup Required (Connections)',
       elevenlabs: Boolean(getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey)) ? '✅ Configured (ElevenLabs)' : 'ℹ️ Prototype Voice (Setup in Settings for Live Voice)',
-      n8n: Boolean(serverStore.n8n.webhookUrl) ? '✅ Configured (Active Webhook)' : '⚠️ Setup Required (Connections)',
+      n8n: Boolean(getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl)) ? '✅ Configured (Active Webhook)' : '⚠️ Setup Required (Connections)',
       video: '✅ Connected (Video Pipeline Adapter)',
-      publishing: Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey) || serverStore.publishing.webhookEndpoint) ? '✅ Configured (Platform API Ready)' : 'ℹ️ Sandbox Mode (Connect API in Connections for Live Publish)',
+      publishing: Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey) || getOwnerSecret('publishing_webhook', serverStore.publishing.webhookEndpoint)) ? '✅ Configured (Platform API Ready)' : 'ℹ️ Sandbox Mode (Connect API in Connections for Live Publish)',
       sheets: Boolean(serverStore.sheets.spreadsheetId) ? '✅ Configured' : 'ℹ️ Local Cache (Setup in Connections)'
     };
 
@@ -3238,16 +3246,16 @@ app.get('/api/autopilot/tools-status', (req: Request, res: Response) => {
       id: 'n8n_webhook',
       name: 'n8n Webhook Automator',
       role: 'Microservice orchestration & HTTP webhooks',
-      configured: Boolean(serverStore.n8n.webhookUrl),
-      status: Boolean(serverStore.n8n.webhookUrl) ? 'connected' : 'setup_required',
+      configured: Boolean(getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl)),
+      status: Boolean(getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl)) ? 'connected' : 'setup_required',
       setupLocation: 'Connections > n8n Webhook URL'
     },
     social_publisher: {
       id: 'social_publisher',
       name: 'Social Media Publisher',
       role: 'Multi-platform draft & dispatch (YouTube, X, LinkedIn)',
-      configured: Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey) || serverStore.publishing.webhookEndpoint),
-      status: Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey) || serverStore.publishing.webhookEndpoint) ? 'connected' : 'setup_required',
+      configured: Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey) || getOwnerSecret('publishing_webhook', serverStore.publishing.webhookEndpoint)),
+      status: Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey) || getOwnerSecret('publishing_webhook', serverStore.publishing.webhookEndpoint)) ? 'connected' : 'setup_required',
       setupLocation: 'Connections > Social Publishing API Key'
     },
     google_sheets: {
@@ -3287,9 +3295,9 @@ app.post('/api/autopilot/content-pipeline/prepare', authGuards.requireCsrf, asyn
     { id: shortId, topic: 'Political News Funny / Satire — YouTube Short', platform: 'youtube', caption: contentPackage.formats.short.scriptPrompt, hashtags: ['#PoliticalSatire','#YouTubeShorts','#FactCheck'], videoJobId: contentPackage.id, dailyContent: true, videoAssetVerified: false, status: 'waiting_approval', createdAt: now.toISOString(), auditReport: 'Draft prompts only. Human approval required before paid generation or publication.' }
   );
   let n8nDelivery: {status:'delivered'|'not_configured'|'failed';message:string} = {status:'not_configured',message:'n8n receiver is not configured. Draft package remains available for review.'};
-  if (serverStore.n8n.webhookUrl) {
+  if (getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl)) {
     try {
-      const response = await fetch(serverStore.n8n.webhookUrl, {
+      const response = await fetch(getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl), {
         method:'POST',
         headers:{'Content-Type':'application/json',...(getOwnerSecret('n8n', serverStore.n8n.authToken)?{Authorization:'Bearer '+getOwnerSecret('n8n', serverStore.n8n.authToken)}:{})},
         body:JSON.stringify({event:'aaksh.content_pipeline.draft_ready',contentPackage,publishingDraftIds:[shortId,longId],policy:contentPackage.executionPolicy}),
@@ -3384,7 +3392,7 @@ app.post('/api/autopilot/workflows', (req: Request, res: Response) => {
       toolId: 'n8n_webhook',
       action: 'Dispatch Payload to n8n',
       description: 'Calls external n8n scenario webhook with structured JSON metadata.',
-      configured: Boolean(serverStore.n8n.webhookUrl)
+      configured: Boolean(getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl))
     });
   }
 
@@ -3397,7 +3405,7 @@ app.post('/api/autopilot/workflows', (req: Request, res: Response) => {
       description: requireApprovalBeforePublish
         ? 'Enforces human operator token before any external publishing.'
         : 'Dispatches live post to social channels.',
-      configured: Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey) || serverStore.publishing.webhookEndpoint),
+      configured: Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey) || getOwnerSecret('publishing_webhook', serverStore.publishing.webhookEndpoint)),
       requiresApproval: requireApprovalBeforePublish
     });
   }
@@ -3537,7 +3545,7 @@ app.post('/api/autopilot/workflows/:id/run', async (req: Request, res: Response)
   if (wf.tools.includes('elevenlabs_voice') && !getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey)) {
     logs.push(`[${now.toLocaleTimeString()}] [Tool Notice] ElevenLabs API Key not configured in Settings. Using prototype speech synthesis.`);
   }
-  if (wf.tools.includes('n8n_webhook') && !serverStore.n8n.webhookUrl) {
+  if (wf.tools.includes('n8n_webhook') && !getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl)) {
     logs.push(`[${now.toLocaleTimeString()}] [Tool Notice] n8n Webhook endpoint not configured in Connections. Verified mock webhook step executed.`);
   }
 
@@ -3709,9 +3717,9 @@ app.post('/api/publishing/attach-verified-asset', authGuards.requireCsrf, async 
   post.videoAssetVerified = true;
   const autoPostEligible = canAutoPostDailyContent({ enabled: serverStore.autopilot.autoPostDailyContentEnabled, safetyEnabled: serverStore.autopilot.safetyEnabled, isDailyContent: post.dailyContent === true, videoUrl: post.videoUrl, videoAssetVerified: post.videoAssetVerified });
   if (autoPostEligible) {
-    if (!serverStore.publishing.webhookEndpoint) return res.status(503).json({ error: 'Daily auto-post remains blocked: live publishing webhook is not configured.', post });
+    if (!getOwnerSecret('publishing_webhook', serverStore.publishing.webhookEndpoint)) return res.status(503).json({ error: 'Daily auto-post remains blocked: live publishing webhook is not configured.', post });
     try {
-      const providerResponse = await fetch(serverStore.publishing.webhookEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(getOwnerSecret('publishing', serverStore.publishing.apiKey) ? { Authorization: 'Bearer ' + getOwnerSecret('publishing', serverStore.publishing.apiKey) } : {}) }, body: JSON.stringify({ event: 'aaksh.daily_content.publish', post: { id: post.id, platform: post.platform, topic: post.topic, caption: post.caption, videoUrl: post.videoUrl } }), signal: AbortSignal.timeout(10000) });
+      const providerResponse = await fetch(getOwnerSecret('publishing_webhook', serverStore.publishing.webhookEndpoint), { method: 'POST', headers: { 'Content-Type': 'application/json', ...(getOwnerSecret('publishing', serverStore.publishing.apiKey) ? { Authorization: 'Bearer ' + getOwnerSecret('publishing', serverStore.publishing.apiKey) } : {}) }, body: JSON.stringify({ event: 'aaksh.daily_content.publish', post: { id: post.id, platform: post.platform, topic: post.topic, caption: post.caption, videoUrl: post.videoUrl } }), signal: AbortSignal.timeout(10000) });
       const providerData: any = await providerResponse.json().catch(() => ({}));
       if (!providerResponse.ok || providerData?.success !== true || typeof providerData?.externalPostId !== 'string' || !providerData.externalPostId.trim()) return res.status(502).json({ error: 'Provider did not confirm auto-publication. Draft remains unpublished.', post });
       post.status = 'published';
@@ -3818,7 +3826,7 @@ app.post('/api/publishing/publish', async (req: Request, res: Response) => {
   }
 
   // Check if live platform credentials exist
-  const hasLiveCredentials = Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey) || serverStore.publishing.webhookEndpoint);
+  const hasLiveCredentials = Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey) || getOwnerSecret('publishing_webhook', serverStore.publishing.webhookEndpoint));
 
   if (!hasLiveCredentials) {
     recordAudit({
@@ -3837,9 +3845,9 @@ app.post('/api/publishing/publish', async (req: Request, res: Response) => {
 
   // Auto-post requires an explicit provider confirmation; never infer a successful publication.
   if (autoPostEligible) {
-    if (!serverStore.publishing.webhookEndpoint) return res.status(503).json({ error: 'Daily auto-post is blocked until a live publishing webhook is configured.' });
+    if (!getOwnerSecret('publishing_webhook', serverStore.publishing.webhookEndpoint)) return res.status(503).json({ error: 'Daily auto-post is blocked until a live publishing webhook is configured.' });
     try {
-      const providerResponse = await fetch(serverStore.publishing.webhookEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(getOwnerSecret('publishing', serverStore.publishing.apiKey) ? { Authorization: 'Bearer ' + getOwnerSecret('publishing', serverStore.publishing.apiKey) } : {}) }, body: JSON.stringify({ event: 'aaksh.daily_content.publish', post: { id: post.id, platform: post.platform, topic: post.topic, caption: post.caption, videoUrl: post.videoUrl } }), signal: AbortSignal.timeout(10000) });
+      const providerResponse = await fetch(getOwnerSecret('publishing_webhook', serverStore.publishing.webhookEndpoint), { method: 'POST', headers: { 'Content-Type': 'application/json', ...(getOwnerSecret('publishing', serverStore.publishing.apiKey) ? { Authorization: 'Bearer ' + getOwnerSecret('publishing', serverStore.publishing.apiKey) } : {}) }, body: JSON.stringify({ event: 'aaksh.daily_content.publish', post: { id: post.id, platform: post.platform, topic: post.topic, caption: post.caption, videoUrl: post.videoUrl } }), signal: AbortSignal.timeout(10000) });
       const providerData: any = await providerResponse.json().catch(() => ({}));
       if (!providerResponse.ok || providerData?.success !== true || typeof providerData?.externalPostId !== 'string' || !providerData.externalPostId.trim()) {
         recordAudit({ category: 'publishing', action: 'Daily Auto-Post Provider Confirmation Missing', status: 'blocked', details: 'Provider did not return explicit publication confirmation for ' + post.id + '.' });
@@ -3989,8 +3997,8 @@ function getGitHubHeaders(): Record<string, string> {
     'Accept': 'application/vnd.github.v3+json',
     'User-Agent': 'MasterProjectAIAgent/1.0'
   };
-  if (serverStore.github.token) {
-    headers['Authorization'] = `Bearer ${serverStore.github.token}`;
+  if (getOwnerSecret('github', serverStore.github.token)) {
+    headers['Authorization'] = `Bearer ${getOwnerSecret('github', serverStore.github.token)}`;
   }
   return headers;
 }
@@ -4040,7 +4048,7 @@ async function getWorkspaceTree(baseDir = process.cwd()): Promise<Array<{ path: 
 // GET /api/github/status: Return repository and auth status
 app.get('/api/github/status', (req: Request, res: Response) => {
   res.json({
-    configured: Boolean(serverStore.github.token),
+    configured: Boolean(getOwnerSecret('github', serverStore.github.token)),
     status: serverStore.github.status,
     authMethod: serverStore.github.authMethod,
     userLogin: serverStore.github.userLogin,
@@ -4051,20 +4059,22 @@ app.get('/api/github/status', (req: Request, res: Response) => {
     rateLimitRemaining: serverStore.github.rateLimitRemaining,
     rateLimitLimit: serverStore.github.rateLimitLimit,
     lastSync: serverStore.github.lastSync,
-    tokenMasked: serverStore.github.token ? maskSecret(serverStore.github.token) : '',
+    tokenMasked: getOwnerSecret('github', serverStore.github.token) ? maskSecret(getOwnerSecret('github', serverStore.github.token)) : '',
     scopes: serverStore.github.scopes,
     localTermuxNotice: 'Local Termux files are only available if committed and pushed to your remote GitHub repository.'
   });
 });
 
 // POST /api/github/auth/token: Save personal access token
-app.post('/api/github/auth/token', async (req: Request, res: Response) => {
+app.post('/api/github/auth/token', requireOwner, authGuards.requireCsrf, async (req: Request, res: Response) => {
   const { token, owner, repo, branch } = req.body;
   if (!token || typeof token !== 'string') {
     return res.status(400).json({ error: 'Personal Access Token is required.' });
   }
 
   const cleanToken = token.trim();
+  const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id;
+  if (!ownerId) return res.status(401).json({ error: 'Authentication required.' });
   try {
     const testResp = await fetch('https://api.github.com/user', {
       headers: {
@@ -4086,7 +4096,7 @@ app.post('/api/github/auth/token', async (req: Request, res: Response) => {
     const remaining = parseInt(testResp.headers.get('x-ratelimit-remaining') || '5000', 10);
     const limit = parseInt(testResp.headers.get('x-ratelimit-limit') || '5000', 10);
 
-    serverStore.github.token = cleanToken;
+    await saveSecretForOwner(ownerId, 'GitHub Personal Access Token', 'github', cleanToken);
     serverStore.github.userLogin = userData.login || 'User';
     serverStore.github.avatarUrl = userData.avatar_url || '';
     serverStore.github.scopes = scopes;
@@ -4122,8 +4132,10 @@ app.post('/api/github/auth/token', async (req: Request, res: Response) => {
 });
 
 // POST /api/github/auth/disconnect: Disconnect token
-app.post('/api/github/auth/disconnect', (req: Request, res: Response) => {
-  serverStore.github.token = '';
+app.post('/api/github/auth/disconnect', requireOwner, authGuards.requireCsrf, async (req: Request, res: Response) => {
+  const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id;
+  if (!ownerId) return res.status(401).json({ error: 'Authentication required.' });
+  await revokeSecretsForOwner(ownerId, 'github');
   serverStore.github.authMethod = 'demo';
   serverStore.github.status = 'sandbox_mode';
   serverStore.github.userLogin = 'Guest (Demo Sandbox)';
@@ -4139,7 +4151,7 @@ app.post('/api/github/auth/disconnect', (req: Request, res: Response) => {
 
 // GET /api/github/repos: List authorized repositories
 app.get('/api/github/repos', async (req: Request, res: Response) => {
-  if (serverStore.github.token) {
+  if (getOwnerSecret('github', serverStore.github.token)) {
     try {
       const resp = await fetch('https://api.github.com/user/repos?per_page=100&sort=updated', {
         headers: getGitHubHeaders()
@@ -4196,7 +4208,7 @@ app.get('/api/github/repos', async (req: Request, res: Response) => {
 // GET /api/github/repos/:owner/:repo/branches: List branches
 app.get('/api/github/repos/:owner/:repo/branches', async (req: Request, res: Response) => {
   const { owner, repo } = req.params;
-  if (serverStore.github.token) {
+  if (getOwnerSecret('github', serverStore.github.token)) {
     try {
       const resp = await fetch(`https://api.github.com/repos/${owner}/${repo}/branches`, {
         headers: getGitHubHeaders()
@@ -4254,7 +4266,7 @@ app.get('/api/github/tree', async (req: Request, res: Response) => {
   const repo = (req.query.repo as string) || serverStore.github.repo;
   const branch = (req.query.branch as string) || serverStore.github.branch;
 
-  if (serverStore.github.token) {
+  if (getOwnerSecret('github', serverStore.github.token)) {
     try {
       const resp = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`, {
         headers: getGitHubHeaders()
@@ -4312,7 +4324,7 @@ app.get('/api/github/file', async (req: Request, res: Response) => {
   const cleanPath = sanitizeFilePath(filePath);
 
   // If token is configured, try fetching from GitHub API
-  if (serverStore.github.token) {
+  if (getOwnerSecret('github', serverStore.github.token)) {
     try {
       const resp = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${cleanPath}?ref=${branch}`, {
         headers: getGitHubHeaders()
@@ -4499,7 +4511,7 @@ app.post('/api/github/commit', async (req: Request, res: Response) => {
   const approvalToken = 'git_appr_' + crypto.randomBytes(6).toString('hex');
 
   // If live GitHub token is configured, try creating real commit / PR
-  if (serverStore.github.token) {
+  if (getOwnerSecret('github', serverStore.github.token)) {
     try {
       const owner = serverStore.github.owner;
       const repo = serverStore.github.repo;
