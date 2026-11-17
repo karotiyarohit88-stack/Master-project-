@@ -221,7 +221,13 @@ export const GitHubCodeExplorer: React.FC<GitHubCodeExplorerProps> = ({ onAskCha
       const [owner, repo] = selectedRepo.split('/');
       const res = await fetch('/api/github/auth/token', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(() => {
+            const cookie = document.cookie.split(';').map((part) => part.trim()).find((part) => part.startsWith('aaksh_csrf='));
+            return cookie ? { 'x-csrf-token': decodeURIComponent(cookie.slice('aaksh_csrf='.length)) } : {};
+          })()
+        },
         body: JSON.stringify({
           token: tokenInput.trim(),
           owner,
@@ -250,7 +256,13 @@ export const GitHubCodeExplorer: React.FC<GitHubCodeExplorerProps> = ({ onAskCha
   // Disconnect Token
   const handleDisconnect = async () => {
     try {
-      await fetch('/api/github/auth/disconnect', { method: 'POST' });
+      await fetch('/api/github/auth/disconnect', {
+        method: 'POST',
+        headers: (() => {
+          const cookie = document.cookie.split(';').map((part) => part.trim()).find((part) => part.startsWith('aaksh_csrf='));
+          return cookie ? { 'x-csrf-token': decodeURIComponent(cookie.slice('aaksh_csrf='.length)) } : {};
+        })()
+      });
       setNoticeMessage('Switched back to Demo Sandbox Mode.');
       setIsAuthModalOpen(false);
       fetchStatus();
