@@ -40,7 +40,7 @@ app.use('/api', createRateLimitMiddleware({
   windowMs: 60_000,
   maxRequests: 180,
   maxEntries: 10_000,
-  skip: (req) => req.path === '/health' || req.method === 'OPTIONS'
+  skip: (req: Request) => req.path === '/health' || req.method === 'OPTIONS'
 }));
 app.use(express.json({ limit: '8mb' }));
 
