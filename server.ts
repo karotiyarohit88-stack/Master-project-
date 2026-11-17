@@ -12,7 +12,8 @@ import { promisify } from 'util';
 import { GoogleGenAI } from '@google/genai';
 import { applyPendingPostgresMigrations, checkPostgresConnection, getPostgresMigrationStatus } from './database.ts';
 import { createAuthGuards, createAuthRouter } from './auth.ts';
-import { createSecretsRouter } from './secrets.ts';
+import { createSecretsRouter, resolveActiveSecretsForOwner } from './secrets.ts';
+import createSecurityMiddleware from './server/config/security.middleware.js';
 import { createAutoPilotSafetyGuard } from './src/utils/autoPilotSafetyGuard.ts';
 import { buildAutomatedContentPackage } from './src/utils/automatedContentPipeline.ts';
 import { canAutoPostDailyContent, buildMultiPlatformAnalytics, buildVerifiedEarningsSummary, evaluatePayoutGuard, type VerifiedEarningEntry } from './src/utils/phase9Accounting.ts';
@@ -27,6 +28,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
+app.use(createSecurityMiddleware());
 app.use(express.json({ limit: '8mb' }));
 
 // Application authentication endpoints; legacy business routes remain unchanged in Phase 1.
@@ -81,6 +83,26 @@ app.use('/api', (req, res, next) => {
 app.use('/api', createAutoPilotSafetyGuard(() => serverStore.autopilot.safetyEnabled));
 
 // Secret Manager: all routes require an authenticated Owner; mutations also require CSRF.
+
+// Runtime Secret Integration: hydrate active decrypted secrets for authenticated owner
+app.use('/api', async (req, res, next) => {
+  try {
+    const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id;
+    if (!ownerId) return next();
+    const secrets = await resolveActiveSecretsForOwner(ownerId);
+    res.locals.runtimeSecrets = secrets;
+    if (secrets.gemini || secrets.GEMINI_API_KEY) serverStore.gemini.apiKey = secrets.gemini || secrets.GEMINI_API_KEY;
+    if (secrets.openai || secrets.OPENAI_API_KEY) serverStore.openai.apiKey = secrets.openai || secrets.OPENAI_API_KEY;
+    if (secrets.video || secrets.runway || secrets.RUNWAY_API_KEY) serverStore.video.apiKey = secrets.video || secrets.runway || secrets.RUNWAY_API_KEY;
+    if (secrets.elevenlabs || secrets.ELEVENLABS_API_KEY) serverStore.elevenlabs.apiKey = secrets.elevenlabs || secrets.ELEVENLABS_API_KEY;
+    if (secrets.publishing || secrets.PUBLISHING_API_KEY) serverStore.publishing.apiKey = secrets.publishing || secrets.PUBLISHING_API_KEY;
+    if (secrets.n8n || secrets.N8N_API_KEY) serverStore.n8n.authToken = secrets.n8n || secrets.N8N_API_KEY;
+  } catch {
+    // Non-blocking fallback to env variables
+  }
+  return next();
+});
+
 app.use('/api/secrets', requireOwner, (req, res, next) => {
   if (req.method === 'GET') return next();
   return authGuards.requireCsrf(req, res, next);
@@ -926,10 +948,12 @@ function checkRateLimit(ip: string): boolean {
 
 // Gemini Client initialization
 let ai: GoogleGenAI | null = null;
+let activeAiKey = '';
 function getGenAI(): GoogleGenAI | null {
   const key = serverStore.gemini.apiKey || process.env.GEMINI_API_KEY;
   if (!key) return null;
-  if (!ai) {
+  if (!ai || activeAiKey !== key) {
+    activeAiKey = key;
     ai = new GoogleGenAI({
       apiKey: key,
       httpOptions: {

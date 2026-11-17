@@ -187,3 +187,43 @@ export function createSecretsRouter(options: SecretsRouterOptions = {}) {
 
   return router;
 }
+
+export async function resolveActiveSecretsForOwner(
+  ownerId: string,
+  options: SecretsRouterOptions = {}
+): Promise<Record<string, string>> {
+  const pool = options.pool === undefined
+    ? (getPostgresPool() as unknown as SecretsDbPool | null)
+    : options.pool;
+  const configuredKey = options.encryptionKey ?? process.env.AAKSH_SECRETS_ENCRYPTION_KEY ?? '';
+  if (!pool || !configuredKey || !ownerId) return {};
+
+  try {
+    const key = getEncryptionKey(configuredKey);
+    await ensureSecretsTable(pool);
+    const result = await pool.query(
+      `SELECT id, provider, name, ciphertext, nonce, auth_tag
+       FROM app_secrets
+       WHERE owner_id = $1 AND revoked_at IS NULL
+       ORDER BY created_at ASC`,
+      [ownerId]
+    );
+    const resolved: Record<string, string> = {};
+    for (const row of result.rows) {
+      try {
+        const plain = decryptSecret(
+          { ciphertext: row.ciphertext, nonce: row.nonce, authTag: row.auth_tag },
+          key,
+          `${ownerId}:${row.id}`
+        );
+        if (row.provider) resolved[String(row.provider).toLowerCase()] = plain;
+        if (row.name) resolved[String(row.name)] = plain;
+      } catch {
+        // Skip corrupted or mismatched key entries safely
+      }
+    }
+    return resolved;
+  } catch {
+    return {};
+  }
+}
