@@ -30,10 +30,11 @@ const app = express();
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 // Trust only an explicitly configured number of ingress proxy hops; default to 0.
-const trustProxyHops = Number.parseInt(process.env.TRUST_PROXY_HOPS || '0', 10);
-if (!Number.isSafeInteger(trustProxyHops) || trustProxyHops < 0 || trustProxyHops > 5) {
-  throw new Error('TRUST_PROXY_HOPS must be an integer from 0 to 5.');
+const trustProxyValue = process.env.TRUST_PROXY_HOPS || '0';
+if (!/^(0|[1-5])$/.test(trustProxyValue)) {
+  throw new Error('TRUST_PROXY_HOPS must be a whole number from 0 to 5.');
 }
+const trustProxyHops = Number(trustProxyValue);
 app.set('trust proxy', trustProxyHops);
 app.use(createSecurityMiddleware());
 app.use('/api', createRateLimitMiddleware({
@@ -4135,7 +4136,11 @@ app.post('/api/github/auth/token', requireOwner, authGuards.requireCsrf, async (
 app.post('/api/github/auth/disconnect', requireOwner, authGuards.requireCsrf, async (req: Request, res: Response) => {
   const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id;
   if (!ownerId) return res.status(401).json({ error: 'Authentication required.' });
-  await revokeSecretsForOwner(ownerId, 'github');
+  try {
+    await revokeSecretsForOwner(ownerId, 'github');
+  } catch {
+    return res.status(503).json({ error: 'GitHub credentials could not be revoked from secure storage.' });
+  }
   serverStore.github.authMethod = 'demo';
   serverStore.github.status = 'sandbox_mode';
   serverStore.github.userLogin = 'Guest (Demo Sandbox)';
@@ -4144,9 +4149,9 @@ app.post('/api/github/auth/disconnect', requireOwner, authGuards.requireCsrf, as
     category: 'github',
     action: 'GitHub Disconnected',
     status: 'info',
-    details: 'GitHub token cleared. Reverted to Demo Sandbox mode.'
+    details: 'GitHub token revoked for the authenticated Owner. Reverted to Demo Sandbox mode.'
   });
-  res.json({ success: true, message: 'Disconnected from GitHub. Sandbox mode active.' });
+  return res.json({ success: true, message: 'Disconnected from GitHub. Sandbox mode active.' });
 });
 
 // GET /api/github/repos: List authorized repositories
