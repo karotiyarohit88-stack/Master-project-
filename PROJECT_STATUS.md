@@ -540,3 +540,21 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 | Issue ID | Module | Finding | Status |
 |---|---|---|---|
 | MP-WF-07 | Background Worker Runtime | Worker runtime scaffold now has tests for disabled-by-default startup and refusal to start without a registered handler. | Runtime scaffold source committed; prior CI run 44261222193 passed before these tests; fresh CI pending; actual handlers/execution remain pending |
+
+
+## 30. Graceful Background Worker Shutdown Handling (2026-11-18)
+
+**Implemented on the PR feature branch:**
+- The worker now tracks active handler AbortControllers. A SIGINT/SIGTERM stop request aborts active handlers through their supplied AbortSignal.
+- If shutdown occurs after a task was claimed but before its handler starts, the task is returned through the bounded retry/failure lifecycle using the safe `WORKER_SHUTDOWN` error code rather than starting new work.
+- If a running handler observes shutdown and exits, the runtime records `WORKER_SHUTDOWN` through the existing lease-checked failure transition. A handler that ignores AbortSignal can still delay graceful exit; handlers must cooperate with cancellation.
+- Stop requests arriving during database readiness are retained; the worker loop exits without claiming further work.
+- Added a shutdown-signal unit test and a read-only stopping-state accessor for status/testing.
+
+**Verification:** Previous CI run `44262026649` completed successfully for commit `e2a35e3d59487fe1113738be943aa0dba93ffa44`. The shutdown changes and new test were committed after that run; a fresh CI run for the current HEAD is required.
+
+**Limitations:** No worker process was started, no handler registered, no task claimed/executed, no migration applied, and no deployment/provider/paid API call was performed. Actual cancellation behavior with a live handler and PostgreSQL lease remains unverified.
+
+| Issue ID | Module | Finding | Status |
+|---|---|---|---|
+| MP-WF-07 | Background Worker Runtime | Shutdown previously stopped polling only between tasks and did not signal active handlers. | Active-handler AbortSignal shutdown and retry transition added; current CI pending; live cooperative-handler/DB verification pending |
