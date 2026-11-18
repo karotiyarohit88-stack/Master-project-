@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getCsrfHeaders } from '../utils/csrf';
 import { 
   Compass, 
   Play, 
@@ -146,7 +147,7 @@ export const AutoPilotCenter: React.FC<{
     if (!safetyControlsEnabled) { setActionMessage({ type: 'warning', text: 'Safe Chat-Only Mode is active. Enable Safety & Security first.' }); return; }
     setIsPreparingContent(true);
     try {
-      const response = await fetch('/api/autopilot/content-pipeline/prepare', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify({source:'manual',topic:'Political News Funny / Satire'}) });
+      const response = await fetch('/api/autopilot/content-pipeline/prepare', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json', ...getCsrfHeaders()}, body:JSON.stringify({source:'manual',topic:'Political News Funny / Satire'}) });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) { setActionMessage({type:response.status===423?'warning':'error',text:data.error||'Content package could not be prepared. Check AutoPilot status and retry.'}); return; }
       setActionMessage({type:'success',text:'Short + 15-minute 3D cartoon prompts staged for human approval. n8n: '+(data.n8nDelivery?.status||'not configured')+'.'});
@@ -200,7 +201,7 @@ export const AutoPilotCenter: React.FC<{
     try {
       const res = await fetch('/api/autopilot/workflows', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({
           name: formName.trim(),
           description: formDescription.trim(),
@@ -239,7 +240,7 @@ export const AutoPilotCenter: React.FC<{
     if (!safetyControlsEnabled) { setActionMessage({ type: 'warning', text: 'Safe Chat-Only Mode is ON. Enable Safety & Security first.' }); return; }
     if (e) e.stopPropagation();
     try {
-      const res = await fetch(`/api/autopilot/workflows/${workflowId}/toggle`, { method: 'POST' });
+      const res = await fetch(`/api/autopilot/workflows/${workflowId}/toggle`, { method: 'POST', credentials: 'same-origin', headers: getCsrfHeaders() });
       if (res.ok) {
         fetchData();
       }
@@ -254,7 +255,7 @@ export const AutoPilotCenter: React.FC<{
     if (e) e.stopPropagation();
     if (!confirm('Are you sure you want to delete this workflow?')) return;
     try {
-      const res = await fetch(`/api/autopilot/workflows/${workflowId}`, { method: 'DELETE' });
+      const res = await fetch(`/api/autopilot/workflows/${workflowId}`, { method: 'DELETE', credentials: 'same-origin', headers: getCsrfHeaders() });
       if (res.ok) {
         if (inspectWorkflow?.id === workflowId) setInspectWorkflow(null);
         setActionMessage({ type: 'success', text: 'Workflow deleted successfully.' });
@@ -272,7 +273,7 @@ export const AutoPilotCenter: React.FC<{
     if (!safetyControlsEnabled) { setActionMessage({ type: 'warning', text: 'Safe Chat-Only Mode is ON. Enable Safety & Security first.' }); return; }
     if (e) e.stopPropagation();
     try {
-      const res = await fetch(`/api/autopilot/workflows/${workflowId}/run`, { method: 'POST' });
+      const res = await fetch(`/api/autopilot/workflows/${workflowId}/run`, { method: 'POST', credentials: 'same-origin', headers: getCsrfHeaders() });
       const data = await res.json();
       if (res.ok) {
         setActionMessage({
@@ -297,7 +298,7 @@ export const AutoPilotCenter: React.FC<{
   const handleApproveExecution = async (executionId: string) => {
     if (!safetyControlsEnabled) { setActionMessage({ type: 'warning', text: 'Safe Chat-Only Mode is ON. Enable Safety & Security first.' }); return; }
     try {
-      const res = await fetch(`/api/autopilot/executions/${executionId}/approve`, { method: 'POST' });
+      const res = await fetch(`/api/autopilot/executions/${executionId}/approve`, { method: 'POST', credentials: 'same-origin', headers: getCsrfHeaders() });
       const data = await res.json();
       if (res.ok) {
         setActionMessage({
@@ -322,7 +323,7 @@ export const AutoPilotCenter: React.FC<{
     try {
       const res = await fetch('/api/autopilot/trigger/manual', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({ topicOverride: manualTopic || config.topic })
       });
       const data = await res.json();
@@ -345,7 +346,7 @@ export const AutoPilotCenter: React.FC<{
   const handleTaskAction = async (taskId: string, action: 'pause' | 'resume' | 'stop') => {
     if (!safetyControlsEnabled) { setActionMessage({ type: 'warning', text: 'Safe Chat-Only Mode is ON. Enable Safety & Security first.' }); return; }
     try {
-      await fetch(`/api/autopilot/queue/${taskId}/${action}`, { method: 'POST' });
+      await fetch(`/api/autopilot/queue/${taskId}/${action}`, { method: 'POST', credentials: 'same-origin', headers: getCsrfHeaders() });
       fetchData();
     } catch (e) {
       console.error(e);
@@ -358,7 +359,7 @@ export const AutoPilotCenter: React.FC<{
     try {
       const res = await fetch('/api/autopilot/config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify(config)
       });
       if (res.ok) {
@@ -435,7 +436,7 @@ export const AutoPilotCenter: React.FC<{
     try {
       const response = await fetch('/api/autopilot/config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify(pendingVoiceConfig)
       });
       const data = await response.json();
