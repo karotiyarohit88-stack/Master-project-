@@ -590,8 +590,8 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 - Updated the existing Durable Task Queue panel to show a “View result” control for completed read-only tasks and render the bounded status-document preview. No duplicate page or navigation item was added.
 - Added API tests for creator access, denial to another tenant member, and refusing results before completion.
 
-**Verification boundary:** These changes are committed on the feature branch. A fresh CI run for the result endpoint/UI/test changes is pending. No browser end-to-end test, live PostgreSQL test, worker process, task execution, migration application, or deployment has been performed.
+**Verification:** The first CI attempt exposed a test-double SQL matcher that did not account for the multiline query formatting (three result-endpoint assertions returned 404 in the mock, not a TypeScript or production-route failure). The matcher was corrected. GitHub Actions run `44263325597` for commit `a41859da10b872669ed4be387016c9a8be28a9f3` completed successfully: locked dependency install, TypeScript check, all unit tests, and production build passed. The route, UI, tests, and status record were refetched from the feature branch. No browser end-to-end test, live PostgreSQL test, worker process, task execution, migration application, or deployment has been performed.
 
 | Issue ID | Module | Finding | Status |
 |---|---|---|---|
-| MP-WF-08 | Task Queue Result UI | Task result persistence existed without a permission-checked retrieval route or dashboard viewer. | Tenant-scoped result endpoint and existing-panel viewer added; CI pending; browser/DB runtime verification pending |
+| MP-WF-08 | Task Queue Result UI | Task result persistence existed without a permission-checked retrieval route or dashboard viewer. | Tenant-scoped result endpoint and existing-panel viewer added; CI run 44263325597 passed; browser/DB runtime verification pending |
