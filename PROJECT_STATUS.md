@@ -523,3 +523,20 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 | Issue ID | Module | Finding | Status |
 |---|---|---|---|
 | MP-WF-07 | Background Worker Runtime | Lease primitives existed without a separately managed process lifecycle. | Runtime scaffold + disabled-by-default entrypoint committed; CI pending; no registered handlers or live worker |
+
+
+## 29. Background Worker Fail-Closed Startup Tests (2026-11-18)
+
+**Added on the PR feature branch:**
+- Added `tests/agentTaskWorkerRuntime.test.ts`.
+- Test 1 confirms the worker rejects startup when `MASTER_PROJECT_WORKER_ENABLED` is not explicitly set to `true`.
+- Test 2 confirms that even with the enable flag set, startup is rejected when no reviewed task handlers are registered. The test verifies the handler registry is empty and the runtime refuses before database readiness checks.
+- Both tests restore the prior environment variable value after execution.
+
+**Verification:** GitHub Actions run `44261222193` for commit `0214a82ca101a8adb98fca0c23e2d18e09a93ffe` completed successfully. The locked dependency install, TypeScript check, all unit tests, and production build each reported success. The new runtime tests were added after that run; a fresh CI run for this test commit is required before calling the tests CI-verified.
+
+**Limitations:** These are fail-closed startup tests only. No worker process was launched, no handler registered, no task claimed/executed, no database migration applied, and no deployment or provider/paid API call was made.
+
+| Issue ID | Module | Finding | Status |
+|---|---|---|---|
+| MP-WF-07 | Background Worker Runtime | Worker runtime scaffold now has tests for disabled-by-default startup and refusal to start without a registered handler. | Runtime scaffold source committed; prior CI run 44261222193 passed before these tests; fresh CI pending; actual handlers/execution remain pending |
