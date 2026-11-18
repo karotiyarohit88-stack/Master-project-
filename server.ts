@@ -165,6 +165,7 @@ const unifiedWorkspaceRouters = createUnifiedWorkspaceRouter({
   }
 });
 app.use('/api/aaksh', authGuards.requireTenantMembership, unifiedWorkspaceRouters.aaksh);
+app.use('/api/aaksh/social', authGuards.requireTenantMembership, unifiedWorkspaceRouters.social);
 
 
 // AutoPilot mutations stay locked until the authenticated Owner explicitly
