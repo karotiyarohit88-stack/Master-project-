@@ -413,13 +413,28 @@ export function createAuthRouter(options: AuthRouterOptions = {}) {
            VALUES ($1, $2, $3, 'owner', 'active', NOW()) RETURNING id, email, display_name, role`,
           [challenge.email, payload.passwordHash, payload.displayName]);
         user = created.rows[0] as AuthUser;
+        const tenant = await client.query(
+          `INSERT INTO app_tenants (display_name, owner_user_id)
+           VALUES ($1, $2) RETURNING id`,
+          [`${user.display_name} Workspace`, user.id]);
+        const tenantId = tenant.rows[0]?.id;
+        if (!tenantId) throw new Error('Owner workspace could not be created.');
+        await client.query(
+          `INSERT INTO app_tenant_memberships (tenant_id, user_id, membership_role, status)
+           VALUES ($1, $2, 'owner', 'active') ON CONFLICT (tenant_id, user_id) DO NOTHING`,
+          [tenantId, user.id]);
       } else if (challenge.purpose === 'invitation') {
         const invitationResult = await client.query(
-          `SELECT id, email, role, expires_at, accepted_at, revoked_at
-             FROM app_invitations WHERE id = $1 FOR UPDATE`, [challenge.invitation_id]);
+          `SELECT i.id, i.email, i.role, i.tenant_id, t.id AS active_tenant_id,
+                  i.expires_at, i.accepted_at, i.revoked_at
+             FROM app_invitations i
+             LEFT JOIN app_tenants t ON t.id = i.tenant_id AND t.status = 'active'
+            WHERE i.id = $1 FOR UPDATE OF i`, [challenge.invitation_id]);
         const invitation = invitationResult.rows[0];
-        if (!invitation || invitation.accepted_at || invitation.revoked_at || new Date(invitation.expires_at).getTime() <= Date.now()) {
-          await client.query('ROLLBACK'); res.status(400).json({ error: 'Invitation is invalid, expired, revoked, or already used.' }); return;
+        if (!invitation || !invitation.tenant_id || !invitation.active_tenant_id ||
+            invitation.accepted_at || invitation.revoked_at ||
+            new Date(invitation.expires_at).getTime() <= Date.now()) {
+          await client.query('ROLLBACK'); res.status(400).json({ error: 'Invitation is invalid, expired, revoked, or its workspace is unavailable.' }); return;
         }
         const payload = challenge.pending_payload || {};
         const created = await client.query(
@@ -427,6 +442,10 @@ export function createAuthRouter(options: AuthRouterOptions = {}) {
            VALUES ($1, $2, $3, $4, 'active', NOW()) RETURNING id, email, display_name, role`,
           [invitation.email, payload.passwordHash, payload.displayName, invitation.role]);
         user = created.rows[0] as AuthUser;
+        await client.query(
+          `INSERT INTO app_tenant_memberships (tenant_id, user_id, membership_role, status)
+           VALUES ($1, $2, $3, 'active')`,
+          [invitation.tenant_id, user.id, invitation.role]);
         await client.query('UPDATE app_invitations SET accepted_at = NOW() WHERE id = $1 AND accepted_at IS NULL AND revoked_at IS NULL', [invitation.id]);
       } else {
         const result = await client.query('SELECT id, email, display_name, role, status FROM app_users WHERE id = $1 LIMIT 1', [challenge.user_id]);
@@ -534,11 +553,26 @@ export function createAuthRouter(options: AuthRouterOptions = {}) {
       const token = randomBytes(32).toString('base64url');
       const tokenHash = sha256(token);
       const expiresAt = new Date(Date.now() + requestedHours * 60 * 60 * 1000);
+      const tenantResult = await pool.query(
+        `SELECT t.id AS tenant_id
+           FROM app_tenant_memberships m
+           JOIN app_tenants t ON t.id = m.tenant_id
+          WHERE m.user_id = $1 AND m.status = 'active' AND t.status = 'active'
+            AND m.membership_role = 'owner'
+          ORDER BY m.created_at ASC
+          LIMIT 2`,
+        [session.id]
+      );
+      if (tenantResult.rows.length !== 1) {
+        res.status(409).json({ error: 'Your account must have exactly one active Owner workspace before invitations can be created.' });
+        return;
+      }
+      const tenantId = tenantResult.rows[0].tenant_id;
       const created = await pool.query(
-        `INSERT INTO app_invitations (email, role, invite_token_hash, created_by, expires_at)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, email, role, created_at, expires_at`,
-        [email, role, tokenHash, session.id, expiresAt]
+        `INSERT INTO app_invitations (tenant_id, email, role, invite_token_hash, created_by, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id, tenant_id, email, role, created_at, expires_at`,
+        [tenantId, email, role, tokenHash, session.id, expiresAt]
       );
       res.status(201).json({
         success: true,
