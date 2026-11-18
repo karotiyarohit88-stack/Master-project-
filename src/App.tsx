@@ -47,6 +47,7 @@ import { ConnectionsCenter } from './components/ConnectionsCenter';
 import { AutomationLogsCenter } from './components/AutomationLogsCenter';
 import { GitHubCodeExplorer } from './components/GitHubCodeExplorer';
 import { AnalyticsCenter } from './components/AnalyticsCenter';
+import { getCsrfHeaders } from './utils/csrf';
 import { DurableTaskQueuePanel } from './components/DurableTaskQueuePanel';
 import { WorkerAgentsCenter } from './components/WorkerAgentsCenter';
 import { FloatingChatWidget } from './components/FloatingChatWidget';
@@ -229,7 +230,7 @@ export default function App() {
         if (cancelled || !data?.config?.safetyEnabled || data.config.isRunning) return;
         const response = await fetch('/api/autopilot/config', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
           credentials: 'same-origin',
           body: JSON.stringify({ isRunning: true })
         });
@@ -357,7 +358,7 @@ I am your central AI assistant and command center. You can manage engineering ta
     try {
       const response = await fetch('/api/autopilot/safety', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         credentials: 'same-origin',
         body: JSON.stringify({ safetyEnabled: nextEnabled })
       });
@@ -379,7 +380,7 @@ I am your central AI assistant and command center. You can manage engineering ta
   const handleResetSettings = () => {
     fetch('/api/autopilot/safety', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
       credentials: 'same-origin',
       body: JSON.stringify({ safetyEnabled: false })
     }).catch((error) => console.warn('Could not reset server safety switch:', error));
@@ -400,7 +401,7 @@ I am your central AI assistant and command center. You can manage engineering ta
       try {
         const res = await fetch('/api/automation/trigger', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
           body: JSON.stringify({ triggerId: 'chat_action', topic: 'User Triggered Task' })
         });
         if (res.ok) {
@@ -472,7 +473,7 @@ I am your central AI assistant and command center. You can manage engineering ta
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({
           prompt: trimmed || 'Please analyze the attached image.',
           imageAttachment: imageAttachment || undefined,
@@ -663,7 +664,7 @@ I am your central AI assistant and command center. You can manage engineering ta
     try {
       const response = await fetch('/api/approve-action', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({
           actionDescription: riskDetails.actionDescription,
           actionId: messageId
