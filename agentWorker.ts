@@ -1,3 +1,4 @@
+import './agentTaskHandlers.ts';
 import { runAgentTaskWorker, requestAgentWorkerStop } from './agentTaskWorkerRuntime.ts';
 
 process.once('SIGINT', requestAgentWorkerStop);
