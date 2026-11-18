@@ -92,7 +92,7 @@ class MemoryAuthDb {
           this.tenants.push(tenant); return { rows: [{ id: tenant.id }] };
         }
         if (q.startsWith('insert into app_tenant_memberships')) {
-          const membership = { id: String(this.memberships.length + 1), tenant_id: values[0], user_id: values[1], membership_role: values[2], status: values[3] || 'active' };
+          const membership = { id: String(this.memberships.length + 1), tenant_id: values[0], user_id: values[1], membership_role: q.includes("'owner'") ? 'owner' : values[2], status: 'active' };
           this.memberships.push(membership); return { rows: [] };
         }
         if (q.includes('from app_invitations') && q.includes('for update')) {
