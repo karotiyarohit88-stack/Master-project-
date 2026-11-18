@@ -1,0 +1,83 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  claimNextAgentTask, completeLeasedAgentTask, failLeasedAgentTask
+} from '../agentTaskWorker.ts';
+
+const TASK_ID = '2c4c3d4e-5f60-4a71-8b92-123456789abc';
+const TENANT_ID = '11111111-2222-4333-8444-555555555555';
+
+class WorkerDb {
+  queries: { sql: string; values: unknown[] }[] = [];
+  returnTask = true;
+  async connect() {
+    return {
+      query: async (sql: string, values: unknown[] = []) => {
+        this.queries.push({ sql: sql.replace(/\s+/g, ' ').trim(), values });
+        if (/WITH candidate AS/.test(sql)) return { rows: this.returnTask ? [{
+          id: TASK_ID, tenant_id: TENANT_ID, owner_id: 'creator-1', task_type: 'read_only',
+          original_prompt: 'Read a report', normalized_task: null, payload: {},
+          attempts: 1, max_attempts: 3, lease_owner: values[0], lease_expires_at: new Date(Date.now() + 120000).toISOString()
+        }] : [] };
+        if (/UPDATE agent_tasks/.test(sql)) return { rows: [{ id: TASK_ID, owner_id: 'creator-1', status: /CASE WHEN attempts/.test(sql) ? 'retry_wait' : 'completed' }] };
+        return { rows: [] };
+      },
+      release: () => undefined
+    };
+  }
+}
+
+test('worker claims only approved, non-null-tenant tasks with atomic SKIP LOCKED lease', async () => {
+  const db = new WorkerDb();
+  const task = await claimNextAgentTask('worker-a', { pool: db as any, leaseSeconds: 120 });
+  assert.equal(task?.id, TASK_ID);
+  const claim = db.queries.find(x => /WITH candidate AS/.test(x.sql));
+  assert.ok(claim);
+  assert.match(claim!.sql, /tenant_id IS NOT NULL/);
+  assert.match(claim!.sql, /FOR UPDATE SKIP LOCKED/);
+  assert.match(claim!.sql, /approved_by IS NOT NULL AND approved_at IS NOT NULL/);
+  assert.equal(claim!.values[0], 'worker-a');
+  assert.equal(claim!.values[1], 120);
+  assert.ok(db.queries.some(x => /INSERT INTO agent_task_events/.test(x.sql)));
+});
+
+test('worker returns no task and records no event when queue is empty', async () => {
+  const db = new WorkerDb(); db.returnTask = false;
+  assert.equal(await claimNextAgentTask('worker-a', { pool: db as any }), null);
+  assert.equal(db.queries.some(x => /INSERT INTO agent_task_events/.test(x.sql)), false);
+});
+
+test('completion requires matching tenant, worker lease, running state and unexpired lease', async () => {
+  const db = new WorkerDb();
+  const completed = await completeLeasedAgentTask({
+    taskId: TASK_ID, tenantId: TENANT_ID, workerId: 'worker-a', result: { summary: 'done' }
+  }, { pool: db as any });
+  assert.equal(completed, true);
+  const update = db.queries.find(x => /UPDATE agent_tasks/.test(x.sql));
+  assert.ok(update);
+  assert.match(update!.sql, /tenant_id = \$2/);
+  assert.match(update!.sql, /lease_owner = \$3/);
+  assert.match(update!.sql, /lease_expires_at > NOW\(\)/);
+  assert.equal(update!.values[1], TENANT_ID);
+  assert.ok(db.queries.some(x => /INSERT INTO agent_task_events/.test(x.sql)));
+});
+
+test('worker failures schedule bounded retry and do not expose raw error text', async () => {
+  const db = new WorkerDb();
+  const result = await failLeasedAgentTask({
+    taskId: TASK_ID, tenantId: TENANT_ID, workerId: 'worker-a',
+    errorCode: 'PROVIDER_TIMEOUT', retryDelaySeconds: 999999
+  }, { pool: db as any });
+  assert.equal(result, 'retry_wait');
+  const update = db.queries.find(x => /UPDATE agent_tasks/.test(x.sql));
+  assert.ok(update);
+  assert.equal(update!.values[1], TENANT_ID);
+  assert.equal(update!.values[3], 3600);
+  assert.equal(update!.values[4], 'PROVIDER_TIMEOUT');
+});
+
+test('invalid worker identity is rejected before touching the database', async () => {
+  const db = new WorkerDb();
+  await assert.rejects(() => claimNextAgentTask('worker id with spaces', { pool: db as any }), /Worker ID is invalid/);
+  assert.equal(db.queries.length, 0);
+});
