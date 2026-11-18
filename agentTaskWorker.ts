@@ -58,9 +58,11 @@ async function rollback(client: WorkerClient) {
  */
 export async function claimNextAgentTask(
   workerIdInput: string,
-  options: { leaseSeconds?: number; pool?: WorkerPool | null } = {}
+  options: { leaseSeconds?: number; taskTypes?: string[]; pool?: WorkerPool | null } = {}
 ): Promise<LeasedAgentTask | null> {
   const workerId = validateWorkerId(workerIdInput);
+  const taskTypes = Array.isArray(options.taskTypes) ? [...new Set(options.taskTypes)] : [];
+  if (taskTypes.length === 0 || taskTypes.length > 32 || taskTypes.some(type => typeof type !== 'string' || !/^[a-z][a-z0-9_:-]{0,63}$/.test(type))) return null;
   const leaseSeconds = Math.min(Math.max(Math.floor(options.leaseSeconds ?? 120), 30), 900);
   const pool = requirePool(options.pool);
   const client = await pool.connect();
@@ -87,6 +89,7 @@ export async function claimNextAgentTask(
          SELECT id
            FROM agent_tasks
           WHERE tenant_id IS NOT NULL
+            AND task_type = ANY($3::text[])
             AND available_at <= NOW()
             AND attempts < max_attempts
             AND (requires_approval = FALSE OR (approved_by IS NOT NULL AND approved_at IS NOT NULL))
@@ -110,7 +113,7 @@ export async function claimNextAgentTask(
        RETURNING task.id, task.tenant_id, task.owner_id, task.task_type,
                  task.original_prompt, task.normalized_task, task.payload,
                  task.attempts, task.max_attempts, task.lease_owner, task.lease_expires_at`,
-      [workerId, leaseSeconds]
+      [workerId, leaseSeconds, taskTypes]
     );
     const task = result.rows[0] as LeasedAgentTask | undefined;
     if (!task) {
