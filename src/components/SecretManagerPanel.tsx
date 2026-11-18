@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { getCsrfHeaders } from '../utils/csrf';
 import { KeyRound, Plus, RefreshCw, Trash2, ShieldCheck, AlertCircle, LoaderCircle } from 'lucide-react';
 
 type SecretItem = {
@@ -51,7 +52,7 @@ export const SecretManagerPanel: React.FC = () => {
     try {
       const response = await fetch('/api/secrets', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({ name: name.trim(), provider, secret })
       });
       const data = await response.json().catch(() => ({}));
@@ -73,7 +74,7 @@ export const SecretManagerPanel: React.FC = () => {
     setError('');
     setNotice('');
     try {
-      const response = await fetch(`/api/secrets/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      const response = await fetch(`/api/secrets/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin', headers: getCsrfHeaders() });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || 'Secret could not be revoked.');
       setSecrets(current => current.filter(item => item.id !== id));
