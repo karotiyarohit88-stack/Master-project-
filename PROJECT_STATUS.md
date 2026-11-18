@@ -341,3 +341,23 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 | Issue ID | Module | Finding | Status |
 | :--- | :--- | :--- | :--- |
 | MP-SEC-15 | Invitation / Tenant Membership | Invitations are not currently bound to a tenant, and acceptance does not create tenant membership. | Additive tenant_id migration committed; auth route integration, membership resolution, SQL execution and cross-tenant tests pending |
+
+
+## 20. Tenant-Aware Owner Bootstrap and Invitation Acceptance (2026-11-18)
+
+**Implemented on the feature branch:**
+- Owner bootstrap now creates an initial active tenant and an Owner membership in the same OTP-verification database transaction.
+- Invitation creation resolves the inviter's active Owner membership from the authenticated session user ID. It requires exactly one active Owner workspace and writes that tenant ID into the invitation; it does not accept a tenant ID from the request body.
+- Invitation OTP acceptance locks and checks the invitation, requires a non-NULL tenant ID and an active tenant, creates the invited user, inserts their active tenant membership with the invited role, and marks the invitation accepted in the same transaction.
+- Legacy invitations without a tenant mapping, and invitations for inactive workspaces, fail closed rather than assigning an arbitrary tenant.
+- Authentication tests now assert that bootstrap creates the Owner tenant membership and that invitation acceptance adds the invited user to the same tenant with the correct role.
+
+**Files changed:** `auth.ts`, `tests/auth.test.ts`.
+
+**Important rollout condition:** These code paths require migrations `20261118_001_tenant_identity.sql` and `20261118_002_invitation_tenant_scope.sql` to have been applied successfully before deploying this code. Neither migration has been applied to a database in this work. Do not deploy this change against a database missing these tables/columns. Session loading does not yet expose or enforce tenant context for every authenticated API route; operational route/query scoping and cross-tenant tests remain unresolved.
+
+**Verification:** Code and test updates committed on the feature branch. GitHub Actions for the latest commit must pass before treating the tests/build as verified. No live PostgreSQL migration, runtime HTTP test against a real DB, deployment, or customer isolation certification is claimed.
+
+| Issue ID | Module | Finding | Status |
+| :--- | :--- | :--- | :--- |
+| MP-SEC-15 | Authentication / Tenant Membership | Owner bootstrap and invitation acceptance did not create tenant identity/membership links. | Source implementation and unit-test assertions committed; CI pending; migrations unapplied; session tenant context, operational tenant scoping and cross-tenant runtime tests pending |
