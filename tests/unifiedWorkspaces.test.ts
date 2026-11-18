@@ -101,7 +101,7 @@ test('AAKSH work task is written to the shared tenant queue and waits for approv
   });
   assert.equal(response.status, 201);
   const body = await response.json() as any;
-  assert.equal(body.task.status, 'waiting_approval');
+  assert.equal(body.task.status, 'awaiting_approval');
   assert.equal(body.task.approvalRequired, true);
   assert.equal(body.task.source, 'aaksh');
   assert.equal(db.task?.task_type, 'integration');
