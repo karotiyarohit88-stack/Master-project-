@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { getCsrfHeaders } from '../utils/csrf';
 import { LockKeyhole, LogIn, UserPlus, ShieldCheck, LogOut, Copy, Users, LoaderCircle, AlertCircle } from 'lucide-react';
 
 type AuthUser = { id: string; email: string; displayName: string; role: 'owner' | 'admin' | 'member' };
@@ -163,7 +164,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
     try {
       const response = await fetch('/api/auth/invitations', {
         method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({ email: inviteEmail, role: inviteRole, expiresInHours: 72 })
       });
       const data = await readResponse(response);
@@ -185,7 +186,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
     setError('');
     try {
       const response = await fetch('/api/auth/logout', {
-        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}'
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() }, body: '{}'
       });
       await readResponse(response);
       setUser(null);
