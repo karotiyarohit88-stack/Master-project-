@@ -49,7 +49,7 @@ import { GitHubCodeExplorer } from './components/GitHubCodeExplorer';
 import { AnalyticsCenter } from './components/AnalyticsCenter';
 import { getCsrfHeaders } from './utils/csrf';
 import { DurableTaskQueuePanel } from './components/DurableTaskQueuePanel';
-import { WorkerAgentsCenter } from './components/WorkerAgentsCenter';
+import { WorkerAgentsCenter } from './components/WorkerAgentsCenter';\nimport { AAKSHWorkspaceCenter } from './components/AAKSHWorkspaceCenter';
 import { FloatingChatWidget } from './components/FloatingChatWidget';
 
 const STORAGE_KEY = 'master_project_ai_agent_sessions_v1';
@@ -944,7 +944,7 @@ I am your central AI assistant and command center. You can manage engineering ta
           </main>
         )}
 
-        {activeView === 'agents' && <WorkerAgentsCenter />}
+        {activeView === 'agents' && <WorkerAgentsCenter />}\n\n        {/* AAKSH capabilities use the canonical Master login, tenant DB and approvals. */}\n        {activeView === 'aaksh' && <AAKSHWorkspaceCenter onOpenTasks={() => setActiveView('tasks')} onOpenPublishing={() => setActiveView('publishing')} />}
 
         {/* VIEW 3: Auto Pilot & Trigger Center */}
         {activeView === 'autopilot' && (
