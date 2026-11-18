@@ -32,7 +32,7 @@ export type AppView =
   | 'logs'
   | 'github'
   | 'settings'
-  | 'analytics';
+  | 'analytics'\n  | 'aaksh';
 
 export type RequestClassification = 
   | 'question'
