@@ -81,7 +81,7 @@ export const DurableTaskQueuePanel: React.FC<{ refreshToken?: number }> = ({ ref
     } finally { setSubmitting(false); }
   };
 
-  const actOnTask = async (taskId: string, action: 'approve' | 'cancel') => {
+  const actOnTask = async (taskId: string, action: 'approve' | 'reject' | 'cancel') => {
     setWorkingTask(taskId); setError(''); setNotice('');
     try {
       const response = await fetch(`/api/tasks/${taskId}/${action}`, {
@@ -91,7 +91,9 @@ export const DurableTaskQueuePanel: React.FC<{ refreshToken?: number }> = ({ ref
       if (!response.ok) throw new Error(data.error || 'Task update was rejected.');
       setNotice(action === 'approve'
         ? 'Human approval record हो गया। Task queue में है; Worker ने अभी execution शुरू नहीं किया।'
-        : 'Task cancel कर दिया गया।');
+        : action === 'reject'
+          ? 'Task अस्वीकार कर दिया गया। कोई Worker execution शुरू नहीं हुआ।'
+          : 'Task cancel कर दिया गया।');
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Task update was rejected.');
@@ -188,7 +190,7 @@ export const DurableTaskQueuePanel: React.FC<{ refreshToken?: number }> = ({ ref
               <span className={`shrink-0 rounded-full border px-2 py-1 text-[9px] font-bold uppercase ${
                 task.status === 'waiting_approval' ? 'border-amber-300 bg-amber-50 text-amber-800' :
                 task.status === 'completed' ? 'border-emerald-300 bg-emerald-50 text-emerald-800' :
-                task.status === 'failed' ? 'border-rose-300 bg-rose-50 text-rose-800' :
+                task.status === 'failed' || task.status === 'rejected' ? 'border-rose-300 bg-rose-50 text-rose-800' :
                 'border-slate-200 bg-slate-50 text-slate-700'
               }`}>{task.status.replaceAll('_', ' ')}</span>
             </div>
@@ -199,6 +201,12 @@ export const DurableTaskQueuePanel: React.FC<{ refreshToken?: number }> = ({ ref
                   <button type="button" disabled={workingTask === task.id} onClick={() => void actOnTask(task.id, 'approve')}
                     className="rounded-lg bg-emerald-700 px-2.5 py-1.5 text-[10px] font-semibold text-white disabled:opacity-50">
                     Approve
+                  </button>
+                )}
+                {canApprove && task.status === 'waiting_approval' && (
+                  <button type="button" disabled={workingTask === task.id} onClick={() => void actOnTask(task.id, 'reject')}
+                    className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[10px] font-semibold text-rose-800 disabled:opacity-50">
+                    Reject
                   </button>
                 )}
                 {task.canCancel && ['waiting_approval', 'queued', 'retry_wait'].includes(task.status) && (
