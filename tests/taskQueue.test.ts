@@ -80,6 +80,11 @@ test('read-only task intake rejects unsupported actions', async () => withServer
   assert.equal(response.status, 400);
   const body = await response.json() as any;
   assert.match(body.error, /read_project_status/);
+  const nullPayload = await fetch(url + '/api/tasks', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ taskType: 'read_only', prompt: 'Read status', payload: null })
+  });
+  assert.equal(nullPayload.status, 400);
 }));
 
 test('task history query always filters by the resolved tenant', async () => withServer('member', async (url, db) => {
