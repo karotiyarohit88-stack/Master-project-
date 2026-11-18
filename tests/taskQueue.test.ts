@@ -17,8 +17,8 @@ class TaskDb {
   };
 
   async query(sql: string, values: unknown[] = []) {
-    this.queries.push({ sql: sql.replace(/\\s+/g, ' ').trim(), values });
-    if (/SELECT .* FROM agent_tasks/.test(sql) && /WHERE tenant_id = \\$1/.test(sql)) return { rows: [this.task] };
+    this.queries.push({ sql: sql.replace(/\s+/g, ' ').trim(), values });
+    if (/SELECT .* FROM agent_tasks/.test(sql) && /WHERE tenant_id = \$1/.test(sql)) return { rows: [this.task] };
     if (/SELECT id FROM agent_tasks/.test(sql)) return { rows: [{ id: TASK_ID }] };
     if (/SELECT id, event_type/.test(sql)) return { rows: [{ id: 1, event_type: 'created', message: 'created' }] };
     return { rows: [] };
@@ -27,7 +27,7 @@ class TaskDb {
   async connect() {
     return {
       query: async (sql: string, values: unknown[] = []) => {
-        this.queries.push({ sql: sql.replace(/\\s+/g, ' ').trim(), values });
+        this.queries.push({ sql: sql.replace(/\s+/g, ' ').trim(), values });
         if (/INSERT INTO agent_tasks/.test(sql)) return { rows: [{ ...this.task, tenant_id: values[0], owner_id: values[1] }] };
         if (/UPDATE agent_tasks/.test(sql)) return { rows: [{ id: TASK_ID }] };
         return { rows: [] };
@@ -76,7 +76,7 @@ test('task history query always filters by the resolved tenant', async () => wit
   assert.equal(response.status, 200);
   const query = db.queries.find(x => /SELECT .* FROM agent_tasks/.test(x.sql));
   assert.ok(query);
-  assert.match(query!.sql, /WHERE tenant_id = \\$1/);
+  assert.match(query!.sql, /WHERE tenant_id = \$1/);
   assert.equal(query!.values[0], TENANT_A);
 }));
 
@@ -93,7 +93,7 @@ test('only tenant Owner or Admin can approve and approval does not claim executi
     assert.equal(body.executionStarted, false);
     const update = db.queries.find(x => /UPDATE agent_tasks/.test(x.sql));
     assert.ok(update);
-    assert.match(update!.sql, /tenant_id = \\$2/);
+    assert.match(update!.sql, /tenant_id = \$2/);
     assert.equal(update!.values[1], TENANT_A);
   });
 });
@@ -101,7 +101,7 @@ test('only tenant Owner or Admin can approve and approval does not claim executi
 test('task event history checks tenant ownership before returning events', async () => withServer('member', async (url, db) => {
   const response = await fetch(url + '/api/tasks/' + TASK_ID + '/events');
   assert.equal(response.status, 200);
-  const checks = db.queries.filter(x => /tenant_id = \\$2/.test(x.sql));
+  const checks = db.queries.filter(x => /tenant_id = \$2/.test(x.sql));
   assert.ok(checks.length >= 2);
   assert.ok(checks.every(x => x.values[1] === TENANT_A));
 }));
