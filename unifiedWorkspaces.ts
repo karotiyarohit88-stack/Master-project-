@@ -1,0 +1,296 @@
+import { randomUUID } from 'node:crypto';
+import { Router, type Response } from 'express';
+import { getPostgresPool } from './database.ts';
+import type { TenantContext } from './auth.ts';
+
+type DbResult = { rows: any[]; rowCount?: number | null };
+type DbClient = { query: (sql: string, values?: unknown[]) => Promise<DbResult>; release: () => void };
+type DbPool = DbClient & { connect: () => Promise<DbClient> };
+type Session = { id: string; role: 'owner' | 'admin' | 'member' };
+
+type WorkspaceContext = { session: Session; tenant: TenantContext };
+type PublishDispatcher = (input: {
+  task: Record<string, any>;
+  ownerId: string;
+}) => Promise<{ externalPostId: string }>;
+
+function error(res: Response, status: number, message: string) {
+  return res.status(status).json({ error: message });
+}
+
+function context(res: Response): WorkspaceContext | null {
+  const session = res.locals.authSession as Session | undefined;
+  const tenant = res.locals.tenantContext as TenantContext | undefined;
+  return session && tenant ? { session, tenant } : null;
+}
+
+function publicPublishingTask(row: Record<string, any>) {
+  const payload = row.payload && typeof row.payload === 'object' ? row.payload : {};
+  return {
+    id: row.id,
+    topic: payload.topic || row.original_prompt,
+    platform: payload.platform || 'youtube',
+    caption: payload.caption || '',
+    hashtags: Array.isArray(payload.hashtags) ? payload.hashtags : [],
+    status: row.status === 'queued' ? 'approved' : row.status,
+    createdAt: row.created_at,
+    approvedAt: row.approved_at || null,
+    publishedAt: row.completed_at || null,
+    externalPostId: row.result?.externalPostId || null,
+    source: payload.source || 'master_publishing'
+  };
+}
+
+function validText(value: unknown, max: number): value is string {
+  return typeof value === 'string' && value.trim().length > 0 && value.trim().length <= max;
+}
+
+export function createUnifiedWorkspaceRouter(options: {
+  pool?: DbPool | null;
+  dispatchPublishing?: PublishDispatcher;
+} = {}) {
+  const router = Router();
+  const pool = options.pool === undefined ? getPostgresPool() as unknown as DbPool | null : options.pool;
+
+  async function createApprovedWorkItem(req: any, res: Response, input: {
+    source: 'aaksh' | 'master_publishing';
+    module: string;
+    action: string;
+    platform: string;
+    category: string;
+    title: string;
+    description: string;
+    topic?: string;
+    caption?: string;
+    hashtags?: string[];
+  }) {
+    const ctx = context(res);
+    if (!ctx) return error(res, 401, 'Authenticated tenant context is required.');
+    if (!pool) return error(res, 503, 'Shared PostgreSQL task storage is unavailable.');
+    const keyHeader = typeof req.header('idempotency-key') === 'string' ? req.header('idempotency-key').trim() : '';
+    const idempotencyKey = keyHeader || randomUUID();
+    if (idempotencyKey.length > 128 || !/^[A-Za-z0-9._:-]+$/.test(idempotencyKey)) {
+      return error(res, 400, 'Idempotency-Key has an invalid format.');
+    }
+    const payload = {
+      source: input.source,
+      module: input.module,
+      action: input.action,
+      platform: input.platform,
+      category: input.category,
+      topic: input.topic || input.title,
+      caption: input.caption || '',
+      hashtags: input.hashtags || [],
+      description: input.description
+    };
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const inserted = await client.query(
+        `INSERT INTO agent_tasks
+           (tenant_id, owner_id, idempotency_key, task_type, original_prompt, payload,
+            status, requires_approval, priority)
+         VALUES ($1, $2, $3, 'integration', $4, $5::jsonb, 'waiting_approval', TRUE, 100)
+         ON CONFLICT (owner_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
+         RETURNING id, owner_id, task_type, original_prompt, payload, status, requires_approval,
+                   approved_by, approved_at, result, created_at, updated_at, completed_at`,
+        [ctx.tenant.tenantId, ctx.session.id, idempotencyKey, input.title, JSON.stringify(payload)]
+      );
+      if (!inserted.rows[0]) {
+        const existing = await client.query(
+          `SELECT id, owner_id, task_type, original_prompt, payload, status, requires_approval,
+                  approved_by, approved_at, result, created_at, updated_at, completed_at
+             FROM agent_tasks
+            WHERE tenant_id = $1 AND owner_id = $2 AND idempotency_key = $3
+            LIMIT 1`,
+          [ctx.tenant.tenantId, ctx.session.id, idempotencyKey]
+        );
+        if (!existing.rows[0]) throw new Error('Idempotency replay could not be resolved.');
+        await client.query('COMMIT');
+        return res.status(200).json({ success: true, task: publicPublishingTask(existing.rows[0]), idempotentReplay: true });
+      }
+      const task = inserted.rows[0];
+      await client.query(
+        `INSERT INTO agent_task_events
+           (task_id, tenant_id, owner_id, event_type, stage, status, message, details)
+         VALUES ($1, $2, $3, 'created', 'intake', 'waiting_approval', $4, $5::jsonb)`,
+        [task.id, ctx.tenant.tenantId, ctx.session.id, 'AAKSH workspace work item is waiting for approval in the shared Master Project queue.', JSON.stringify({ source: input.source, module: input.module, action: input.action })]
+      );
+      await client.query('COMMIT');
+      return res.status(201).json({ success: true, task: publicPublishingTask(task), idempotentReplay: false });
+    } catch (cause) {
+      try { await client.query('ROLLBACK'); } catch { /* preserve original error */ }
+      const code = (cause as { code?: string })?.code;
+      if (code === '42P01' || code === '42703') return error(res, 503, 'Shared tenant/task migrations are not applied.');
+      return error(res, 503, 'Work item could not be saved to the shared queue.');
+    } finally {
+      client.release();
+    }
+  }
+
+  // AAKSH work tasks are records in Master Project's tenant-scoped agent_tasks table.
+  router.get('/aaksh/work/tasks', async (req, res) => {
+    const ctx = context(res);
+    if (!ctx) return error(res, 401, 'Authenticated tenant context is required.');
+    if (!pool) return error(res, 503, 'Shared PostgreSQL task storage is unavailable.');
+    const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit || '50'), 10) || 50, 1), 100);
+    try {
+      const result = await pool.query(
+        `SELECT id, owner_id, original_prompt, payload, status, requires_approval,
+                approved_at, result, created_at, updated_at, completed_at
+           FROM agent_tasks
+          WHERE tenant_id = $1 AND payload->>'source' = 'aaksh'
+          ORDER BY created_at DESC LIMIT $2`,
+        [ctx.tenant.tenantId, limit]
+      );
+      return res.json({ success: true, tasks: result.rows.map(publicPublishingTask), tenantRole: ctx.tenant.role });
+    } catch {
+      return error(res, 503, 'AAKSH work history is temporarily unavailable.');
+    }
+  });
+
+  router.post('/aaksh/work/tasks', async (req, res) => {
+    const body = req.body || {};
+    const platform = typeof body.platform === 'string' ? body.platform.trim().toLowerCase() : '';
+    const category = typeof body.category === 'string' ? body.category.trim().toLowerCase() : '';
+    const title = typeof body.title === 'string' ? body.title.trim() : '';
+    const description = typeof body.description === 'string' ? body.description.trim() : '';
+    if (!/^[a-z0-9][a-z0-9._-]{0,49}$/.test(platform) || !/^[a-z0-9][a-z0-9._-]{0,49}$/.test(category)) {
+      return error(res, 400, 'Valid platform and category keys are required.');
+    }
+    if (!validText(title, 160) || description.length > 5000) return error(res, 400, 'Title is required (max 160 characters); description max is 5000 characters.');
+    return createApprovedWorkItem(req, res, {
+      source: 'aaksh', module: 'workspace', action: 'execute_work_item',
+      platform, category, title, description, topic: title
+    });
+  });
+
+  // AAKSH publishing drafts use the same durable task and approval record as all other work.
+  router.get('/publishing/queue', async (_req, res) => {
+    const ctx = context(res);
+    if (!ctx) return error(res, 401, 'Authenticated tenant context is required.');
+    if (!pool) return error(res, 503, 'Shared PostgreSQL task storage is unavailable.');
+    try {
+      const result = await pool.query(
+        `SELECT id, owner_id, original_prompt, payload, status, requires_approval,
+                approved_at, result, created_at, updated_at, completed_at
+           FROM agent_tasks
+          WHERE tenant_id = $1 AND payload->>'source' IN ('aaksh', 'master_publishing')
+          ORDER BY created_at DESC LIMIT 100`,
+        [ctx.tenant.tenantId]
+      );
+      return res.json({ queue: result.rows.map(publicPublishingTask) });
+    } catch {
+      return error(res, 503, 'Shared publishing queue is temporarily unavailable.');
+    }
+  });
+
+  router.post('/publishing/prepare', async (req, res) => {
+    const topic = typeof req.body?.topic === 'string' ? req.body.topic.trim() : '';
+    const platform = typeof req.body?.platform === 'string' ? req.body.platform.trim().toLowerCase() : 'youtube';
+    if (!validText(topic, 500)) return error(res, 400, 'Topic must contain between 1 and 500 characters.');
+    if (!/^[a-z0-9][a-z0-9._-]{0,49}$/.test(platform)) return error(res, 400, 'A valid publishing platform is required.');
+    const caption = '🚀 ' + topic + '\\n\\nPrepared for review. Publishing remains blocked until a workspace Owner/Admin approves this item.';
+    const hashtags = ['#AI', '#Technology', '#Automation'];
+    return createApprovedWorkItem(req, res, {
+      source: 'master_publishing', module: 'publishing', action: 'publish',
+      platform, category: 'social_post', title: topic, description: caption,
+      topic, caption, hashtags
+    });
+  });
+
+  router.post('/publishing/approve', async (req, res) => {
+    const ctx = context(res);
+    if (!ctx) return error(res, 401, 'Authenticated tenant context is required.');
+    if (!['owner', 'admin'].includes(ctx.tenant.role)) return error(res, 403, 'Only a workspace Owner or Admin can approve publishing.');
+    if (!pool) return error(res, 503, 'Shared PostgreSQL task storage is unavailable.');
+    const taskId = typeof req.body?.postId === 'string' ? req.body.postId : '';
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(taskId)) return error(res, 400, 'Publishing task ID is invalid.');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const update = await client.query(
+        `UPDATE agent_tasks
+            SET status = 'queued', approved_by = $3, approved_at = NOW(), updated_at = NOW()
+          WHERE id = $1 AND tenant_id = $2 AND payload->>'source' IN ('aaksh', 'master_publishing')
+            AND status = 'waiting_approval' AND requires_approval = TRUE
+          RETURNING id, owner_id`,
+        [taskId, ctx.tenant.tenantId, ctx.session.id]
+      );
+      if (!update.rows[0]) {
+        await client.query('ROLLBACK');
+        return error(res, 409, 'Publishing item is not awaiting approval in this workspace.');
+      }
+      await client.query(
+        `INSERT INTO agent_task_events
+           (task_id, tenant_id, owner_id, event_type, stage, status, message, details)
+         VALUES ($1, $2, $3, 'approved', 'approval', 'queued', $4, $5::jsonb)`,
+        [taskId, ctx.tenant.tenantId, update.rows[0].owner_id, 'Publishing approval recorded; no external post has been sent.', JSON.stringify({ approvedBy: ctx.session.id })]
+      );
+      await client.query('COMMIT');
+      return res.json({ success: true, post: { id: taskId, status: 'approved' }, approvalRecorded: true });
+    } catch {
+      try { await client.query('ROLLBACK'); } catch { /* ignore rollback failure */ }
+      return error(res, 503, 'Publishing approval could not be recorded.');
+    } finally {
+      client.release();
+    }
+  });
+
+  router.post('/publishing/publish', async (req, res) => {
+    const ctx = context(res);
+    if (!ctx) return error(res, 401, 'Authenticated tenant context is required.');
+    if (!pool) return error(res, 503, 'Shared PostgreSQL task storage is unavailable.');
+    const taskId = typeof req.body?.postId === 'string' ? req.body.postId : '';
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(taskId)) return error(res, 400, 'Publishing task ID is invalid.');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const selected = await client.query(
+        `SELECT id, owner_id, payload, status, approved_by, approved_at
+           FROM agent_tasks
+          WHERE id = $1 AND tenant_id = $2 AND payload->>'source' IN ('aaksh', 'master_publishing')
+          FOR UPDATE`,
+        [taskId, ctx.tenant.tenantId]
+      );
+      const task = selected.rows[0];
+      if (!task) {
+        await client.query('ROLLBACK');
+        return error(res, 404, 'Publishing task not found in this workspace.');
+      }
+      if (task.status !== 'queued' || !task.approved_by || !task.approved_at) {
+        await client.query('ROLLBACK');
+        return error(res, 403, 'A workspace Owner/Admin approval is required before publishing.');
+      }
+      if (!options.dispatchPublishing) {
+        await client.query('ROLLBACK');
+        return error(res, 503, 'A verified publishing provider adapter is not configured.');
+      }
+      const provider = await options.dispatchPublishing({ task, ownerId: task.owner_id });
+      if (!provider.externalPostId || provider.externalPostId.length > 200) throw new Error('Provider did not return a valid external post ID.');
+      const completed = await client.query(
+        `UPDATE agent_tasks
+            SET status = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW()
+          WHERE id = $1 AND tenant_id = $2 AND status = 'queued'
+          RETURNING id, owner_id`,
+        [taskId, ctx.tenant.tenantId, JSON.stringify({ externalPostId: provider.externalPostId, publicationConfirmed: true })]
+      );
+      if (!completed.rows[0]) throw new Error('Publishing state changed while provider was processing.');
+      await client.query(
+        `INSERT INTO agent_task_events
+           (task_id, tenant_id, owner_id, event_type, stage, status, message, details)
+         VALUES ($1, $2, $3, 'published', 'provider', 'completed', $4, $5::jsonb)`,
+        [taskId, ctx.tenant.tenantId, task.owner_id, 'Publishing provider confirmed external publication.', JSON.stringify({ externalPostId: provider.externalPostId })]
+      );
+      await client.query('COMMIT');
+      return res.json({ success: true, post: { id: taskId, status: 'published', externalPostId: provider.externalPostId }, mode: 'provider_confirmed', message: 'Provider confirmed publication.' });
+    } catch {
+      try { await client.query('ROLLBACK'); } catch { /* ignore rollback failure */ }
+      return error(res, 502, 'Publishing provider did not confirm publication; the item remains uncompleted.');
+    } finally {
+      client.release();
+    }
+  });
+
+  return router;
+}
