@@ -12,7 +12,8 @@
     "lint": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
     "worker": "tsx agentWorker.ts",
-    "test:postgres": "RUN_POSTGRES_INTEGRATION=true tsx --test tests/postgresMigrations.integration.test.ts"
+    "test:postgres": "RUN_POSTGRES_INTEGRATION=true tsx --test tests/postgresMigrations.integration.test.ts",
+    "import:aaksh:legacy": "tsx scripts/importAakshLegacyData.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
