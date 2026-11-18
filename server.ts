@@ -178,7 +178,14 @@ app.use('/api', createAutoPilotSafetyGuard(() => serverStore.autopilot.safetyEna
 app.use('/api', createRuntimeSecretsMiddleware(resolveActiveSecretsForOwner));
 app.use('/api/publishing', authGuards.requireTenantMembership, unifiedWorkspaceRouters.publishing);
 
-app.use('/api/secrets', requireOwner, (req, res, next) => {
+const requireTenantAdminForSecrets: express.RequestHandler = (_req, res, next) => {
+  const role = (res.locals.tenantContext as { role?: string } | undefined)?.role;
+  if (role !== 'owner' && role !== 'admin') {
+    return res.status(403).json({ error: 'Workspace Owner/Admin membership is required to manage this account’s secrets.' });
+  }
+  return next();
+};
+app.use('/api/secrets', authGuards.requireTenantMembership, requireTenantAdminForSecrets, (req, res, next) => {
   if (req.method === 'GET') return next();
   return authGuards.requireCsrf(req, res, next);
 }, createSecretsRouter());
