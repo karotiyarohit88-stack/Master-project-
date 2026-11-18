@@ -69,6 +69,14 @@ async function executeOne(workerId: string, taskTypes: string[]): Promise<boolea
 
   const controller = new AbortController();
   activeControllers.add(controller);
+  if (stopping) {
+    controller.abort();
+    activeControllers.delete(controller);
+    await failLeasedAgentTask({
+      taskId: task.id, tenantId: task.tenant_id, workerId, errorCode: 'WORKER_SHUTDOWN'
+    });
+    return true;
+  }
   let leaseLost = false;
   let heartbeatBusy = false;
   const heartbeat = setInterval(async () => {
@@ -136,8 +144,8 @@ export async function runAgentTaskWorker(options: {
   if (taskTypes.length === 0) {
     throw new Error('Agent worker has no registered task handlers; refusing to start.');
   }
-  await assertWorkerDatabaseReady();
   stopping = false;
+  await assertWorkerDatabaseReady();
   const workerId = createAgentWorkerId();
   const pollIntervalMs = Math.min(Math.max(Math.floor(options.pollIntervalMs ?? 3000), 500), 30_000);
   const shouldStop = options.shouldStop ?? (() => stopping);
