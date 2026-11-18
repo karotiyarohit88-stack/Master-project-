@@ -146,6 +146,8 @@ test('bootstrap Owner is created only after OTP verification and closes permanen
   const start = await bootstrap(url); assert.equal(start.status, 202); assert.equal(db.users.length, 0);
   const body = await start.json() as Row; assert.equal((await verify(url, body.challengeToken, latestCode(db))).status, 200);
   assert.equal(db.users.length, 1); assert.equal(db.users[0].role, 'owner'); assert.notEqual(db.users[0].password_hash, 'OwnerPassword!234');
+  assert.equal(db.tenants.length, 1); assert.equal(db.memberships.length, 1);
+  assert.equal(db.memberships[0].user_id, db.users[0].id); assert.equal(db.memberships[0].membership_role, 'owner');
   const second = await bootstrap(url, 'second@example.test'); assert.equal(second.status, 409);
 }));
 test('bootstrap-owner rejects missing admin authorization', async () => withServer(async url => {
@@ -214,11 +216,16 @@ test('Owner can create invitation; invited account is created only after OTP ver
   });
   assert.equal(invitationResponse.status, 201);
   const invitation = await invitationResponse.json() as Row;
+  assert.equal(invitation.invitation.tenant_id, db.tenants[0].id);
   const accepted = await post(url, 'accept-invitation', { token: invitation.invitationToken, password: 'MemberPassword!234', displayName: 'Member' });
   assert.equal(accepted.status, 202); assert.equal(db.users.length, 1);
   const challenge = await accepted.json() as Row;
   assert.equal((await verify(url, challenge.challengeToken, latestCode(db))).status, 201);
   assert.equal(db.users.length, 2); assert.ok(db.invitations[0].accepted_at);
+  assert.equal(db.memberships.length, 2);
+  assert.equal(db.memberships[1].tenant_id, db.tenants[0].id);
+  assert.equal(db.memberships[1].user_id, db.users[1].id);
+  assert.equal(db.memberships[1].membership_role, 'member');
   assert.equal((await post(url, 'accept-invitation', { token: invitation.invitationToken, password: 'MemberPassword!234', displayName: 'Member' })).status, 400);
 }));
 test('expired invitation cannot be accepted', async () => withServer(async (url, db) => {
