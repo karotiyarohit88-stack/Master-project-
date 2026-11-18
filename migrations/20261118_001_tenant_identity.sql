@@ -8,7 +8,8 @@ BEGIN;
 CREATE TABLE IF NOT EXISTS app_tenants (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   display_name TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'active'
+  owner_user_id UUID NOT NULL UNIQUE REFERENCES app_users(id) ON DELETE RESTRICT,
+  status NOT NULL DEFAULT 'active'
     CHECK (status IN ('active', 'suspended', 'closed')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -44,40 +45,21 @@ WITH owner_users AS (
   WHERE role = 'owner'
 ),
 created_tenants AS (
-  INSERT INTO app_tenants (display_name)
-  SELECT COALESCE(NULLIF(trim(display_name), ''), email) || ' Workspace'
-  FROM owner_users
-  WHERE NOT EXISTS (
-    SELECT 1
-    FROM app_tenant_memberships m
-    WHERE m.user_id = owner_users.id
-      AND m.membership_role = 'owner'
-      AND m.status = 'active'
-  )
-  RETURNING id
-),
-unassigned_owners AS (
-  SELECT u.id AS user_id,
-         row_number() OVER (ORDER BY u.created_at, u.id) AS rn
+  INSERT INTO app_tenants (display_name, owner_user_id)
+  SELECT COALESCE(NULLIF(trim(u.display_name), ''), u.email) || ' Workspace', u.id
   FROM owner_users u
   WHERE NOT EXISTS (
-    SELECT 1
-    FROM app_tenant_memberships m
-    WHERE m.user_id = u.id
-      AND m.membership_role = 'owner'
-      AND m.status = 'active'
+    SELECT 1 FROM app_tenants t WHERE t.owner_user_id = u.id
   )
-),
-numbered_tenants AS (
-  SELECT id, row_number() OVER (ORDER BY created_at, id) AS rn
-  FROM app_tenants
-  WHERE id IN (SELECT id FROM created_tenants)
+  ON CONFLICT (owner_user_id) DO NOTHING
+  RETURNING id, owner_user_id
 )
 INSERT INTO app_tenant_memberships (tenant_id, user_id, membership_role)
-SELECT t.id, u.user_id, 'owner'
-FROM unassigned_owners u
-JOIN numbered_tenants t USING (rn)
+SELECT t.id, t.owner_user_id, 'owner'
+FROM app_tenants t
+JOIN owner_users u ON u.id = t.owner_user_id
 ON CONFLICT (tenant_id, user_id) DO NOTHING;
+
 
 COMMENT ON TABLE app_tenants IS
   'Customer workspace boundary. API access must resolve an active membership from the authenticated session.';
