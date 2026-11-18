@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getCsrfHeaders } from '../utils/csrf';
 import { 
   Mic, 
   Volume2, 
@@ -48,7 +49,7 @@ export const VoiceStudioCenter: React.FC = () => {
     try {
       const res = await fetch('/api/video/generate-voice', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({
           text: testText.trim(),
           voiceId: selectedVoiceId
@@ -79,7 +80,7 @@ export const VoiceStudioCenter: React.FC = () => {
     try {
       const res = await fetch('/api/connections/test', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({ provider: 'elevenlabs' })
       });
       const data = await res.json();
