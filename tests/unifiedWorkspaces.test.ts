@@ -57,7 +57,7 @@ class WorkspaceDb {
           return { rows: [{ id: TASK_ID, owner_id: this.task.owner_id }] };
         }
         if (/INSERT INTO agent_task_events/.test(sql)) {
-          this.events.push({ type: String(values[3]), status: String(values[2]) });
+          const eventType = sql.match(/VALUES\\s*\\(\\$1,\\s*\\$2,\\s*\\$3,\\s*'([^']+)'/i)?.[1] || 'unknown';\n          this.events.push({ type: eventType, status: 'recorded' });
           return { rows: [] };
         }
         return { rows: [] };
