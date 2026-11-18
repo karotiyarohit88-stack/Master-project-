@@ -293,3 +293,19 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 | Issue ID | Module | Finding | Status |
 | :--- | :--- | :--- | :--- |
 | MP-SEC-14 | API CSRF Protection (`auth.ts`, `server.ts`, `src/main.tsx`, `tests/auth.test.ts`) | Authenticated API mutations lacked consistent explicit CSRF validation. | Central mutation guard and integration test committed; GitHub Actions push run #202 (`44246901794`) passed install, TypeScript check, auth tests and production build; deployed runtime verification pending |
+
+
+## 17. Shared Operational State Access Containment (2026-11-18)
+
+**Implemented on the feature branch as an interim security containment:**
+- Added a centralized Owner-role gate in `server.ts` for shared process-wide operational API families: analytics, accounting, project proposals, worker agents, video job history, AutoPilot APIs (excluding the webhook path), publishing records, and audit logs.
+- This prevents non-Owner authenticated accounts from reading or mutating these shared in-memory operational records while tenant ownership is not represented consistently in those records.
+- The existing session middleware remains in front of this guard; the Owner-role check uses the authenticated session resolved by `auth.ts`.
+
+**Important limitation:** This is not full customer/tenant isolation. It temporarily restricts these shared operational features to the Owner; it does not provide separate customer workspaces. The production solution still requires durable tenant-owned records, `owner_id`/tenant foreign keys, owner-scoped reads and writes for every affected route, migration/backfill policy, and cross-tenant integration tests. Do not enable public customer onboarding or advertise multi-tenant isolation based on this containment.
+
+**Verification boundary:** Source changes committed on the feature branch. GitHub Actions must pass for the final code commit; no production deployment, live HTTP role test, or database migration was performed.
+
+| Issue ID | Module | Finding | Status |
+| :--- | :--- | :--- | :--- |
+| MP-SEC-15 | Customer / Tenant Data Isolation (`server.ts`, operational stores, database schema) | Shared in-memory operational APIs were accessible to authenticated non-Owner accounts without tenant predicates. | Interim fail-closed Owner-only containment committed; full per-tenant persistence/query scoping and cross-tenant tests remain pending |
