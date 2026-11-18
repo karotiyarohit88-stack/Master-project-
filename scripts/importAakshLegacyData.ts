@@ -130,7 +130,7 @@ export async function importAakshLegacyData(options: {
       await client.query(
         `INSERT INTO app_tenant_memberships (tenant_id, user_id, membership_role, status)
          VALUES ($1, $2, 'owner', 'active')
-         ON CONFLICT (tenant_id, user_id) DO NOTHING`,
+         ON CONFLICT (tenant_id, user_id) DO UPDATE SET membership_role = 'owner', status = 'active'`,
         [tenantId, id]
       );
       userMap.set(id, { id, tenantId });
@@ -144,7 +144,8 @@ export async function importAakshLegacyData(options: {
         summary.tasksSkipped++;
         continue;
       }
-      const legacyId = typeof legacy.id === 'string' && UUID.test(legacy.id) ? legacy.id : randomUUID();
+      const legacyId = typeof legacy.id === 'string' && UUID.test(legacy.id) ? legacy.id : '';
+      if (!legacyId) { summary.tasksSkipped++; continue; }
       const oldStatus = typeof legacy.status === 'string' ? legacy.status : 'unknown';
       const terminal = ['completed', 'failed', 'cancelled'].includes(oldStatus);
       const status = terminal ? 'failed' : 'waiting_approval';
@@ -192,7 +193,8 @@ export async function importAakshLegacyData(options: {
         summary.postsSkipped++;
         continue;
       }
-      const postId = typeof legacy.id === 'string' && UUID.test(legacy.id) ? legacy.id : randomUUID();
+      const postId = typeof legacy.id === 'string' && UUID.test(legacy.id) ? legacy.id : '';
+      if (!postId) { summary.postsSkipped++; continue; }
       const createdAt = validDate(legacy.createdAt);
       const post = await client.query(
         `INSERT INTO aaksh_social_posts (id, tenant_id, author_user_id, body, created_at, updated_at)
@@ -221,7 +223,8 @@ export async function importAakshLegacyData(options: {
         const commenter = typeof comment.authorId === 'string' ? userMap.get(comment.authorId) : undefined;
         const body = typeof comment.text === 'string' ? comment.text.trim().slice(0, 2000) : '';
         if (!commenter || commenter.tenantId !== mapped.tenantId || !body) continue;
-        const commentId = typeof comment.id === 'string' && UUID.test(comment.id) ? comment.id : randomUUID();
+        const commentId = typeof comment.id === 'string' && UUID.test(comment.id) ? comment.id : '';
+        if (!commentId) continue;
         const insertedComment = await client.query(
           `INSERT INTO aaksh_social_comments (id, tenant_id, post_id, author_user_id, body, created_at)
            VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING RETURNING id`,
