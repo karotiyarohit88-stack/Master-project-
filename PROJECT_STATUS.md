@@ -309,3 +309,20 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 | Issue ID | Module | Finding | Status |
 | :--- | :--- | :--- | :--- |
 | MP-SEC-15 | Customer / Tenant Data Isolation (`server.ts`, operational stores, database schema) | Shared in-memory operational APIs were accessible to authenticated non-Owner accounts without tenant predicates. | Interim fail-closed Owner-only containment committed; full per-tenant persistence/query scoping and cross-tenant tests remain pending |
+
+
+## 18. Tenant Identity and Membership Schema Foundation (2026-11-18)
+
+**Added on the feature branch:**
+- Added additive migration `migrations/20261118_001_tenant_identity.sql`.
+- Defines `app_tenants` and `app_tenant_memberships` with UUID keys, foreign keys, tenant-scoped roles, active/suspended/revoked membership states, uniqueness constraints, and lookup indexes.
+- Seeds one separate initial workspace for each already-provisioned global Owner and creates that Owner's membership. The seed uses an explicit `owner_user_id` relationship and is idempotent.
+- No existing operational records are moved, deleted, or rewritten.
+
+**Not yet implemented:** Login/session tenant resolution, invitation acceptance membership creation, tenant switching policy, tenant-scoped project/task/workflow/publishing/audit tables, query predicates, database row-level security, and cross-tenant integration tests. The migration is schema groundwork only. The migration has NOT been applied to any database; no live database or deployment action was taken.
+
+**Verification:** Migration source was fetched and reviewed after the deterministic owner-seed correction. GitHub Actions for the final branch commit has not yet been confirmed. SQL execution against PostgreSQL is not claimed.
+
+| Issue ID | Module | Finding | Status |
+| :--- | :--- | :--- | :--- |
+| MP-SEC-15 | Customer / Tenant Data Isolation | Shared in-memory operational state lacks per-customer persistence and query scoping. | Interim Owner-only containment remains; tenant identity/membership schema committed but unapplied; auth integration, operational data migration, scoped queries, and cross-tenant tests pending |
