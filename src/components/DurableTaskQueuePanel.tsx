@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { getCsrfHeaders } from '../utils/csrf';
 import { Activity, CheckCircle2, Clock3, Loader2, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
 
 type QueueTask = {
@@ -63,7 +64,7 @@ export const DurableTaskQueuePanel: React.FC<{ refreshToken?: number }> = ({ ref
     try {
       const response = await fetch('/api/tasks', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         credentials: 'same-origin',
         body: JSON.stringify({
           taskType,
@@ -85,7 +86,7 @@ export const DurableTaskQueuePanel: React.FC<{ refreshToken?: number }> = ({ ref
     setWorkingTask(taskId); setError(''); setNotice('');
     try {
       const response = await fetch(`/api/tasks/${taskId}/${action}`, {
-        method: 'POST', credentials: 'same-origin'
+        method: 'POST', credentials: 'same-origin', headers: getCsrfHeaders()
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || 'Task update was rejected.');
