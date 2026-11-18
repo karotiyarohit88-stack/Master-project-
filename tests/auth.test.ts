@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
-import { createAuthGuards, createAuthRouter, hashPassword } from '../auth.ts';
+import { createAuthGuards, createAuthRouter, createCsrfMutationGuard, hashPassword } from '../auth.ts';
 
 type Row = Record<string, any>;
 const PEPPER = 'unit-test-otp-pepper-value-at-least-32-characters';
@@ -222,3 +222,39 @@ test('password hashes verify and malformed hashes fail closed', async () => {
   assert.equal(await verifyPassword('WrongPassword!234',hash),false);
   assert.equal(await verifyPassword('TestPassword!234','plaintext'),false);
 });
+
+
+test('API mutation CSRF guard rejects missing tokens and accepts the session-bound token', async () => withServer(async (url, db) => {
+  const started = await bootstrap(url);
+  const challenge = await started.json() as Row;
+  const verified = await verify(url, challenge.challengeToken, latestCode(db));
+  assert.equal(verified.status, 200);
+  const setCookie = verified.headers.get('set-cookie') || '';
+  const verifiedBody = await verified.json() as Row;
+  const cookies = `aaksh_session=${cookie(setCookie, 'aaksh_session')}; aaksh_csrf=${cookie(setCookie, 'aaksh_csrf')}`;
+
+  const guards = createAuthGuards({ pool: db });
+  const protectedApp = express();
+  protectedApp.use(express.json());
+  protectedApp.use('/api', guards.requireSession, createCsrfMutationGuard(guards.requireCsrf));
+  protectedApp.post('/api/mutate', (_req, res) => res.json({ allowed: true }));
+  protectedApp.get('/api/read', (_req, res) => res.json({ allowed: true }));
+  const protectedServer = protectedApp.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => protectedServer.once('listening', resolve));
+  const address = protectedServer.address();
+  if (!address || typeof address === 'string') throw new Error('No protected test port');
+  const protectedUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const common = { cookie: cookies, origin: protectedUrl };
+    assert.equal((await fetch(protectedUrl + '/api/mutate', {
+      method: 'POST', headers: { ...common, 'content-type': 'application/json' }, body: '{}'
+    })).status, 403);
+    assert.equal((await fetch(protectedUrl + '/api/mutate', {
+      method: 'POST', headers: { ...common, 'content-type': 'application/json', 'x-csrf-token': verifiedBody.csrfToken }, body: '{}'
+    })).status, 200);
+    assert.equal((await fetch(protectedUrl + '/api/read', { headers: { cookie: cookies } })).status, 200);
+  } finally {
+    await new Promise<void>((resolve, reject) => protectedServer.close(error => error ? reject(error) : resolve()));
+  }
+}));
