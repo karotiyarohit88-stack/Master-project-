@@ -490,3 +490,19 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 | MP-WF-07 | Worker Delegation / Orchestration | Task intake, approval and worker lease primitives exist; no deployed background worker or AI/tool handler is active. | Backend + dashboard intake committed; CI run 44257099370 passed; worker runtime pending |
 | MP-WF-08 | Workflow History / Notifications | Durable task history and event activity are displayed in the existing Worker Agents page; no live push notifications or running worker progress stream exists. | Dashboard integration + CI passed; browser E2E and live worker events pending |
 | MP-SEC-15 | Agent Task Queue / Tenant Isolation | Task API and dashboard use session-derived tenant scope; worker primitives require matching tenant/lease. | Source + tests + CI passed; migrations unapplied and database-backed cross-tenant tests pending |
+
+
+## 27. Worker Claim Handler-Allowlist Boundary (2026-11-18)
+
+**Implemented on the PR feature branch:**
+- Updated `claimNextAgentTask` in `agentTaskWorker.ts` to require an explicit, non-empty list of supported task types before it queries or claims work.
+- The claim SQL now includes `task_type = ANY($3::text[])`, so a worker can claim only task types for which its caller has registered handlers. An empty, malformed, or oversized allowlist returns no task without touching PostgreSQL.
+- Updated `tests/agentTaskWorker.test.ts` to assert the SQL allowlist predicate, the exact bound task-type list, and fail-closed behavior when no handler types are supplied.
+
+**Why this boundary matters:** The task intake API currently accepts multiple task types, but actual model/tool handlers are not implemented. A future worker must pass only its implemented handler types; it must not claim unsupported tasks and strand them in `running` state. This change does not add provider calls or execute tasks.
+
+**Verification boundary:** Source and tests are committed on the feature branch; GitHub Actions verification is pending. No worker process was started, no task was claimed, no PostgreSQL migration was applied, and no deployment or paid API call was performed.
+
+| Issue ID | Module | Finding | Status |
+|---|---|---|---|
+| MP-WF-07 | Worker Execution / Handler Registry | Worker lease claim previously had no task-type handler allowlist. | Claim now requires an explicit allowlist and SQL-enforces it; CI pending; worker process and actual task handlers still pending |
