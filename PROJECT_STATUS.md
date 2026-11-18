@@ -558,3 +558,24 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 | Issue ID | Module | Finding | Status |
 |---|---|---|---|
 | MP-WF-07 | Background Worker Runtime | Shutdown previously stopped polling only between tasks and did not signal active handlers. | Active-handler AbortSignal shutdown and retry transition added; current CI pending; live cooperative-handler/DB verification pending |
+
+
+## 31. First Allowlisted Read-Only Worker Handler (2026-11-18)
+
+**Implemented on the PR feature branch:**
+- Added `agentTaskHandlers.ts` with one fixed `read_only` handler: `read_project_status`.
+- The handler reads only the repository's `PROJECT_STATUS.md`; it does not accept a caller-supplied path, shell command, URL, or arbitrary file selector.
+- It honors the handler AbortSignal, returns the file name/content/byte count/truncation flag, and caps stored content at 48 KiB so it fits below the task result size limit.
+- `agentWorker.ts` imports the handler registry before starting the separate worker runtime. The worker's registered allowlist therefore contains only `read_only`; other task types remain unclaimed.
+- The existing queue UI now labels this choice as “Read project status (read-only)” and sends the fixed `read_project_status` action. Other task categories do not get this payload.
+- The task API validates the payload shape and rejects unknown read-only actions, including malformed/null payloads, before writing a task.
+- Added tests for the exact registered handler type, fixed-file output, unsupported task/action rejection, cancellation before reading, and API payload validation.
+
+**Safety boundary:** The handler is read-only and performs no model/provider call, network request, shell execution, arbitrary path access, or file modification. It still requires the existing human approval record before the worker claim SQL can lease the task. The worker remains disabled unless the explicit environment flag is set and the required migrations are confirmed as applied.
+
+**Verification boundary:** Source changes are committed and being refetched; fresh CI for this handler and UI/API integration is pending. No worker was started, no task was claimed or executed, no database migration was applied, and no deployment or paid API call occurred. The task result is persisted by the worker completion primitive; a user-facing result viewer is a separate remaining integration item.
+
+| Issue ID | Module | Finding | Status |
+|---|---|---|---|
+| MP-WF-07 | Background Worker / Read-only Handler | Runtime scaffold had no registered production handler and therefore could not process any task. | One fixed read-only project-status handler + allowlist + intake validation + tests added; current CI pending; worker activation and live DB execution not performed |
+| MP-WF-08 | Task Queue Result UI | Durable task result can be stored but the dashboard currently does not expose a tenant/permission-checked result viewer. | Pending; add safe result retrieval/viewer after handler CI passes |
