@@ -49,7 +49,8 @@ export function createUnifiedWorkspaceRouter(options: {
   pool?: DbPool | null;
   dispatchPublishing?: PublishDispatcher;
 } = {}) {
-  const router = Router();
+  const aakshRouter = Router();
+  const publishingRouter = Router();
   const pool = options.pool === undefined ? getPostgresPool() as unknown as DbPool | null : options.pool;
 
   async function createApprovedWorkItem(req: any, res: Response, input: {
@@ -129,7 +130,7 @@ export function createUnifiedWorkspaceRouter(options: {
   }
 
   // AAKSH work tasks are records in Master Project's tenant-scoped agent_tasks table.
-  router.get('/aaksh/work/tasks', async (req, res) => {
+  aakshRouter.get('/work/tasks', async (req, res) => {
     const ctx = context(res);
     if (!ctx) return error(res, 401, 'Authenticated tenant context is required.');
     if (!pool) return error(res, 503, 'Shared PostgreSQL task storage is unavailable.');
@@ -149,7 +150,7 @@ export function createUnifiedWorkspaceRouter(options: {
     }
   });
 
-  router.post('/aaksh/work/tasks', async (req, res) => {
+  aakshRouter.post('/work/tasks', async (req, res) => {
     const body = req.body || {};
     const platform = typeof body.platform === 'string' ? body.platform.trim().toLowerCase() : '';
     const category = typeof body.category === 'string' ? body.category.trim().toLowerCase() : '';
@@ -165,8 +166,21 @@ export function createUnifiedWorkspaceRouter(options: {
     });
   });
 
+  aakshRouter.post('/publishing/prepare', async (req, res) => {
+    const topic = typeof req.body?.topic === 'string' ? req.body.topic.trim() : '';
+    const platform = typeof req.body?.platform === 'string' ? req.body.platform.trim().toLowerCase() : 'youtube';
+    if (!validText(topic, 500)) return error(res, 400, 'Topic must contain between 1 and 500 characters.');
+    if (!/^[a-z0-9][a-z0-9._-]{0,49}$/.test(platform)) return error(res, 400, 'A valid publishing platform is required.');
+    const caption = '🚀 ' + topic + '\\n\\nPrepared for review. Publishing remains blocked until a workspace Owner/Admin approves this item.';
+    return createApprovedWorkItem(req, res, {
+      source: 'aaksh', module: 'publishing', action: 'publish',
+      platform, category: 'social_post', title: topic, description: caption,
+      topic, caption, hashtags: ['#AI', '#Technology', '#Automation']
+    });
+  });
+
   // AAKSH publishing drafts use the same durable task and approval record as all other work.
-  router.get('/publishing/queue', async (_req, res) => {
+  publishingRouter.get('/queue', async (_req, res) => {
     const ctx = context(res);
     if (!ctx) return error(res, 401, 'Authenticated tenant context is required.');
     if (!pool) return error(res, 503, 'Shared PostgreSQL task storage is unavailable.');
@@ -185,7 +199,7 @@ export function createUnifiedWorkspaceRouter(options: {
     }
   });
 
-  router.post('/publishing/prepare', async (req, res) => {
+  publishingRouter.post('/prepare', async (req, res) => {
     const topic = typeof req.body?.topic === 'string' ? req.body.topic.trim() : '';
     const platform = typeof req.body?.platform === 'string' ? req.body.platform.trim().toLowerCase() : 'youtube';
     if (!validText(topic, 500)) return error(res, 400, 'Topic must contain between 1 and 500 characters.');
@@ -199,7 +213,7 @@ export function createUnifiedWorkspaceRouter(options: {
     });
   });
 
-  router.post('/publishing/approve', async (req, res) => {
+  publishingRouter.post('/approve', async (req, res) => {
     const ctx = context(res);
     if (!ctx) return error(res, 401, 'Authenticated tenant context is required.');
     if (!['owner', 'admin'].includes(ctx.tenant.role)) return error(res, 403, 'Only a workspace Owner or Admin can approve publishing.');
@@ -237,7 +251,7 @@ export function createUnifiedWorkspaceRouter(options: {
     }
   });
 
-  router.post('/publishing/publish', async (req, res) => {
+  publishingRouter.post('/publish', async (req, res) => {
     const ctx = context(res);
     if (!ctx) return error(res, 401, 'Authenticated tenant context is required.');
     if (!pool) return error(res, 503, 'Shared PostgreSQL task storage is unavailable.');
@@ -292,5 +306,5 @@ export function createUnifiedWorkspaceRouter(options: {
     }
   });
 
-  return router;
+  return { aaksh: aakshRouter, publishing: publishingRouter };
 }
