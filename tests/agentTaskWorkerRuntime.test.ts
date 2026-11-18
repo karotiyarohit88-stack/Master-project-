@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -40,4 +41,10 @@ test('enabled worker refuses startup when no reviewed task handlers are register
 test('shutdown request is retained as a worker stop signal', () => {
   requestAgentWorkerStop();
   assert.equal(isAgentWorkerStopping(), true);
+});
+
+
+test('worker package script uses the TypeScript-aware tsx runtime', async () => {
+  const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(packageJson.scripts.worker, 'tsx agentWorker.ts');
 });
