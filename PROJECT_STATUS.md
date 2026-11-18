@@ -379,3 +379,18 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 | Issue ID | Module | Finding | Status |
 | :--- | :--- | :--- | :--- |
 | MP-SEC-15 | Authentication / Tenant Context | Authenticated requests had no reusable server-side resolver for an active tenant membership. | Fail-closed middleware and unit test committed; CI run 44252012143 passed; route integration and tenant-scoped data/query migration pending |
+
+
+## 22. Durable Agent Task Queue Tenant Schema (2026-11-18)
+
+**Added on the feature branch:** migrations/20261118_003_agent_task_tenant_scope.sql adds nullable tenant_id foreign keys to agent_tasks and agent_task_events. It backfills tasks only when owner_id maps to a user with exactly one active membership in an active tenant, then copies the resolved tenant ID to child task events. Tenant history/ready indexes are added.
+
+**Fail-closed compatibility:** legacy tasks/events that cannot be mapped unambiguously remain NULL. Future queue APIs and workers must exclude NULL tenant_id from reads, claims, retries, execution and history; they must scope all operations by the resolved tenant. No task rows are deleted or rewritten beyond the additive tenant_id backfill.
+
+**Scope limitation:** This is schema preparation only. No task API, worker claim loop, queue execution, or task-history route has been switched to tenant_id. The migration has NOT been applied to a database and no live SQL execution is claimed.
+
+**Verification:** migration committed as 1b4b6de0edf1615ecc0485993c73090b732eb90f; source refetch and CI pending.
+
+| Issue ID | Module | Finding | Status |
+| :--- | :--- | :--- | :--- |
+| MP-SEC-15 | Agent Task Queue / Tenant Isolation | Durable queue schema stores owner_id but has no tenant key for tenant-scoped claims and task-event history. | Additive tenant_id migration committed; CI, database application, queue API/worker tenant predicates and runtime cross-tenant tests pending |
