@@ -62,25 +62,23 @@ export function createAgentTaskRouter(options: { pool?: DbPool | null } = {}) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      let inserted: DbResult;
-      try {
-        inserted = await client.query(
-          `INSERT INTO agent_tasks
-             (tenant_id, owner_id, idempotency_key, task_type, original_prompt, payload,
-              status, requires_approval, priority)
-           VALUES ($1, $2, $3, $4, $5, $6::jsonb, 'waiting_approval', $7, 100)
-           RETURNING ${TASK_COLUMNS}`,
-          [context.tenant.tenantId, context.session.id, idempotencyKey || null, taskType, prompt, JSON.stringify(payload), requiresApproval]
-        );
-      } catch (error) {
-        if ((error as { code?: string })?.code !== '23505' || !idempotencyKey) throw error;
+      const inserted = await client.query(
+        `INSERT INTO agent_tasks
+           (tenant_id, owner_id, idempotency_key, task_type, original_prompt, payload,
+            status, requires_approval, priority)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, 'waiting_approval', $7, 100)
+         ON CONFLICT (owner_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
+         RETURNING ${TASK_COLUMNS}`,
+        [context.tenant.tenantId, context.session.id, idempotencyKey || null, taskType, prompt, JSON.stringify(payload), requiresApproval]
+      );
+      if (!inserted.rows[0] && idempotencyKey) {
         const existing = await client.query(
           `SELECT ${TASK_COLUMNS} FROM agent_tasks
             WHERE tenant_id = $1 AND owner_id = $2 AND idempotency_key = $3
             LIMIT 1`,
           [context.tenant.tenantId, context.session.id, idempotencyKey]
         );
-        if (!existing.rows[0]) throw error;
+        if (!existing.rows[0]) throw new Error('Idempotency conflict could not be resolved in this tenant.');
         await client.query('COMMIT');
         return res.status(200).json({ task: safeTask(existing.rows[0]), idempotentReplay: true });
       }
