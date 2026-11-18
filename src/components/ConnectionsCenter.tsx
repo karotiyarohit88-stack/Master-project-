@@ -34,6 +34,7 @@ import {
   Check
 } from 'lucide-react';
 import { AllConnectionsStatus } from '../types';
+import { getCsrfHeaders } from '../utils/csrf';
 import { SystemCapabilityRegistry, CapabilityStatus } from '../config/capabilityRegistry';
 
 export const ConnectionsCenter: React.FC = () => {
@@ -46,11 +47,10 @@ export const ConnectionsCenter: React.FC = () => {
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
   const [hindiNotification, setHindiNotification] = useState<string | null>(null);
   const [adminTokenInput, setAdminTokenInput] = useState<string>('');
-  const adminHeaders = () => {
-    const csrfCookie = document.cookie.split(';').map((part) => part.trim()).find((part) => part.startsWith('aaksh_csrf='));
-    const csrfToken = csrfCookie ? decodeURIComponent(csrfCookie.slice('aaksh_csrf='.length)) : '';
-    return { 'x-aaksh-admin-token': adminTokenInput.trim(), ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}) };
-  };
+  const adminHeaders = () => ({
+    'x-aaksh-admin-token': adminTokenInput.trim(),
+    ...getCsrfHeaders()
+  });
 
   // Form states for editable fields
   const [geminiKeyInput, setGeminiKeyInput] = useState<string>('');
