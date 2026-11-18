@@ -107,15 +107,15 @@ app.use('/api', (req, res, next) => {
 // fail closed for non-Owner accounts on these shared-state APIs. This is a
 // containment boundary, not a substitute for full per-tenant data isolation.
 const sharedOperationalStateRoutes = [
-  /^\\/analytics(?:\\/.*)?$/,
-  /^\\/accounting(?:\\/.*)?$/,
-  /^\\/project\\/(?:proposals|apply-proposal|reject-proposal)$/,
-  /^\\/worker-agents(?:\\/.*)?$/,
-  /^\\/video\\/jobs$/,
-  /^\\/autopilot\\/(?!webhook\\/)[^/]+(?:\\/.*)?$/,
-  /^\\/publishing(?:\\/.*)?$/,
-  /^\\/audit(?:\\/.*)?$/,
-  /^\\/audit-logs$/
+  /^\/analytics(?:\/.*)?$/,
+  /^\/accounting(?:\/.*)?$/,
+  /^\/project\/(?:proposals|apply-proposal|reject-proposal)$/,
+  /^\/worker-agents(?:\/.*)?$/,
+  /^\/video\/jobs$/,
+  /^\/autopilot\/(?!webhook\/)[^/]+(?:\/.*)?$/,
+  /^\/publishing(?:\/.*)?$/,
+  /^\/audit(?:\/.*)?$/,
+  /^\/audit-logs$/
 ];
 app.use('/api', (req, res, next) => {
   if (!sharedOperationalStateRoutes.some((pattern) => pattern.test(req.path))) return next();
