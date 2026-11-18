@@ -288,8 +288,8 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 
 **Safety boundary:** This is source-level implementation plus a committed test. It does not establish deployed runtime behavior until CI and an authorized staging/runtime test pass. The existing application-wide session requirement remains in force; no webhook authentication model was changed. No database migration, deployment, paid provider call, or external publishing action was performed.
 
-**Verification:** Source changes committed to `feature/master-project-api-key-secret-manager`; CI result for the final commit is pending. Do not describe production security as fully verified.
+**Verification:** Final code-and-status commit `195cc647fbffcfcf623d3dfbacea36dfc752f27b` passed GitHub Actions push run #202 (`44246901794`): locked dependency install, TypeScript check, authentication unit tests, and production build all succeeded. The PR-triggered run was still in progress when checked. This is CI verification only; no deployed runtime authorization test is claimed.
 
 | Issue ID | Module | Finding | Status |
 | :--- | :--- | :--- | :--- |
-| MP-SEC-14 | API CSRF Protection (`auth.ts`, `server.ts`, `src/main.tsx`, `tests/auth.test.ts`) | Authenticated API mutations lacked consistent explicit CSRF validation. | Central mutation guard and integration test committed; final-commit CI and deployed runtime verification pending |
+| MP-SEC-14 | API CSRF Protection (`auth.ts`, `server.ts`, `src/main.tsx`, `tests/auth.test.ts`) | Authenticated API mutations lacked consistent explicit CSRF validation. | Central mutation guard and integration test committed; GitHub Actions push run #202 (`44246901794`) passed install, TypeScript check, auth tests and production build; deployed runtime verification pending |
