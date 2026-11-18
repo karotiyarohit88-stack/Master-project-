@@ -11,6 +11,8 @@ class MemoryAuthDb {
   users: Row[] = [];
   sessions: Row[] = [];
   invitations: Row[] = [];
+  tenants: Row[] = [];
+  memberships: Row[] = [];
   challenges: Row[] = [];
   sentCodes: string[] = [];
 
@@ -48,9 +50,15 @@ class MemoryAuthDb {
     if (q.startsWith('update app_sessions set revoked_at')) {
       const s = this.sessions.find(x => x.id === values[0]); if (s) s.revoked_at = new Date().toISOString(); return { rows: [] };
     }
+    if (q.startsWith('select t.id as tenant_id from app_tenant_memberships')) {
+      const rows = this.memberships.filter(m => m.user_id === values[0] && m.status === 'active' && m.membership_role === 'owner')
+        .map(m => this.tenants.find(t => t.id === m.tenant_id && t.status === 'active')).filter(Boolean)
+        .map(t => ({ tenant_id: t!.id }));
+      return { rows: rows.slice(0, 2) };
+    }
     if (q.startsWith('insert into app_invitations')) {
-      const invite = { id: String(this.invitations.length + 1), email: values[0], role: values[1], invite_token_hash: values[2], created_by: values[3], created_at: new Date().toISOString(), expires_at: new Date(values[4]).toISOString(), accepted_at: null, revoked_at: null };
-      this.invitations.push(invite); return { rows: [{ id: invite.id, email: invite.email, role: invite.role, created_at: invite.created_at, expires_at: invite.expires_at }] };
+      const invite = { id: String(this.invitations.length + 1), tenant_id: values[0], email: values[1], role: values[2], invite_token_hash: values[3], created_by: values[4], created_at: new Date().toISOString(), expires_at: new Date(values[5]).toISOString(), accepted_at: null, revoked_at: null };
+      this.invitations.push(invite); return { rows: [{ id: invite.id, tenant_id: invite.tenant_id, email: invite.email, role: invite.role, created_at: invite.created_at, expires_at: invite.expires_at }] };
     }
     throw new Error('Unexpected pool SQL: ' + q);
   }
@@ -79,8 +87,22 @@ class MemoryAuthDb {
           if (this.users.some(x => x.email === user.email)) throw Object.assign(new Error('duplicate'), { code: '23505' });
           this.users.push(user); return { rows: [{ id: user.id, email: user.email, display_name: user.display_name, role: user.role }] };
         }
+        if (q.startsWith('insert into app_tenants')) {
+          const tenant = { id: String(this.tenants.length + 1), display_name: values[0], owner_user_id: values[1], status: 'active' };
+          this.tenants.push(tenant); return { rows: [{ id: tenant.id }] };
+        }
+        if (q.startsWith('insert into app_tenant_memberships')) {
+          const membership = { id: String(this.memberships.length + 1), tenant_id: values[0], user_id: values[1], membership_role: values[2], status: values[3] || 'active' };
+          this.memberships.push(membership); return { rows: [] };
+        }
         if (q.includes('from app_invitations') && q.includes('for update')) {
-          const invite = q.includes('where invite_token_hash') ? this.invitations.find(x => x.invite_token_hash === values[0]) : this.invitations.find(x => x.id === values[0]); return { rows: invite ? [{ ...invite }] : [] };
+          const invite = q.includes('where invite_token_hash') ? this.invitations.find(x => x.invite_token_hash === values[0]) : this.invitations.find(x => x.id === values[0]);
+          const tenant = invite && this.tenants.find(x => x.id === invite.tenant_id && x.status === 'active');
+          return { rows: invite ? [{ ...invite, active_tenant_id: tenant?.id ?? null }] : [] };
+        }
+        if (q.startsWith('insert into app_tenant_memberships')) {
+          const membership = { id: String(this.memberships.length + 1), tenant_id: values[0], user_id: values[1], membership_role: values[2], status: values[3] || 'active' };
+          this.memberships.push(membership); return { rows: [] };
         }
         if (q.startsWith('update app_invitations set accepted_at')) {
           const invite = this.invitations.find(x => x.id === values[0]); if (invite) invite.accepted_at = new Date().toISOString(); return { rows: [] };
