@@ -32,9 +32,13 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
-function safeTask(row: Record<string, unknown>) {
-  const { last_error, ...task } = row;
-  return { ...task, last_error: last_error ? 'Task execution reported an error. Contact the workspace Owner for details.' : null };
+function safeTask(row: Record<string, unknown>, context?: { session: TaskSession; tenant: TenantContext }) {
+  const { last_error, owner_id, ...task } = row;
+  return {
+    ...task,
+    last_error: last_error ? 'Task execution reported an error. Contact the workspace Owner for details.' : null,
+    ...(context ? { canCancel: ['owner', 'admin'].includes(context.tenant.role) || owner_id === context.session.id } : {})
+  };
 }
 
 export function createAgentTaskRouter(options: { pool?: DbPool | null } = {}) {
@@ -109,13 +113,13 @@ export function createAgentTaskRouter(options: { pool?: DbPool | null } = {}) {
     const limit = Math.min(Math.max(Number.parseInt(String(_req.query.limit || '50'), 10) || 50, 1), 100);
     try {
       const result = await pool.query(
-        `SELECT ${TASK_COLUMNS} FROM agent_tasks
+        `SELECT ${TASK_COLUMNS}, owner_id FROM agent_tasks
           WHERE tenant_id = $1
           ORDER BY created_at DESC
           LIMIT $2`,
         [context.tenant.tenantId, limit]
       );
-      return res.json({ tasks: result.rows.map(safeTask) });
+      return res.json({ tasks: result.rows.map(row => safeTask(row, context)), tenantRole: context.tenant.role });
     } catch (error) {
       const code = (error as { code?: string })?.code;
       if (code === '42P01' || code === '42703') return jsonError(res, 503, 'Task storage schema is not ready.');
