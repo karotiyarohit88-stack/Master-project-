@@ -408,9 +408,19 @@ test('one Master login session accesses AAKSH work and Master approvals through 
 
 test('legacy AAKSH scrypt password hashes remain verifiable during account migration', async () => {
   const password = 'LegacyAccountPassword!234';
-  const salt = randomBytes(16);
+  const salt = randomBytes(16).toString('hex');
   const digest = scryptSync(password, salt, 64).toString('hex');
-  const legacyHash = 'scrypt$' + salt.toString('hex') + '$' + digest;
+  const legacyHash = 'scrypt
+  const { verifyPassword } = await import('../auth.ts');
+  assert.equal(await verifyPassword(password, legacyHash), true);
+  assert.equal(await verifyPassword('WrongLegacyPassword!234', legacyHash), false);
+});
+ + salt + '
+  const { verifyPassword } = await import('../auth.ts');
+  assert.equal(await verifyPassword(password, legacyHash), true);
+  assert.equal(await verifyPassword('WrongLegacyPassword!234', legacyHash), false);
+});
+ + digest;
   const { verifyPassword } = await import('../auth.ts');
   assert.equal(await verifyPassword(password, legacyHash), true);
   assert.equal(await verifyPassword('WrongLegacyPassword!234', legacyHash), false);
