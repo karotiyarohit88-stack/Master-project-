@@ -64,6 +64,10 @@ async function runLegacyImportE2E(pool: any) {
     const applied = await importAakshLegacyData({ pool, dataDir, dryRun: false });
     assert.equal(applied.dryRun, false);
     assert.equal(applied.usersImported, 1);
+    const replay = await importAakshLegacyData({ pool, dataDir, dryRun: false });
+    assert.equal(replay.usersImported, 0);
+    assert.equal(replay.tasksImported, 0);
+    assert.equal(replay.postsImported, 0);
     const user = await pool.query('SELECT id, password_hash FROM app_users WHERE id = $1', [userId]);
     assert.equal(user.rows.length, 1);
     assert.equal(await verifyPassword(password, user.rows[0].password_hash), true);
