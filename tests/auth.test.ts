@@ -102,7 +102,8 @@ class MemoryAuthDb {
           return { rows: [{ id: task.id, owner_id: task.owner_id }] };
         }
         if (q.startsWith('insert into agent_task_events')) {
-          const eventType = sql.match(/VALUES\\s*\\(\\$1,\\s*\\$2,\\s*\\$3,\\s*'([^']+)'/i)?.[1] || 'unknown';\n          this.taskEvents.push({ task_id: values[0], tenant_id: values[1], owner_id: values[2], event_type: eventType, status: 'recorded' });
+          const eventType = sql.match(/VALUES\s*\(\$1,\s*\$2,\s*\$3,\s*'([^']+)'/i)?.[1] || 'unknown';
+          this.taskEvents.push({ task_id: values[0], tenant_id: values[1], owner_id: values[2], event_type: eventType, status: 'recorded' });
           return { rows: [] };
         }
         if (q.includes('from app_email_otp_challenges') && q.includes('for update')) {
