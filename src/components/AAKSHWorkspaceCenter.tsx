@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Activity, ArrowRight, CheckCircle2, Clock3, Heart, Loader2, MessageCircle, Plus, RefreshCw, Send, ShieldCheck, Users } from 'lucide-react';
+import { Activity, ArrowRight, CheckCircle2, Heart, Loader2, MessageCircle, Plus, RefreshCw, Send, ShieldCheck, Users } from 'lucide-react';
 import { getCsrfHeaders } from '../utils/csrf';
 
 type WorkspaceTask = {
