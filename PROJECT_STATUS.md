@@ -361,3 +361,21 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 | Issue ID | Module | Finding | Status |
 | :--- | :--- | :--- | :--- |
 | MP-SEC-15 | Authentication / Tenant Membership | Owner bootstrap and invitation acceptance did not create tenant identity/membership links. | Source implementation and unit-test assertions committed; GitHub Actions push run `44251832834` passed install, TypeScript, auth tests and build; migrations unapplied; session tenant context, operational tenant scoping and cross-tenant runtime tests pending |
+
+
+## 21. Fail-Closed Tenant Membership Request Guard (2026-11-18)
+
+**Implemented on the feature branch:** createAuthGuards().requireTenantMembership in auth.ts now:
+- Requires the already-authenticated server session and resolves membership using only the session user ID.
+- Queries active memberships joined to active tenants; it never trusts a tenant ID supplied by the client.
+- Allows the request only when exactly one active tenant membership is found.
+- Rejects no active membership with HTTP 403 and multiple active memberships with HTTP 409, requiring a future explicit tenant-selection flow rather than silently choosing a workspace.
+- Stores the resolved { tenantId, role } in res.locals.tenantContext for downstream route handlers.
+
+**Tests:** tests/auth.test.ts now checks successful Owner workspace resolution and denial after the membership is suspended. GitHub Actions push run 44252012143 for commit 67aec302d1a4a029417ca636f734074a78114f91 completed successfully: dependency install, TypeScript check, authentication tests, and production build passed.
+
+**Scope limitation:** The middleware is available but has not yet been mounted on the customer-owned operational route families. Existing Owner-only containment remains. This does not yet isolate projects, tasks, proposals, workflows, publishing, analytics, or audit data by tenant. No live PostgreSQL test or deployment is claimed.
+
+| Issue ID | Module | Finding | Status |
+| :--- | :--- | :--- | :--- |
+| MP-SEC-15 | Authentication / Tenant Context | Authenticated requests had no reusable server-side resolver for an active tenant membership. | Fail-closed middleware and unit test committed; CI run 44252012143 passed; route integration and tenant-scoped data/query migration pending |
