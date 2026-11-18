@@ -389,8 +389,31 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 
 **Scope limitation:** This is schema preparation only. No task API, worker claim loop, queue execution, or task-history route has been switched to tenant_id. The migration has NOT been applied to a database and no live SQL execution is claimed.
 
-**Verification:** migration committed as 1b4b6de0edf1615ecc0485993c73090b732eb90f; source refetch and CI pending.
+**Verification:** migration source was refetched at the branch head. GitHub Actions run `44252214742` for branch commit `77fb1ac8232e8e262df17d70f735b1746a7aea41` completed successfully: locked dependency installation, TypeScript check, authentication unit tests, and production build all passed. A second PR-triggered run `44252223107` also completed successfully. No PostgreSQL application or runtime execution is claimed.
 
 | Issue ID | Module | Finding | Status |
 | :--- | :--- | :--- | :--- |
 | MP-SEC-15 | Agent Task Queue / Tenant Isolation | Durable queue schema stores owner_id but has no tenant key for tenant-scoped claims and task-event history. | Additive tenant_id migration committed; CI, database application, queue API/worker tenant predicates and runtime cross-tenant tests pending |
+
+
+## 23. Worker Delegation and Durable Task Execution Gap (2026-11-18)
+
+**Fresh source inspection at branch head `77fb1ac8232e8e262df17d70f735b1746a7aea41`:**
+- `server.ts` contains no references to `agent_tasks` or `agent_task_events`; the new durable queue schema is not connected to an API or worker.
+- `GET /api/worker-agents` returns the process-wide `workerAgents` array directly.
+- `POST /api/worker-agents/delegate` finds an in-memory agent, changes `status` to `executing`, stores `activeMission`, writes an audit entry, and returns the agent. It does not enqueue a durable task, invoke an AI model/tool, run a worker, or verify mission completion.
+- `src/components/WorkerAgentsCenter.tsx` displays “Mission delegated” and “Agent status updated to executing” after this status mutation; this is not evidence that the mission executed.
+- `src/components/TaskWorkflowModal.tsx` receives `onStart`, `onApproveStep`, `onNextStep`, `onRetry`, and `onCancel` as props. The modal itself does not persist workflow steps or execute a backend task.
+- Repository tree inspection found no task queue worker implementation file; the only durable queue source currently present is the SQL migration foundation.
+
+**Issue classification:** This is a newly documented source-level confirmation of the existing MP-WF-07 / MP-WF-08 gap, not a separate new issue ID. It also blocks closure of MP-SEC-15 because queue execution and history cannot yet be tenant-scoped when no durable queue API/worker is wired.
+
+**Required implementation before calling delegation real:** introduce authenticated task create/read/cancel/approve endpoints that derive tenant context from the session; write task and event rows transactionally; require non-NULL tenant_id; scope every query, claim, retry, approval, and event read by tenant_id; add a worker claim loop with safe leases and bounded retries; ensure consequential tasks remain waiting_approval until a human approval is recorded; and add cross-tenant denial plus queue lifecycle tests. Do not report an agent as executing/completed until a durable task state transition and worker evidence support it.
+
+**Verification boundary:** Source files and repository tree were inspected and refetched. No task was enqueued, no worker was run, no database migration was applied, and no production/runtime execution was tested.
+
+| Issue ID | Module | Finding | Status |
+|---|---|---|---|
+| MP-WF-07 | Worker Delegation / Orchestration | Delegation endpoint only mutates an in-memory status and audit log; no durable queue or real worker execution. | Source-confirmed; implementation pending |
+| MP-WF-08 | Workflow History / Notifications | Workflow modal state/logs are callback-driven UI state; durable task/event history is not wired to the interface. | Source-confirmed; implementation pending |
+| MP-SEC-15 | Agent Task Queue / Tenant Isolation | Tenant queue schema exists but no tenant-scoped queue API or worker uses it. | Schema committed; API/worker tenant predicates and cross-tenant tests pending |
