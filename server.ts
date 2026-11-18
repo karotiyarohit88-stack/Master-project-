@@ -93,7 +93,6 @@ app.use('/api', (req, res, next) => {
       /^\/project\/(apply-proposal|reject-proposal)$/,
       /^\/worker-agents\/delegate$/,
       /^\/video\/(generate-script|generate-voice|render)$/,
-      /^\/publishing\/prepare$/,
       /^\/sheets\/sync$/,
       /^\/autopilot\/trigger\/manual$/,
       /^\/automation\/trigger$/
