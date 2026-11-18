@@ -11,7 +11,7 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
-    "worker": "node agentWorker.ts"
+    "worker": "tsx agentWorker.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
