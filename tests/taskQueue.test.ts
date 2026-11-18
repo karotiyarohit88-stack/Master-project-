@@ -7,6 +7,8 @@ const TASK_ID = '2c4c3d4e-5f60-4a71-8b92-123456789abc';
 const TENANT_A = '11111111-2222-4333-8444-555555555555';
 
 class TaskDb {
+  resultOwnerId = 'user-123';
+  resultStatus = 'completed';
   queries: { sql: string; values: unknown[] }[] = [];
   task = {
     id: TASK_ID, task_type: 'read_only', original_prompt: 'Check project status',
@@ -37,12 +39,12 @@ class TaskDb {
   }
 }
 
-async function withServer(role: 'owner' | 'admin' | 'member', run: (url: string, db: TaskDb) => Promise<void>) {
+async function withServer(role: 'owner' | 'admin' | 'member', run: (url: string, db: TaskDb) => Promise<void>, sessionId = 'user-123') {
   const db = new TaskDb();
   const app = express();
   app.use(express.json());
   app.use((req, res, next) => {
-    res.locals.authSession = { id: 'user-123', role: 'owner' };
+    res.locals.authSession = { id: sessionId, role: 'owner' };
     res.locals.tenantContext = { tenantId: TENANT_A, role };
     next();
   });
@@ -116,6 +118,26 @@ test('only tenant Owner or Admin can approve and approval does not claim executi
     assert.equal(update!.values[1], TENANT_A);
   });
 });
+
+
+test('read-only task result is visible to its creator', async () => withServer('member', async (url, db) => {
+  const response = await fetch(url + '/api/tasks/' + TASK_ID + '/result');
+  assert.equal(response.status, 200);
+  const body = await response.json() as any;
+  assert.equal(body.result.file, 'PROJECT_STATUS.md');
+  assert.match(body.result.content, /Master Project AI Agent/);
+}));
+
+test('read-only task result is hidden from another tenant member', async () => withServer('member', async url => {
+  const response = await fetch(url + '/api/tasks/' + TASK_ID + '/result');
+  assert.equal(response.status, 403);
+}, 'user-456'));
+
+test('read-only task result is not exposed before completion', async () => withServer('member', async (url, db) => {
+  db.resultStatus = 'running';
+  const response = await fetch(url + '/api/tasks/' + TASK_ID + '/result');
+  assert.equal(response.status, 409);
+}));
 
 test('task event history checks tenant ownership before returning events', async () => withServer('member', async (url, db) => {
   const response = await fetch(url + '/api/tasks/' + TASK_ID + '/events');
