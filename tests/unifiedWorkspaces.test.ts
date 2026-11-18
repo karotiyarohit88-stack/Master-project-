@@ -14,7 +14,7 @@ class WorkspaceDb {
   async query(sql: string, values: unknown[] = []) {
     this.queries.push({ sql: sql.replace(/\\s+/g, ' ').trim(), values });
     if (/SELECT id, owner_id, original_prompt, payload, status/.test(sql)) {
-      return { rows: this.task && values[0] === TENANT_A ? [this.task] : [] };
+      const moduleMatches = !sql.includes("payload->>'module' = 'publishing'") || this.task?.payload?.module === 'publishing';\n      return { rows: this.task && values[0] === TENANT_A && moduleMatches ? [this.task] : [] };
     }
     return { rows: [] };
   }
@@ -173,4 +173,16 @@ test('publishing approval is tenant-role protected', async () => withServer('mem
     body: JSON.stringify({ postId: TASK_ID })
   });
   assert.equal(response.status, 403);
+}));
+
+
+test('publishing queue excludes ordinary AAKSH work tasks', async () => withServer('member', async (url) => {
+  const create = await fetch(url + '/api/aaksh/work/tasks', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ platform: 'website', category: 'seo', title: 'Not a publishing draft', description: '' })
+  });
+  assert.equal(create.status, 201);
+  const queue = await fetch(url + '/api/publishing/queue');
+  assert.equal(queue.status, 200);
+  assert.deepEqual((await queue.json() as any).queue, []);
 }));
