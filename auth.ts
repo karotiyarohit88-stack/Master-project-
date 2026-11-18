@@ -228,6 +228,15 @@ const requireCsrf: RequestHandler = (req, res, next) => {
   next();
 };
 
+
+export function createCsrfMutationGuard(csrfGuard: RequestHandler): RequestHandler {
+  const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
+  return (req, res, next) => {
+    if (safeMethods.has(req.method.toUpperCase())) return next();
+    return csrfGuard(req, res, next);
+  };
+}
+
 export function createAuthGuards(options: AuthRouterOptions = {}) {
   const pool = options.pool === undefined
     ? (getPostgresPool() as unknown as AuthDbPool | null)
