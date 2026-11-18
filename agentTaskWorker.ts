@@ -66,6 +66,22 @@ export async function claimNextAgentTask(
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const exhausted = await client.query(
+      `UPDATE agent_tasks
+          SET status = 'failed', last_error = 'LEASE_EXPIRED_MAX_ATTEMPTS',
+              completed_at = NOW(), updated_at = NOW(), lease_owner = NULL, lease_expires_at = NULL
+        WHERE tenant_id IS NOT NULL AND status = 'running'
+          AND lease_expires_at <= NOW() AND attempts >= max_attempts
+        RETURNING id, tenant_id, owner_id, attempts`
+    );
+    for (const task of exhausted.rows) {
+      await client.query(
+        `INSERT INTO agent_task_events
+           (task_id, tenant_id, owner_id, event_type, stage, status, message, details)
+         VALUES ($1, $2, $3, 'lease_expired', 'worker', 'failed', $4, $5::jsonb)`,
+        [task.id, task.tenant_id, task.owner_id, 'Worker lease expired after the maximum attempt count.', JSON.stringify({ attempts: task.attempts })]
+      );
+    }
     const result = await client.query(
       `WITH candidate AS (
          SELECT id
@@ -159,6 +175,30 @@ export async function completeLeasedAgentTask(
   } finally {
     client.release();
   }
+}
+
+export async function renewAgentTaskLease(
+  input: { taskId: string; tenantId: string; workerId: string; leaseSeconds?: number },
+  options: { pool?: WorkerPool | null } = {}
+): Promise<boolean> {
+  const taskId = validateTaskId(input.taskId);
+  const tenantId = validateTenantId(input.tenantId);
+  const workerId = validateWorkerId(input.workerId);
+  const leaseSeconds = Math.min(Math.max(Math.floor(input.leaseSeconds ?? 120), 30), 900);
+  const pool = requirePool(options.pool);
+  const result = await pool.connect().then(async client => {
+    try {
+      return await client.query(
+        `UPDATE agent_tasks
+            SET lease_expires_at = NOW() + make_interval(secs => $4), updated_at = NOW()
+          WHERE id = $1 AND tenant_id = $2 AND lease_owner = $3
+            AND status = 'running' AND lease_expires_at > NOW()
+          RETURNING id`,
+        [taskId, tenantId, workerId, leaseSeconds]
+      );
+    } finally { client.release(); }
+  });
+  return Boolean(result.rows[0]);
 }
 
 export async function failLeasedAgentTask(
