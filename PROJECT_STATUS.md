@@ -326,3 +326,18 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 | Issue ID | Module | Finding | Status |
 | :--- | :--- | :--- | :--- |
 | MP-SEC-15 | Customer / Tenant Data Isolation | Shared in-memory operational state lacks per-customer persistence and query scoping. | Interim Owner-only containment remains; tenant identity/membership schema committed but unapplied; auth integration, operational data migration, scoped queries, and cross-tenant tests pending |
+
+
+## 19. Invitation-to-Tenant Schema Link (2026-11-18)
+
+**Added on the feature branch:** `migrations/20261118_002_invitation_tenant_scope.sql` adds a nullable `tenant_id` foreign key to `app_invitations`, backfills it only when the invitation creator has an active Owner/Admin membership in an active tenant, and adds a pending-invitation tenant index.
+
+**Fail-closed compatibility:** legacy invitations that cannot be mapped to an active tenant remain `NULL`. Tenant-aware acceptance code must reject those rows rather than guess a tenant. New invitation creation must derive the tenant from the authenticated inviter's active membership; a request-body tenant ID must never be trusted.
+
+**Not yet implemented:** `auth.ts` still creates invitations without `tenant_id`, and invitation acceptance creates the user without inserting an `app_tenant_memberships` row. Login/session loading also does not resolve a tenant membership. This migration is preparatory schema only and is NOT applied to a database.
+
+**Verification:** migration file committed as `77b8f26f149342432ba7ec75c268cd9a08e9b97d`; source refetch and CI for this commit are pending. No PostgreSQL execution, runtime test, or deployment is claimed.
+
+| Issue ID | Module | Finding | Status |
+| :--- | :--- | :--- | :--- |
+| MP-SEC-15 | Invitation / Tenant Membership | Invitations are not currently bound to a tenant, and acceptance does not create tenant membership. | Additive tenant_id migration committed; auth route integration, membership resolution, SQL execution and cross-tenant tests pending |
