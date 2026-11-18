@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import { createAuthGuards, createAuthRouter, createCsrfMutationGuard, hashPassword } from '../auth.ts';
+import { createAgentTaskRouter } from '../taskQueue.ts';
+import { createUnifiedWorkspaceRouter } from '../unifiedWorkspaces.ts';
 
 type Row = Record<string, any>;
 const PEPPER = 'unit-test-otp-pepper-value-at-least-32-characters';
@@ -15,6 +17,8 @@ class MemoryAuthDb {
   memberships: Row[] = [];
   challenges: Row[] = [];
   sentCodes: string[] = [];
+  tasks: Row[] = [];
+  taskEvents: Row[] = [];
 
   private run(sql: string, values: any[] = []): { rows: Row[] } {
     const q = sql.replace(/\s+/g, ' ').trim().toLowerCase();
@@ -57,6 +61,9 @@ class MemoryAuthDb {
         .map(x => ({ tenant_id: x.tenant!.id, membership_role: x.membership.membership_role }));
       return { rows: rows.slice(0, 2) };
     }
+    if (q.startsWith('select id, task_type, original_prompt, payload, status') && q.includes('from agent_tasks')) {
+      return { rows: this.tasks.filter(task => task.tenant_id === values[0]).slice(0, Number(values[1] || 50)) };
+    }
     if (q.startsWith('select t.id as tenant_id from app_tenant_memberships')) {
       const rows = this.memberships.filter(m => m.user_id === values[0] && m.status === 'active' && m.membership_role === 'owner')
         .map(m => this.tenants.find(t => t.id === m.tenant_id && t.status === 'active')).filter(Boolean)
@@ -77,6 +84,27 @@ class MemoryAuthDb {
         const q = sql.replace(/\s+/g, ' ').trim().toLowerCase();
         if (['begin', 'commit', 'rollback'].includes(q) || q.startsWith('lock table')) return { rows: [] };
         if (q.startsWith("select count(*)::text as count from app_users where role = 'owner'")) return { rows: [{ count: String(this.users.filter(x => x.role === 'owner').length) }] };
+        if (q.startsWith('insert into agent_tasks')) {
+          const task = {
+            id: '2c4c3d4e-5f60-4a71-8b92-123456789abc',
+            tenant_id: values[0], owner_id: values[1], idempotency_key: values[2],
+            task_type: 'integration', original_prompt: values[3], payload: JSON.parse(String(values[4])),
+            status: 'waiting_approval', requires_approval: true, approved_by: null, approved_at: null,
+            result: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), completed_at: null
+          };
+          this.tasks.push(task);
+          return { rows: [task] };
+        }
+        if (q.startsWith('update agent_tasks') && q.includes("set status = 'queued'")) {
+          const task = this.tasks.find(x => x.id === values[0] && x.tenant_id === values[1] && x.status === 'waiting_approval');
+          if (!task) return { rows: [] };
+          task.status = 'queued'; task.approved_by = values[2]; task.approved_at = new Date().toISOString();
+          return { rows: [{ id: task.id, owner_id: task.owner_id }] };
+        }
+        if (q.startsWith('insert into agent_task_events')) {
+          this.taskEvents.push({ task_id: values[0], tenant_id: values[1], owner_id: values[2], event_type: values[3], status: values[5] });
+          return { rows: [] };
+        }
         if (q.includes('from app_email_otp_challenges') && q.includes('for update')) {
           const c = this.challenges.find(x => x.challenge_token_hash === values[0]); return { rows: c ? [{ ...c }] : [] };
         }
@@ -127,10 +155,11 @@ class MemoryAuthDb {
   release() {}
 }
 
-async function withServer(run: (url: string, db: MemoryAuthDb) => Promise<void>) {
+async function withServer(run: (url: string, db: MemoryAuthDb) => Promise<void>, mount?: (app: any, db: MemoryAuthDb) => void) {
   const db = new MemoryAuthDb();
   const app = express(); app.use(express.json());
   app.use('/api/auth', createAuthRouter({ pool: db, adminToken: ADMIN_TOKEN, otpPepper: PEPPER, sendOtp: async (_email, code) => { db.sentCodes.push(code); } }));
+  if (mount) mount(app, db);
   const server = app.listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));
   const address = server.address(); if (!address || typeof address === 'string') throw new Error('No test TCP port');
@@ -325,4 +354,51 @@ test('API mutation CSRF guard rejects missing tokens and accepts the session-bou
   } finally {
     await new Promise<void>((resolve, reject) => protectedServer.close(error => error ? reject(error) : resolve()));
   }
+}));
+
+
+test('one Master login session accesses AAKSH work and Master approvals through the same tenant queue', async () => withServer(async (url, db) => {
+  const started = await bootstrap(url);
+  const bootstrapBody = await started.json() as Row;
+  assert.equal((await verify(url, bootstrapBody.challengeToken, latestCode(db))).status, 200);
+
+  const loginStart = await post(url, 'login', { email: 'owner@example.test', password: 'OwnerPassword!234' });
+  assert.equal(loginStart.status, 202);
+  const loginBody = await loginStart.json() as Row;
+  const loginVerified = await verify(url, loginBody.challengeToken, latestCode(db));
+  assert.equal(loginVerified.status, 200);
+  const setCookie = loginVerified.headers.get('set-cookie') || '';
+  const verifiedBody = await loginVerified.json() as Row;
+  const cookies = `aaksh_session=${cookie(setCookie, 'aaksh_session')}; aaksh_csrf=${cookie(setCookie, 'aaksh_csrf')}`;
+
+  const create = await fetch(url + '/api/aaksh/work/tasks', {
+    method: 'POST',
+    headers: { cookie: cookies, origin: url, 'x-csrf-token': verifiedBody.csrfToken, 'content-type': 'application/json' },
+    body: JSON.stringify({ platform: 'website', category: 'seo', title: 'Shared auth E2E', description: 'Created through AAKSH adapter.' })
+  });
+  assert.equal(create.status, 201);
+  const created = await create.json() as Row;
+  const taskId = created.task.id;
+  assert.equal(created.task.status, 'waiting_approval');
+  assert.equal(db.tasks.length, 1);
+  assert.equal(db.tasks[0].tenant_id, db.tenants[0].id);
+
+  const approval = await fetch(url + '/api/tasks/' + taskId + '/approve', {
+    method: 'POST',
+    headers: { cookie: cookies, origin: url, 'x-csrf-token': verifiedBody.csrfToken }
+  });
+  assert.equal(approval.status, 200);
+  const approved = await approval.json() as Row;
+  assert.equal(approved.status, 'queued');
+  assert.equal(approved.executionStarted, false);
+  assert.equal(db.tasks[0].status, 'queued');
+  assert.ok(db.taskEvents.some(event => event.event_type === 'created'));
+  assert.ok(db.taskEvents.some(event => event.event_type === 'approved'));
+}, (app, db) => {
+  const guards = createAuthGuards({ pool: db as any });
+  app.use('/api', guards.requireSession, createCsrfMutationGuard(guards.requireCsrf));
+  app.use('/api/tasks', guards.requireTenantMembership, createAgentTaskRouter({ pool: db as any }));
+  const routers = createUnifiedWorkspaceRouter({ pool: db as any });
+  app.use('/api/aaksh', guards.requireTenantMembership, routers.aaksh);
+  app.use('/api/publishing', guards.requireTenantMembership, routers.publishing);
 }));
