@@ -112,8 +112,9 @@ export const SecretManagerPanel: React.FC = () => {
         </label>
         <label className="text-xs font-semibold text-slate-700">Provider
           <select value={provider} onChange={event => setProvider(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 bg-white p-3 text-sm font-normal outline-none focus:border-emerald-500">
-            <option>OpenAI</option><option>Google Gemini</option><option>GitHub</option><option>ElevenLabs</option><option>Runway</option><option>Custom</option>
+            <option>OpenAI</option><option>Google Gemini</option><option>GitHub</option><option>ElevenLabs</option><option>Runway</option><option>Publishing</option><option>Custom</option>
           </select>
+          <span className="block mt-1 text-[10px] font-normal text-slate-500">Publishing setup: save the provider token with Provider “Publishing”; save the HTTPS webhook URL with Secret name “publishing_webhook” and Provider “Custom”.</span>
         </label>
         <label className="sm:col-span-2 text-xs font-semibold text-slate-700">API key / secret value
           <input required type="password" autoComplete="new-password" maxLength={8192} value={secret} onChange={event => setSecret(event.target.value)} placeholder="Paste the secret value here" className="mt-1 w-full rounded-xl border border-slate-300 bg-white p-3 text-sm font-normal outline-none focus:border-emerald-500" />
