@@ -14,7 +14,7 @@ type QueueTask = {
   canCancel: boolean;
 };
 
-type QueueEvent = { id: number; event_type: string; message: string; created_at: string };
+type QueueEvent = { id: number; event_type: string; message: string; created_at: string };\ntype QueueResult = { file: string; content: string; truncated: boolean; sourceBytes: number };
 
 const TASK_TYPES = [
   { value: 'read_only', label: 'Read project status (read-only)' },
@@ -30,7 +30,7 @@ export const DurableTaskQueuePanel: React.FC<{ refreshToken?: number }> = ({ ref
   const [tenantRole, setTenantRole] = useState<string>('');
   const [taskType, setTaskType] = useState('user_request');
   const [prompt, setPrompt] = useState('');
-  const [events, setEvents] = useState<Record<string, QueueEvent[]>>({});
+  const [events, setEvents] = useState<Record<string, QueueEvent[]>>({});\n  const [results, setResults] = useState<Record<string, QueueResult>>({});
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [workingTask, setWorkingTask] = useState<string | null>(null);
@@ -108,6 +108,22 @@ export const DurableTaskQueuePanel: React.FC<{ refreshToken?: number }> = ({ ref
       setEvents(current => ({ ...current, [taskId]: Array.isArray(data.events) ? data.events : [] }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Task activity is unavailable.');
+    }
+  };
+
+  const toggleResult = async (taskId: string) => {
+    if (results[taskId]) {
+      setResults(current => { const next = { ...current }; delete next[taskId]; return next; });
+      return;
+    }
+    try {
+      const response = await fetch(`/api/tasks/${taskId}/result`, { credentials: 'same-origin' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Task result is unavailable.');
+      if (!data.result || typeof data.result.content !== 'string') throw new Error('Task result format is invalid.');
+      setResults(current => ({ ...current, [taskId]: data.result as QueueResult }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Task result is unavailable.');
     }
   };
 
@@ -193,6 +209,12 @@ export const DurableTaskQueuePanel: React.FC<{ refreshToken?: number }> = ({ ref
                   className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[10px] font-semibold text-slate-700 flex items-center gap-1">
                   <Clock3 className="w-3 h-3" /> Activity
                 </button>
+                {task.task_type === 'read_only' && task.status === 'completed' && (
+                  <button type="button" onClick={() => void toggleResult(task.id)}
+                    className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[10px] font-semibold text-emerald-800">
+                    {results[task.id] ? 'Hide result' : 'View result'}
+                  </button>
+                )}
               </div>
             </div>
             {events[task.id] && (
@@ -203,6 +225,12 @@ export const DurableTaskQueuePanel: React.FC<{ refreshToken?: number }> = ({ ref
                     <span className="min-w-0 break-words">{event.message} <span className="text-slate-400">· {new Date(event.created_at).toLocaleString()}</span></span>
                   </div>
                 ))}
+              </div>
+            )}
+            {results[task.id] && (
+              <div className="border-t border-slate-100 pt-2 space-y-2">
+                <p className="text-[10px] font-semibold text-emerald-800">{results[task.id].file} · {results[task.id].sourceBytes} bytes{results[task.id].truncated ? ' · preview truncated' : ''}</p>
+                <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-50 p-3 text-[10px] leading-relaxed text-slate-700">{results[task.id].content}</pre>
               </div>
             )}
           </article>
