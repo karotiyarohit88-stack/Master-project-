@@ -79,7 +79,6 @@ export const WorkerAgentsCenter: React.FC = () => {
           </div>
         </div>
 
-}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 min-w-0">
@@ -126,7 +125,7 @@ export const WorkerAgentsCenter: React.FC = () => {
           </div>
         </div>
 
-        {/* Right: Agent Profile & Mission Delegation (7 cols) */}
+        {/* Right: Agent Profile (7 cols) */}
         <div className="lg:col-span-7 space-y-4 min-w-0">
           {selectedAgent ? (
             <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-2xs space-y-4 min-w-0">
