@@ -27,6 +27,11 @@ type AuthSession = AuthUser & {
   expires_at: string;
 };
 
+export type TenantContext = {
+  tenantId: string;
+  role: 'owner' | 'admin' | 'member';
+};
+
 type QueryResult = { rows: any[] };
 type AuthDbClient = {
   query: (sql: string, values?: any[]) => Promise<QueryResult>;
@@ -257,6 +262,48 @@ export function createAuthGuards(options: AuthRouterOptions = {}) {
         next();
       };
     },
+    requireTenantMembership: (async (_req: Request, res: Response, next: (error?: unknown) => void) => {
+      const session = res.locals.authSession as AuthSession | undefined;
+      if (!session) {
+        res.status(401).json({ error: 'Authentication required.' });
+        return;
+      }
+      if (!pool) {
+        res.status(503).json({ error: 'Tenant authorization database is unavailable.' });
+        return;
+      }
+      try {
+        const result = await pool.query(
+          `SELECT t.id AS tenant_id, m.membership_role
+             FROM app_tenant_memberships m
+             JOIN app_tenants t ON t.id = m.tenant_id
+            WHERE m.user_id = $1 AND m.status = 'active' AND t.status = 'active'
+            ORDER BY m.created_at ASC
+            LIMIT 2`,
+          [session.id]
+        );
+        if (result.rows.length !== 1) {
+          res.status(result.rows.length > 1 ? 409 : 403).json({
+            error: result.rows.length > 1
+              ? 'Account has multiple active workspaces; tenant selection is required.'
+              : 'An active tenant workspace membership is required.'
+          });
+          return;
+        }
+        const membership = result.rows[0];
+        if (!['owner', 'admin', 'member'].includes(membership.membership_role)) {
+          res.status(403).json({ error: 'Tenant membership role is invalid.' });
+          return;
+        }
+        res.locals.tenantContext = {
+          tenantId: String(membership.tenant_id),
+          role: membership.membership_role
+        } satisfies TenantContext;
+        next();
+      } catch {
+        res.status(503).json({ error: 'Tenant authorization could not be verified.' });
+      }
+    }) as RequestHandler,
     requireCsrf
   };
 }
