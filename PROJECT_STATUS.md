@@ -467,3 +467,26 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 | MP-WF-07 | Worker Delegation / Orchestration | Durable task API and atomic worker lease lifecycle primitives exist; no background worker process or actual task handler executes work yet. | Source + tests committed; CI run 44256657348 passed; worker process/handlers/runtime pending |
 | MP-WF-08 | Workflow History / Notifications | Task/event persistence API and worker lifecycle event writes exist; dashboard UI and real-time progress notifications are not connected. | Backend foundation committed; UI/worker process integration pending |
 | MP-SEC-15 | Agent Task Queue / Tenant Isolation | Task API and worker claim/complete/fail transitions use tenant predicates and reject NULL tenant IDs. | Source + tests committed; CI run 44256657348 passed; migrations unapplied and database-backed cross-tenant runtime tests pending |
+
+
+## 26. Durable Task Queue Dashboard Integration (2026-11-18)
+
+**Implemented on the PR feature branch:**
+- Added `src/components/DurableTaskQueuePanel.tsx` and mounted it inside the existing Worker Agents page; no duplicate navigation item or separate task dashboard was created.
+- The panel creates durable tasks through `POST /api/tasks`, lists tenant-scoped task history, displays status/attempt count, loads persisted event history, and exposes approval/cancellation controls according to server-returned tenant permissions.
+- The API's task-history response now returns the resolved tenant role and a per-task `canCancel` boolean. The SQL query filters by tenant and selects only fields needed by the dashboard; it does not return task payload or result JSON in the list.
+- Approval UI is shown only for tenant Owner/Admin. Cancellation UI is shown only when the server says the user may cancel; the backend still independently enforces the authorization predicate.
+- Updated `WorkerAgentsCenter.tsx` to label the existing in-memory agent entries as profiles/configuration rather than live worker execution. The old UI no longer reports that a mission was delegated and an agent started executing.
+- The page explicitly tells users that saving/approving a task does not mean a worker has started.
+
+**Files changed:** `src/components/DurableTaskQueuePanel.tsx`, `src/components/WorkerAgentsCenter.tsx`, `taskQueue.ts`, `tests/taskQueue.test.ts`.
+
+**Verification:** GitHub Actions run `44257099370` for commit `60456bda2aae3dc6238e75e6d8fa6e6903164c66` completed successfully: locked dependency installation, TypeScript check, all tests, and production build passed. The dashboard files and API response were refetched from the feature branch.
+
+**Limitations:** The task panel cannot operate until the PostgreSQL tenant/task migrations are applied and a tenant membership can be resolved; it fails closed and does not use fake local task records. The background worker process and approved task handlers are not running. No browser end-to-end test, PostgreSQL runtime test, migration application, or deployment was performed.
+
+| Issue ID | Module | Finding | Status |
+|---|---|---|---|
+| MP-WF-07 | Worker Delegation / Orchestration | Task intake, approval and worker lease primitives exist; no deployed background worker or AI/tool handler is active. | Backend + dashboard intake committed; CI run 44257099370 passed; worker runtime pending |
+| MP-WF-08 | Workflow History / Notifications | Durable task history and event activity are displayed in the existing Worker Agents page; no live push notifications or running worker progress stream exists. | Dashboard integration + CI passed; browser E2E and live worker events pending |
+| MP-SEC-15 | Agent Task Queue / Tenant Isolation | Task API and dashboard use session-derived tenant scope; worker primitives require matching tenant/lease. | Source + tests + CI passed; migrations unapplied and database-backed cross-tenant tests pending |
