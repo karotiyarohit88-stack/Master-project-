@@ -48,6 +48,30 @@ function publicPublishingTask(row: Record<string, any>) {
   };
 }
 
+function publicAakshTask(row: Record<string, any>) {
+  const task = publicPublishingTask(row);
+  const statusMap: Record<string, string> = {
+    waiting_approval: 'awaiting_approval',
+    queued: 'ready',
+    running: 'in_progress',
+    rejected: 'cancelled'
+  };
+  return {
+    id: task.id,
+    platform: task.platform,
+    category: task.category,
+    title: task.title,
+    description: task.description,
+    status: statusMap[row.status] || row.status,
+    approvalRequired: task.approvalRequired,
+    approvalStatus: task.approvalStatus,
+    result: task.result,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+    audit: []
+  };
+}
+
 function validText(value: unknown, max: number): value is string {
   return typeof value === 'string' && value.trim().length > 0 && value.trim().length <= max;
 }
@@ -115,7 +139,7 @@ export function createUnifiedWorkspaceRouter(options: {
         );
         if (!existing.rows[0]) throw new Error('Idempotency replay could not be resolved.');
         await client.query('COMMIT');
-        return res.status(200).json({ success: true, task: publicPublishingTask(existing.rows[0]), idempotentReplay: true });
+        return res.status(200).json({ success: true, task: input.source === 'aaksh' && input.module === 'workspace' ? publicAakshTask(existing.rows[0]) : publicPublishingTask(existing.rows[0]), idempotentReplay: true });
       }
       const task = inserted.rows[0];
       await client.query(
@@ -125,7 +149,7 @@ export function createUnifiedWorkspaceRouter(options: {
         [task.id, ctx.tenant.tenantId, ctx.session.id, 'AAKSH workspace work item is waiting for approval in the shared Master Project queue.', JSON.stringify({ source: input.source, module: input.module, action: input.action })]
       );
       await client.query('COMMIT');
-      return res.status(201).json({ success: true, task: publicPublishingTask(task), idempotentReplay: false });
+      return res.status(201).json({ success: true, task: input.source === 'aaksh' && input.module === 'workspace' ? publicAakshTask(task) : publicPublishingTask(task), idempotentReplay: false });
     } catch (cause) {
       try { await client.query('ROLLBACK'); } catch { /* preserve original error */ }
       const code = (cause as { code?: string })?.code;
@@ -151,7 +175,7 @@ export function createUnifiedWorkspaceRouter(options: {
           ORDER BY created_at DESC LIMIT $2`,
         [ctx.tenant.tenantId, limit]
       );
-      return res.json({ success: true, tasks: result.rows.map(publicPublishingTask), tenantRole: ctx.tenant.role });
+      return res.json({ success: true, tasks: result.rows.map(publicAakshTask), tenantRole: ctx.tenant.role });
     } catch {
       return error(res, 503, 'AAKSH work history is temporarily unavailable.');
     }
