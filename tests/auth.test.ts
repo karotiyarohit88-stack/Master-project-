@@ -50,6 +50,13 @@ class MemoryAuthDb {
     if (q.startsWith('update app_sessions set revoked_at')) {
       const s = this.sessions.find(x => x.id === values[0]); if (s) s.revoked_at = new Date().toISOString(); return { rows: [] };
     }
+    if (q.startsWith('select t.id as tenant_id, m.membership_role from app_tenant_memberships')) {
+      const rows = this.memberships.filter(m => m.user_id === values[0] && m.status === 'active')
+        .map(m => ({ membership: m, tenant: this.tenants.find(t => t.id === m.tenant_id && t.status === 'active') }))
+        .filter(x => x.tenant)
+        .map(x => ({ tenant_id: x.tenant!.id, membership_role: x.membership.membership_role }));
+      return { rows: rows.slice(0, 2) };
+    }
     if (q.startsWith('select t.id as tenant_id from app_tenant_memberships')) {
       const rows = this.memberships.filter(m => m.user_id === values[0] && m.status === 'active' && m.membership_role === 'owner')
         .map(m => this.tenants.find(t => t.id === m.tenant_id && t.status === 'active')).filter(Boolean)
@@ -244,6 +251,38 @@ test('session guards reject anonymous requests and permit verified Owner', async
     const allowed=await fetch(g+'/protected',{headers:{cookie:`aaksh_session=${cookie(set,'aaksh_session')}`}}); assert.equal(allowed.status,200);
   } finally { await new Promise<void>((resolve,reject)=>server.close(e=>e?reject(e):resolve())); }
 }));
+
+test('tenant membership guard resolves exactly one active workspace from the authenticated session', async () => withServer(async (url, db) => {
+  const start = await bootstrap(url);
+  const body = await start.json() as Row;
+  const verified = await verify(url, body.challengeToken, latestCode(db));
+  assert.equal(verified.status, 200);
+  const setCookie = verified.headers.get('set-cookie') || '';
+  const guards = createAuthGuards({ pool: db });
+  const app = express();
+  app.use(express.json());
+  app.get('/tenant-protected', guards.requireSession, guards.requireTenantMembership, (_req, res) => {
+    res.json({ tenant: res.locals.tenantContext });
+  });
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('No tenant guard port');
+  const target = `http://127.0.0.1:${address.port}/tenant-protected`;
+  try {
+    const cookies = `aaksh_session=${cookie(setCookie, 'aaksh_session')}`;
+    const allowed = await fetch(target, { headers: { cookie: cookies } });
+    assert.equal(allowed.status, 200);
+    const result = await allowed.json() as Row;
+    assert.equal(result.tenant.tenantId, db.tenants[0].id);
+    assert.equal(result.tenant.role, 'owner');
+    db.memberships[0].status = 'suspended';
+    assert.equal((await fetch(target, { headers: { cookie: cookies } })).status, 403);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+}));
+
 test('password hashes verify and malformed hashes fail closed', async () => {
   const hash=await hashPassword('TestPassword!234');
   const { verifyPassword }=await import('../auth.ts');
