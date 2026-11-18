@@ -11,7 +11,6 @@ import {
   Zap
 } from 'lucide-react';
 import { WorkerAgent } from '../types';
-import { DurableTaskQueuePanel } from './DurableTaskQueuePanel';
 
 export const WorkerAgentsCenter: React.FC = () => {
   const [agents, setAgents] = useState<WorkerAgent[]>([]);
@@ -175,7 +174,6 @@ export const WorkerAgentsCenter: React.FC = () => {
           )}
         </div>
       </div>
-      <DurableTaskQueuePanel />
     </div>
   );
 };
