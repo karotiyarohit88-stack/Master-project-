@@ -63,23 +63,24 @@ export async function hashPassword(password: string): Promise<string> {
 
 export async function verifyPassword(password: string, encodedHash: string): Promise<boolean> {
   const parts = encodedHash.split('$');
-  let saltHex = '';
+  let salt: Buffer;
   let digestHex = '';
   if (parts.length === 6 && parts[0] === 'scrypt' && parts[1] === '16384' &&
-      parts[2] === '8' && parts[3] === '1') {
-    saltHex = parts[4];
+      parts[2] === '8' && parts[3] === '1' && /^[a-f0-9]{32,64}$/i.test(parts[4])) {
+    salt = Buffer.from(parts[4], 'hex');
     digestHex = parts[5];
-  } else if (parts.length === 3 && parts[0] === 'scrypt') {
-    // AAKSH legacy userStore used Node scrypt defaults (N=16384, r=8, p=1).
-    saltHex = parts[1];
+  } else if (parts.length === 3 && parts[0] === 'scrypt' && /^[a-f0-9]{32}$/i.test(parts[1])) {
+    // AAKSH legacy userStore passed its 32-character hex salt as UTF-8 text to scryptSync.
+    // Preserve those exact bytes; decoding the salt as hex would break existing passwords.
+    salt = Buffer.from(parts[1], 'utf8');
     digestHex = parts[2];
   } else {
     return false;
   }
-  if (!/^[a-f0-9]{32}$/i.test(saltHex) || !/^[a-f0-9]{128}$/i.test(digestHex)) return false;
+  if (!/^[a-f0-9]{128}$/i.test(digestHex)) return false;
   try {
     const expected = Buffer.from(digestHex, 'hex');
-    const actual = await deriveKey(password, Buffer.from(saltHex, 'hex'));
+    const actual = await deriveKey(password, salt);
     return actual.length === expected.length && timingSafeEqual(actual, expected);
   } catch {
     return false;
