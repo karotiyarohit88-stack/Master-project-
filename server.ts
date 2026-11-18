@@ -19,7 +19,7 @@ import createSecurityMiddleware, { createRateLimitMiddleware } from './server/co
 import { createRuntimeSecretsMiddleware, getRuntimeSecret } from './server/runtime-secrets-context.ts';
 import { createAutoPilotSafetyGuard } from './src/utils/autoPilotSafetyGuard.ts';
 import { buildAutomatedContentPackage } from './src/utils/automatedContentPipeline.ts';
-import { canAutoPostDailyContent, buildMultiPlatformAnalytics, buildVerifiedEarningsSummary, evaluatePayoutGuard, type VerifiedEarningEntry } from './src/utils/phase9Accounting.ts';
+import { buildMultiPlatformAnalytics, buildVerifiedEarningsSummary, evaluatePayoutGuard, type VerifiedEarningEntry } from './src/utils/phase9Accounting.ts';
 
 const execAsync = promisify(exec);
 
@@ -3773,178 +3773,31 @@ app.post('/api/publishing/auto-post-policy', authGuards.requireCsrf, (req: Reque
 });
 
 // GET /api/publishing/queue: Get publishing drafts
-app.get('/api/publishing/queue', (req: Request, res: Response) => {
-  res.json({ queue: publishingQueue });
+app.get('/api/publishing/queue', (_req: Request, res: Response) => {
+  return res.status(410).json({ error: 'Legacy in-memory publishing queue is disabled. Use the shared PostgreSQL publishing queue.' });
 });
 
-// Attach an asset only when it matches a completed non-prototype backend video job.
-app.post('/api/publishing/attach-verified-asset', authGuards.requireCsrf, async (req: Request, res: Response) => {
-  const { postId, videoJobId } = req.body || {};
-  const post = publishingQueue.find(item => item.id === postId);
-  const job = videoJobs.find(item => item.id === videoJobId);
-  if (!post || !job) return res.status(404).json({ error: 'Publishing post or video job not found.' });
-  if (!(post.videoJobId === job.id || (post.dailyContent === true && post.videoJobId?.startsWith('content_'))) || job.status !== 'completed' || job.providerName === 'Prototype Adapter' || !job.videoUrl) {
-    post.videoAssetVerified = false;
-    return res.status(409).json({ error: 'Video asset is not verified by a completed live provider job.' });
-  }
-  let parsed: URL;
-  try { parsed = new URL(job.videoUrl); } catch { return res.status(400).json({ error: 'Video URL is invalid.' }); }
-  if (parsed.protocol !== 'https:' || ['storage.googleapis.com', 'example.com', 'localhost'].includes(parsed.hostname)) return res.status(409).json({ error: 'Prototype or non-HTTPS video assets cannot be verified.' });
-  post.videoUrl = job.videoUrl;
-  post.videoJobId = job.id;
-  post.videoAssetVerified = true;
-  // A verified media asset never grants publication permission. Every external
-  // publication must be approved in the shared PostgreSQL task queue first.
-  recordAudit({ category: 'publishing', action: 'Daily Video Asset Verified - Approval Required', status: 'info', details: 'Verified video asset attached to ' + post.id + '; automatic dispatch is disabled and explicit human approval is still required.' });
-  return res.json({ success: true, post, autoPostEligible: false, publishedAutomatically: false, requiresHumanApproval: true });
+// // Attach an asset only when it matches a completed non-prototype backend video job.
+app.post('/api/publishing/attach-verified-asset', (_req: Request, res: Response) => {
+  return res.status(409).json({ error: 'Video assets must first be stored as tenant-scoped verified artifacts. Legacy global video-job attachment is disabled.' });
 });
 
-// POST /api/publishing/prepare: Prepare captions and hashtags
-app.post('/api/publishing/prepare', async (req: Request, res: Response) => {
-  const { topic, platform = 'youtube' } = req.body;
-
-  if (!topic) {
-    return res.status(400).json({ error: 'Topic is required.' });
-  }
-
-  const client = getGenAI();
-  let caption = `🚀 ${topic}\n\nDiscover how intelligent systems orchestrate tasks with verified execution.`;
-  let hashtags = ['#AI', '#TechTrends', '#SoftwareEngineering', '#Automation'];
-
-  if (client) {
-    try {
-      const resp = await client.models.generateContent({
-        model: serverStore.gemini.model || 'gemini-3.8-flash',
-        contents: `Create an engaging social media post caption and 5 relevant hashtags for the platform: ${platform}. Topic: "${topic}". Return caption and hashtags cleanly.`,
-        config: { temperature: 0.7 }
-      });
-      const text = resp.text || '';
-      caption = text.slice(0, 300);
-    } catch (e) {
-      console.warn('Caption generation fallback');
-    }
-  }
-
-  const newPost: PublishingPost = {
-    id: 'pub_' + Date.now(),
-    topic,
-    platform,
-    caption,
-    hashtags,
-    status: 'draft',
-    createdAt: new Date().toISOString()
-  };
-
-  publishingQueue.unshift(newPost);
-  res.json({ success: true, post: newPost });
+// // POST /api/publishing/prepare: Prepare captions and hashtags
+app.post('/api/publishing/prepare', (_req: Request, res: Response) => {
+  return res.status(410).json({ error: 'Legacy in-memory draft creation is disabled. Use the shared PostgreSQL publishing queue.' });
 });
 
-// POST /api/publishing/approve: Explicit Human Operator Approval Gate
-app.post('/api/publishing/approve', (req: Request, res: Response) => {
-  const { postId } = req.body;
-  const post = publishingQueue.find(p => p.id === postId);
-
-  if (!post) {
-    return res.status(404).json({ error: 'Publishing draft not found.' });
-  }
-
-  const approvalHash = 'pub_appr_' + crypto.randomBytes(6).toString('hex');
-  post.status = 'approved';
-  post.approvedAt = new Date().toISOString();
-  post.auditReport = `Approved by human operator with token [${approvalHash}]. Verified asset integrity and caption safety.`;
-
-  recordAudit({
-    category: 'approval',
-    action: `Human Operator Approved Social Publication [${postId}]`,
-    status: 'success',
-    details: `Publication approved for platform [${post.platform}]. Topic: "${post.topic}".`,
-    executionHash: approvalHash
-  });
-
-  res.json({ success: true, post, approvalHash });
+// // POST /api/publishing/approve: Explicit Human Operator Approval Gate
+app.post('/api/publishing/approve', (_req: Request, res: Response) => {
+  return res.status(410).json({ error: 'Legacy in-memory approvals are disabled. Use the shared tenant approval queue.' });
 });
 
-// POST /api/publishing/publish: Publish via platform adapter
-app.post('/api/publishing/publish', async (req: Request, res: Response) => {
-  const { postId } = req.body;
-  const post = publishingQueue.find(p => p.id === postId);
-
-  if (!post) {
-    return res.status(404).json({ error: 'Post draft not found.' });
-  }
-  if (post.status === 'published') return res.status(409).json({ error: 'Post is already marked as published.' });
-  const autoPostEligible = canAutoPostDailyContent({ enabled: serverStore.autopilot.autoPostDailyContentEnabled, safetyEnabled: serverStore.autopilot.safetyEnabled, isDailyContent: post.dailyContent === true, videoUrl: post.videoUrl, videoAssetVerified: post.videoAssetVerified });
-
-  // Prompt-only content pipeline drafts are never publishable without a real rendered asset.
-  if (post.videoJobId?.startsWith('content_') && !post.videoUrl) {
-    return res.status(409).json({
-      error: 'This content package contains prompts only. Complete the separately approved media-generation step and attach a verified video asset before publishing.',
-      needsMediaAsset: true
-    });
-  }
-
-  // Only eligible daily content with a verified asset may bypass per-post approval.
-  if (!autoPostEligible && post.status !== 'approved') {
-    return res.status(403).json({
-      error: 'Safety Gate Enforced: Post must be explicitly approved by human operator before publishing.'
-    });
-  }
-
-  // Check if live platform credentials exist
-  const hasLiveCredentials = Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey) || getOwnerSecret('publishing_webhook', serverStore.publishing.webhookEndpoint));
-
-  if (!hasLiveCredentials) {
-    recordAudit({
-      category: 'publishing',
-      action: `Social Publish Blocked (No Real Credentials) [${postId}]`,
-      status: 'blocked',
-      details: `Attempted to publish to ${post.platform}, but no authorized social media integration is configured in Connections.`
-    });
-
-    return res.status(400).json({
-      error: `Cannot publish to ${post.platform}: Real social platform integration is not configured. Please add an authorized API key or webhook endpoint in Connections before publishing.`,
-      needsConfiguration: true,
-      setupLocation: 'Connections > Social Publishing Provider'
-    });
-  }
-
-  // Auto-post requires an explicit provider confirmation; never infer a successful publication.
-  if (autoPostEligible) {
-    if (!getOwnerSecret('publishing_webhook', serverStore.publishing.webhookEndpoint)) return res.status(503).json({ error: 'Daily auto-post is blocked until a live publishing webhook is configured.' });
-    try {
-      const providerResponse = await fetch(getOwnerSecret('publishing_webhook', serverStore.publishing.webhookEndpoint), { method: 'POST', headers: { 'Content-Type': 'application/json', ...(getOwnerSecret('publishing', serverStore.publishing.apiKey) ? { Authorization: 'Bearer ' + getOwnerSecret('publishing', serverStore.publishing.apiKey) } : {}) }, body: JSON.stringify({ event: 'aaksh.daily_content.publish', post: { id: post.id, platform: post.platform, topic: post.topic, caption: post.caption, videoUrl: post.videoUrl } }), signal: AbortSignal.timeout(10000) });
-      const providerData: any = await providerResponse.json().catch(() => ({}));
-      if (!providerResponse.ok || providerData?.success !== true || typeof providerData?.externalPostId !== 'string' || !providerData.externalPostId.trim()) {
-        recordAudit({ category: 'publishing', action: 'Daily Auto-Post Provider Confirmation Missing', status: 'blocked', details: 'Provider did not return explicit publication confirmation for ' + post.id + '.' });
-        return res.status(502).json({ error: 'Publishing provider did not confirm publication. Draft remains unpublished.' });
-      }
-      post.externalPostId = providerData.externalPostId;
-    } catch {
-      recordAudit({ category: 'publishing', action: 'Daily Auto-Post Dispatch Failed', status: 'blocked', details: 'Publishing webhook failed or timed out for ' + post.id + '.' });
-      return res.status(502).json({ error: 'Publishing provider is unavailable. Draft remains unpublished.' });
-    }
-  } else {
-    post.externalPostId = 'manual_post_' + crypto.randomBytes(6).toString('hex');
-    post.publicationConfirmed = false;
-  }
-  post.status = 'published';
-  post.publishedAt = new Date().toISOString();
-
-  recordAudit({
-    category: 'publishing',
-    action: `Live Social Publication Dispatched [${postId}]`,
-    status: 'success',
-    details: `Dispatched to platform ${post.platform} via configured publisher credentials${autoPostEligible ? ' with provider confirmation' : ''}.`
-  });
-
-  res.json({
-    success: true,
-    post,
-    mode: autoPostEligible ? 'daily_auto_post_provider_confirmed' : 'manual_approval_path',
-    message: autoPostEligible ? `Provider confirmed daily publication to ${post.platform}.` : `Publication processed for ${post.platform}.`
-  });
+// // POST /api/publishing/publish: Publish via platform adapter
+app.post('/api/publishing/publish', (_req: Request, res: Response) => {
+  return res.status(410).json({ error: 'Legacy in-memory publishing is disabled. Use the shared PostgreSQL approval and provider-confirmation workflow.' });
 });
 
+// -----------------------------------------------------------------------------
 // -----------------------------------------------------------------------------
 // GOOGLE SHEETS SYNC
 // -----------------------------------------------------------------------------
