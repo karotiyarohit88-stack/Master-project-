@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   getRegisteredAgentTaskTypes,
+  isAgentWorkerStopping,
+  requestAgentWorkerStop,
   runAgentTaskWorker
 } from '../agentTaskWorkerRuntime.ts';
 
@@ -32,4 +34,10 @@ test('enabled worker refuses startup when no reviewed task handlers are register
     if (previous === undefined) delete process.env.MASTER_PROJECT_WORKER_ENABLED;
     else process.env.MASTER_PROJECT_WORKER_ENABLED = previous;
   }
+});
+
+
+test('shutdown request is retained as a worker stop signal', () => {
+  requestAgentWorkerStop();
+  assert.equal(isAgentWorkerStopping(), true);
 });
