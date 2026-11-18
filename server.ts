@@ -102,6 +102,26 @@ app.use('/api', (req, res, next) => {
   return requireOwner(req, res, next);
 });
 
+// Shared in-memory operational records are not yet tenant-scoped. Until each
+// record is persisted with an owner_id and every read/write is owner-filtered,
+// fail closed for non-Owner accounts on these shared-state APIs. This is a
+// containment boundary, not a substitute for full per-tenant data isolation.
+const sharedOperationalStateRoutes = [
+  /^\\/analytics(?:\\/.*)?$/,
+  /^\\/accounting(?:\\/.*)?$/,
+  /^\\/project\\/(?:proposals|apply-proposal|reject-proposal)$/,
+  /^\\/worker-agents(?:\\/.*)?$/,
+  /^\\/video\\/jobs$/,
+  /^\\/autopilot\\/(?!webhook\\/)[^/]+(?:\\/.*)?$/,
+  /^\\/publishing(?:\\/.*)?$/,
+  /^\\/audit(?:\\/.*)?$/,
+  /^\\/audit-logs$/
+];
+app.use('/api', (req, res, next) => {
+  if (!sharedOperationalStateRoutes.some((pattern) => pattern.test(req.path))) return next();
+  return requireOwner(req, res, next);
+});
+
 // AutoPilot mutations stay locked until the authenticated Owner explicitly
 // enables Safety & Security. Read-only status and configuration remain available.
 app.use('/api', createAutoPilotSafetyGuard(() => serverStore.autopilot.safetyEnabled));
