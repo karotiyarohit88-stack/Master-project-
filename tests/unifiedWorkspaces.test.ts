@@ -14,7 +14,8 @@ class WorkspaceDb {
   async query(sql: string, values: unknown[] = []) {
     this.queries.push({ sql: sql.replace(/\\s+/g, ' ').trim(), values });
     if (/SELECT id, owner_id, original_prompt, payload, status/.test(sql)) {
-      const moduleMatches = !sql.includes("payload->>'module' = 'publishing'") || this.task?.payload?.module === 'publishing';\n      return { rows: this.task && values[0] === TENANT_A && moduleMatches ? [this.task] : [] };
+      const moduleMatches = !sql.includes("payload->>'module' = 'publishing'") || this.task?.payload?.module === 'publishing';
+      return { rows: this.task && values[0] === TENANT_A && moduleMatches ? [this.task] : [] };
     }
     return { rows: [] };
   }
