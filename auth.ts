@@ -66,7 +66,7 @@ export async function verifyPassword(password: string, encodedHash: string): Pro
   let salt: Buffer;
   let digestHex = '';
   if (parts.length === 6 && parts[0] === 'scrypt' && parts[1] === '16384' &&
-      parts[2] === '8' && parts[3] === '1' && /^[a-f0-9]{32,64}$/i.test(parts[4])) {
+      parts[2] === '8' && parts[3] === '1' && /^(?:[a-f0-9]{32}|[a-f0-9]{64})$/i.test(parts[4])) {
     salt = Buffer.from(parts[4], 'hex');
     digestHex = parts[5];
   } else if (parts.length === 3 && parts[0] === 'scrypt' && /^[a-f0-9]{32}$/i.test(parts[1])) {
