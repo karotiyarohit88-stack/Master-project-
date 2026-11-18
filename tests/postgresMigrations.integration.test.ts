@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -39,12 +40,12 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
     const userA = await client.query(
       `INSERT INTO app_users (email, password_hash, display_name, role, status, email_verified_at)
        VALUES ($1, $2, 'Tenant A Owner', 'owner', 'active', NOW()) RETURNING id`,
-      ['tenant-a-' + crypto.randomUUID() + '@example.test', 'x'.repeat(64)]
+      ['tenant-a-' + randomUUID() + '@example.test', 'x'.repeat(64)]
     );
     const userB = await client.query(
       `INSERT INTO app_users (email, password_hash, display_name, role, status, email_verified_at)
        VALUES ($1, $2, 'Tenant B Owner', 'owner', 'active', NOW()) RETURNING id`,
-      ['tenant-b-' + crypto.randomUUID() + '@example.test', 'y'.repeat(64)]
+      ['tenant-b-' + randomUUID() + '@example.test', 'y'.repeat(64)]
     );
     const tenantA = await client.query(
       `INSERT INTO app_tenants (display_name, owner_user_id) VALUES ('Tenant A', $1) RETURNING id`,
