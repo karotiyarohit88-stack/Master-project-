@@ -65,6 +65,7 @@ function publicAakshTask(row: Record<string, any>) {
     status: statusMap[row.status] || row.status,
     approvalRequired: task.approvalRequired,
     approvalStatus: task.approvalStatus,
+    source: task.source,
     result: task.result,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
