@@ -222,6 +222,8 @@ async function runUnifiedPostgresE2E(pool: any) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
+        await client.query('DELETE FROM agent_tasks WHERE tenant_id IN (SELECT id FROM app_tenants WHERE owner_user_id = $1)', [userId]);
+        await client.query('DELETE FROM aaksh_social_posts WHERE tenant_id IN (SELECT id FROM app_tenants WHERE owner_user_id = $1)', [userId]);
         await client.query('DELETE FROM app_tenant_memberships WHERE user_id = $1', [userId]);
         await client.query('DELETE FROM app_tenants WHERE owner_user_id = $1', [userId]);
         await client.query('DELETE FROM app_users WHERE id = $1', [userId]);
