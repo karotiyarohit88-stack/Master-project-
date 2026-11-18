@@ -82,6 +82,7 @@ export function createUnifiedWorkspaceRouter(options: {
 } = {}) {
   const aakshRouter = Router();
   const publishingRouter = Router();
+  const socialRouter = Router();
   const pool = options.pool === undefined ? getPostgresPool() as unknown as DbPool | null : options.pool;
 
   async function createApprovedWorkItem(req: any, res: Response, input: {
@@ -159,6 +160,156 @@ export function createUnifiedWorkspaceRouter(options: {
       client.release();
     }
   }
+
+  // AAKSH Social Feed persists in the same PostgreSQL database and tenant boundary.
+  socialRouter.get('/feed', async (_req, res) => {
+    const ctx = context(res);
+    if (!ctx) return error(res, 401, 'Authenticated tenant context is required.');
+    if (!pool) return error(res, 503, 'Shared PostgreSQL storage is unavailable.');
+    try {
+      const result = await pool.query(
+        `SELECT p.id, p.author_user_id, p.body, p.created_at,
+                (SELECT COUNT(*)::int FROM aaksh_social_likes l WHERE l.tenant_id = p.tenant_id AND l.post_id = p.id) AS likes_count,
+                (SELECT COUNT(*)::int FROM aaksh_social_comments c WHERE c.tenant_id = p.tenant_id AND c.post_id = p.id) AS comments_count,
+                EXISTS (SELECT 1 FROM aaksh_social_likes l WHERE l.tenant_id = p.tenant_id AND l.post_id = p.id AND l.user_id = $2) AS liked_by_me
+           FROM aaksh_social_posts p
+          WHERE p.tenant_id = $1 AND p.deleted_at IS NULL
+          ORDER BY p.created_at DESC LIMIT 50`,
+        [ctx.tenant.tenantId, ctx.session.id]
+      );
+      return res.json({ success: true, posts: result.rows.map((post: any) => ({
+        id: post.id, userId: post.author_user_id, text: post.body,
+        likes: post.likes_count, commentsCount: post.comments_count,
+        likedByMe: post.liked_by_me, createdAt: post.created_at
+      })) });
+    } catch {
+      return error(res, 503, 'AAKSH social feed is temporarily unavailable.');
+    }
+  });
+
+  socialRouter.post('/posts', async (req, res) => {
+    const ctx = context(res);
+    if (!ctx) return error(res, 401, 'Authenticated tenant context is required.');
+    if (!pool) return error(res, 503, 'Shared PostgreSQL storage is unavailable.');
+    const body = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+    if (!body || body.length > 5000) return error(res, 400, 'Post text must be between 1 and 5000 characters.');
+    try {
+      const result = await pool.query(
+        `INSERT INTO aaksh_social_posts (tenant_id, author_user_id, body)
+         VALUES ($1, $2, $3)
+         RETURNING id, author_user_id, body, created_at`,
+        [ctx.tenant.tenantId, ctx.session.id, body]
+      );
+      const post = result.rows[0];
+      return res.status(201).json({ success: true, post: {
+        id: post.id, userId: post.author_user_id, text: post.body,
+        likes: 0, commentsCount: 0, likedByMe: false, createdAt: post.created_at
+      } });
+    } catch {
+      return error(res, 503, 'Social post could not be saved.');
+    }
+  });
+
+  socialRouter.post('/posts/:postId/like', async (req, res) => {
+    const ctx = context(res);
+    if (!ctx) return error(res, 401, 'Authenticated tenant context is required.');
+    if (!pool) return error(res, 503, 'Shared PostgreSQL storage is unavailable.');
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(req.params.postId)) return error(res, 400, 'Post ID is invalid.');
+    try {
+      const exists = await pool.query(
+        'SELECT id FROM aaksh_social_posts WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL',
+        [req.params.postId, ctx.tenant.tenantId]
+      );
+      if (!exists.rows[0]) return error(res, 404, 'Post not found in this workspace.');
+      const removed = await pool.query(
+        'DELETE FROM aaksh_social_likes WHERE tenant_id = $1 AND post_id = $2 AND user_id = $3 RETURNING post_id',
+        [ctx.tenant.tenantId, req.params.postId, ctx.session.id]
+      );
+      const liked = !removed.rows[0];
+      if (liked) {
+        await pool.query(
+          'INSERT INTO aaksh_social_likes (tenant_id, post_id, user_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+          [ctx.tenant.tenantId, req.params.postId, ctx.session.id]
+        );
+      }
+      const count = await pool.query(
+        'SELECT COUNT(*)::int AS count FROM aaksh_social_likes WHERE tenant_id = $1 AND post_id = $2',
+        [ctx.tenant.tenantId, req.params.postId]
+      );
+      return res.json({ success: true, liked, likes: count.rows[0]?.count || 0 });
+    } catch {
+      return error(res, 503, 'Like could not be updated.');
+    }
+  });
+
+  socialRouter.get('/posts/:postId/comments', async (req, res) => {
+    const ctx = context(res);
+    if (!ctx) return error(res, 401, 'Authenticated tenant context is required.');
+    if (!pool) return error(res, 503, 'Shared PostgreSQL storage is unavailable.');
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(req.params.postId)) return error(res, 400, 'Post ID is invalid.');
+    try {
+      const post = await pool.query(
+        'SELECT id FROM aaksh_social_posts WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL',
+        [req.params.postId, ctx.tenant.tenantId]
+      );
+      if (!post.rows[0]) return error(res, 404, 'Post not found in this workspace.');
+      const comments = await pool.query(
+        `SELECT id, author_user_id, body, created_at FROM aaksh_social_comments
+          WHERE tenant_id = $1 AND post_id = $2 ORDER BY created_at ASC LIMIT 200`,
+        [ctx.tenant.tenantId, req.params.postId]
+      );
+      return res.json({ success: true, comments: comments.rows.map((item: any) => ({
+        id: item.id, userId: item.author_user_id, text: item.body, createdAt: item.created_at
+      })) });
+    } catch {
+      return error(res, 503, 'Comments are temporarily unavailable.');
+    }
+  });
+
+  socialRouter.post('/posts/:postId/comments', async (req, res) => {
+    const ctx = context(res);
+    if (!ctx) return error(res, 401, 'Authenticated tenant context is required.');
+    if (!pool) return error(res, 503, 'Shared PostgreSQL storage is unavailable.');
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(req.params.postId)) return error(res, 400, 'Post ID is invalid.');
+    const body = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+    if (!body || body.length > 2000) return error(res, 400, 'Comment must be between 1 and 2000 characters.');
+    try {
+      const result = await pool.query(
+        `INSERT INTO aaksh_social_comments (tenant_id, post_id, author_user_id, body)
+         SELECT $1, p.id, $3, $4 FROM aaksh_social_posts p
+          WHERE p.id = $2 AND p.tenant_id = $1 AND p.deleted_at IS NULL
+         RETURNING id, author_user_id, body, created_at`,
+        [ctx.tenant.tenantId, req.params.postId, ctx.session.id, body]
+      );
+      if (!result.rows[0]) return error(res, 404, 'Post not found in this workspace.');
+      const item = result.rows[0];
+      return res.status(201).json({ success: true, comment: {
+        id: item.id, userId: item.author_user_id, text: item.body, createdAt: item.created_at
+      } });
+    } catch {
+      return error(res, 503, 'Comment could not be saved.');
+    }
+  });
+
+  socialRouter.delete('/posts/:postId', async (req, res) => {
+    const ctx = context(res);
+    if (!ctx) return error(res, 401, 'Authenticated tenant context is required.');
+    if (!pool) return error(res, 503, 'Shared PostgreSQL storage is unavailable.');
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(req.params.postId)) return error(res, 400, 'Post ID is invalid.');
+    try {
+      const deleted = await pool.query(
+        `UPDATE aaksh_social_posts SET deleted_at = NOW(), updated_at = NOW()
+          WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+            AND (author_user_id = $3 OR $4::boolean = TRUE)
+          RETURNING id`,
+        [req.params.postId, ctx.tenant.tenantId, ctx.session.id, ['owner', 'admin'].includes(ctx.tenant.role)]
+      );
+      if (!deleted.rows[0]) return error(res, 404, 'Post not found or not owned by this user.');
+      return res.json({ success: true, deleted: true });
+    } catch {
+      return error(res, 503, 'Post could not be deleted.');
+    }
+  });
 
   // AAKSH work tasks are records in Master Project's tenant-scoped agent_tasks table.
   aakshRouter.get('/work/tasks', async (req, res) => {
@@ -379,5 +530,5 @@ export function createUnifiedWorkspaceRouter(options: {
     }
   });
 
-  return { aaksh: aakshRouter, publishing: publishingRouter };
+  return { aaksh: aakshRouter, publishing: publishingRouter, social: socialRouter };
 }
