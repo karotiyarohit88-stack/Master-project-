@@ -99,7 +99,7 @@ test('lease renewal requires the current tenant, worker and unexpired lease', as
   }, { pool: db as any }), true);
   const update = db.queries.find(x => /UPDATE agent_tasks/.test(x.sql));
   assert.ok(update);
-  assert.match(update!.sql, /tenant_id = \\$2/);
-  assert.match(update!.sql, /lease_owner = \\$3/);
+  assert.match(update!.sql, /tenant_id = \$2/);
+  assert.match(update!.sql, /lease_owner = \$3/);
   assert.equal(update!.values[3], 900);
 });
