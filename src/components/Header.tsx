@@ -13,7 +13,8 @@ import {
   Cpu,
   Terminal,
   GitBranch,
-  BarChart3
+  BarChart3,
+  Layers
 } from 'lucide-react';
 import { ServerHealth, AppView } from '../types';
 
