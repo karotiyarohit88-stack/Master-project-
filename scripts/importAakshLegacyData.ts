@@ -99,7 +99,9 @@ export async function importAakshLegacyData(options: {
         'SELECT id, email FROM app_users WHERE id = $1 OR lower(trim(email)) = $2 LIMIT 2',
         [id, email]
       );
-      if (existing.rows.length && String(existing.rows[0].id) !== id) {
+      if (existing.rows.some((row: any) =>
+        String(row.id) !== id || String(row.email).trim().toLowerCase() !== email
+      )) {
         // Never merge two different identities merely because their email strings match.
         summary.usersSkipped++;
         continue;
@@ -156,15 +158,16 @@ export async function importAakshLegacyData(options: {
       const inserted = await client.query(
         `INSERT INTO agent_tasks
            (tenant_id, owner_id, idempotency_key, task_type, original_prompt, payload,
-            status, requires_approval, max_attempts, last_error, completed_at)
-         VALUES ($1, $2, $3, 'integration', $4, $5::jsonb, $6, TRUE, 1, $7, $8)
+            status, requires_approval, max_attempts, last_error, completed_at, created_at, updated_at)
+         VALUES ($1, $2, $3, 'integration', $4, $5::jsonb, $6, TRUE, 1, $7, $8, $9, $10)
          ON CONFLICT (owner_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
          RETURNING id`,
         [mapped.tenantId, mapped.id, 'aaksh-legacy-task-' + legacyId,
           '[Imported AAKSH] ' + title + (description ? '\n' + description : ''),
           JSON.stringify(payload), status,
           terminal ? 'LEGACY_EXECUTION_NOT_VERIFIED' : null,
-          terminal ? validDate(legacy.updatedAt) : null]
+          terminal ? validDate(legacy.updatedAt) : null,
+          validDate(legacy.createdAt), validDate(legacy.updatedAt)]
       );
       if (!inserted.rows[0]) {
         summary.tasksSkipped++;
@@ -219,12 +222,12 @@ export async function importAakshLegacyData(options: {
         const body = typeof comment.text === 'string' ? comment.text.trim().slice(0, 2000) : '';
         if (!commenter || commenter.tenantId !== mapped.tenantId || !body) continue;
         const commentId = typeof comment.id === 'string' && UUID.test(comment.id) ? comment.id : randomUUID();
-        await client.query(
+        const insertedComment = await client.query(
           `INSERT INTO aaksh_social_comments (id, tenant_id, post_id, author_user_id, body, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING`,
+           VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING RETURNING id`,
           [commentId, mapped.tenantId, postId, commenter.id, body, validDate(comment.createdAt)]
         );
-        summary.commentsImported++;
+        if (insertedComment.rows[0]) summary.commentsImported++;
       }
     }
 
