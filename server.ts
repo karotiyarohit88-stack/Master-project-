@@ -84,6 +84,11 @@ app.use('/api', (req, res, next) => {
       /^\/github\/commit$/,
       /^\/approve-action$/,
       /^\/project\/(apply-proposal|reject-proposal)$/,
+      /^\/worker-agents\/delegate$/,
+      /^\/video\/(generate-script|generate-voice|render)$/,
+      /^\/publishing\/prepare$/,
+      /^\/sheets\/sync$/,
+      /^\/autopilot\/trigger\/manual$/,
       /^\/automation\/trigger$/
     ].some((pattern) => pattern.test(path))) ||
     (method === 'PUT' && /^\/autopilot\/workflows\/[^/]+$/.test(path)) ||
