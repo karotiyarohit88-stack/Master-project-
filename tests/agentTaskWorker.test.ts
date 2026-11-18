@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  claimNextAgentTask, completeLeasedAgentTask, failLeasedAgentTask
+  claimNextAgentTask, completeLeasedAgentTask, failLeasedAgentTask, renewAgentTaskLease
 } from '../agentTaskWorker.ts';
 
 const TASK_ID = '2c4c3d4e-5f60-4a71-8b92-123456789abc';
@@ -19,7 +19,7 @@ class WorkerDb {
           original_prompt: 'Read a report', normalized_task: null, payload: {},
           attempts: 1, max_attempts: 3, lease_owner: values[0], lease_expires_at: new Date(Date.now() + 120000).toISOString()
         }] : [] };
-        if (/UPDATE agent_tasks/.test(sql)) return { rows: [{ id: TASK_ID, owner_id: 'creator-1', status: /CASE WHEN attempts/.test(sql) ? 'retry_wait' : 'completed' }] };
+        if (/UPDATE agent_tasks/.test(sql) && /LEASE_EXPIRED_MAX_ATTEMPTS/.test(sql)) return { rows: [] };\n        if (/UPDATE agent_tasks/.test(sql)) return { rows: [{ id: TASK_ID, owner_id: 'creator-1', status: /CASE WHEN attempts/.test(sql) ? 'retry_wait' : 'completed' }] };
         return { rows: [] };
       },
       release: () => undefined
@@ -80,4 +80,26 @@ test('invalid worker identity is rejected before touching the database', async (
   const db = new WorkerDb();
   await assert.rejects(() => claimNextAgentTask('worker id with spaces', { pool: db as any }), /Worker ID is invalid/);
   assert.equal(db.queries.length, 0);
+});
+
+test('expired final-attempt leases are terminalized rather than stranded forever', async () => {
+  const db = new WorkerDb();
+  await claimNextAgentTask('worker-a', { pool: db as any });
+  const sweep = db.queries.find(x => /LEASE_EXPIRED_MAX_ATTEMPTS/.test(x.sql));
+  assert.ok(sweep);
+  assert.match(sweep!.sql, /tenant_id IS NOT NULL/);
+  assert.match(sweep!.sql, /attempts >= max_attempts/);
+  assert.ok(db.queries.some(x => /event_type, stage, status, message, details/.test(x.sql)));
+});
+
+test('lease renewal requires the current tenant, worker and unexpired lease', async () => {
+  const db = new WorkerDb();
+  assert.equal(await renewAgentTaskLease({
+    taskId: TASK_ID, tenantId: TENANT_ID, workerId: 'worker-a', leaseSeconds: 9999
+  }, { pool: db as any }), true);
+  const update = db.queries.find(x => /UPDATE agent_tasks/.test(x.sql));
+  assert.ok(update);
+  assert.match(update!.sql, /tenant_id = \\$2/);
+  assert.match(update!.sql, /lease_owner = \\$3/);
+  assert.equal(update!.values[3], 900);
 });
