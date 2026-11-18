@@ -273,5 +273,23 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 
 | Issue ID | Module | Finding | Status |
 | :--- | :--- | :--- | :--- |
-| MP-SEC-14 | API CSRF Protection (`auth.ts`, `server.ts`, frontend API callers) | CSRF middleware is applied only to selected mutation routes; several authenticated state-changing routes have no explicit CSRF check. | Source-confirmed; route-wide fix and integration tests pending |
+| MP-SEC-14 | API CSRF Protection (`auth.ts`, `server.ts`, frontend API callers) | CSRF middleware is applied only to selected mutation routes; several authenticated state-changing routes have no explicit CSRF check. | Implemented centrally; integration test added; final-commit CI and runtime verification pending |
 | MP-SEC-15 | Customer / Tenant Data Isolation (`server.ts`, `src/App.tsx`, operational stores) | Operational records and shared in-memory collections are not consistently scoped to the authenticated user/tenant. | Source-confirmed; data-model, query scoping, migration and cross-tenant tests pending |
+
+
+## 16. Authenticated API Mutation CSRF Enforcement (2026-11-18)
+
+**Implemented on the feature branch:**
+- Added `createCsrfMutationGuard` in `auth.ts`. It lets GET, HEAD, and OPTIONS pass and applies the existing session-bound CSRF validator to every other HTTP method.
+- Mounted the guard in `server.ts` after the global application-session middleware, so authenticated application API mutations are checked centrally rather than relying on individual route authors to remember the guard.
+- The authentication router remains mounted before this middleware and continues to apply its own CSRF protection to logout and invitation creation.
+- `src/main.tsx` already contained a same-origin API fetch wrapper that attaches the readable `aaksh_csrf` cookie as `X-CSRF-Token` for POST/PUT/PATCH/DELETE and sends same-origin credentials. This was inspected and retained without duplicate wrapper code.
+- Added an integration test in `tests/auth.test.ts` that establishes a real test session, confirms a mutation without the CSRF header is rejected (403), confirms the matching session-bound token is accepted, and confirms a GET does not require the CSRF header.
+
+**Safety boundary:** This is source-level implementation plus a committed test. It does not establish deployed runtime behavior until CI and an authorized staging/runtime test pass. The existing application-wide session requirement remains in force; no webhook authentication model was changed. No database migration, deployment, paid provider call, or external publishing action was performed.
+
+**Verification:** Source changes committed to `feature/master-project-api-key-secret-manager`; CI result for the final commit is pending. Do not describe production security as fully verified.
+
+| Issue ID | Module | Finding | Status |
+| :--- | :--- | :--- | :--- |
+| MP-SEC-14 | API CSRF Protection (`auth.ts`, `server.ts`, `src/main.tsx`, `tests/auth.test.ts`) | Authenticated API mutations lacked consistent explicit CSRF validation. | Central mutation guard and integration test committed; final-commit CI and deployed runtime verification pending |
