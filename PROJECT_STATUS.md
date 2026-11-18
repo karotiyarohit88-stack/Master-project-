@@ -603,10 +603,10 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 - Corrected the `worker` npm script from `node agentWorker.ts` to `tsx agentWorker.ts`, matching the repository's existing TypeScript execution tooling.
 - Added a unit test that reads `package.json` and asserts the worker script uses the TypeScript-aware `tsx` runtime.
 
-**Verification:** The preceding result-viewer CI run `44263433004` completed successfully for commit `a196236bd938c0b1da2c3f652841968dd09f3c28`. This script correction and its test were added after that run; fresh CI is pending.
+**Verification:** GitHub Actions run `44263551437` for commit `ca9a4d72485ee0c76d2f2e2b0d46f0415740f44d` completed successfully: locked dependency install, TypeScript check, all unit tests, and production build passed. The package script, regression test, and this status record were refetched from the feature branch.
 
 **Limitations:** Correcting the command does not activate the worker. The worker remains disabled by default and requires the approved environment flag, reviewed handler registration, and confirmed database migrations. No process was launched or deployment performed.
 
 | Issue ID | Module | Finding | Status |
 |---|---|---|---|
-| MP-WF-07 | Worker Process Entrypoint | The worker npm script invoked a TypeScript entrypoint directly with `node`, which is not the project's configured TypeScript runner. | Script corrected to `tsx agentWorker.ts`; regression test added; fresh CI pending; worker not activated |
+| MP-WF-07 | Worker Process Entrypoint | The worker npm script invoked a TypeScript entrypoint directly with `node`, which is not the project's configured TypeScript runner. | Script corrected to `tsx agentWorker.ts`; regression test added; CI run 44263551437 passed; worker not activated |
