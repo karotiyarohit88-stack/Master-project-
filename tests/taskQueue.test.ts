@@ -154,3 +154,24 @@ test('tenant Owner can cancel tasks across their workspace', async () => withSer
   assert.equal(body.tenantRole, 'owner');
   assert.equal(body.tasks[0].canCancel, true);
 }));
+
+
+test('only tenant Owner or Admin can reject a task awaiting approval', async () => {
+  await withServer('member', async url => {
+    const response = await fetch(url + '/api/tasks/' + TASK_ID + '/reject', { method: 'POST' });
+    assert.equal(response.status, 403);
+  });
+  await withServer('owner', async (url, db) => {
+    const response = await fetch(url + '/api/tasks/' + TASK_ID + '/reject', { method: 'POST' });
+    assert.equal(response.status, 200);
+    const body = await response.json() as any;
+    assert.equal(body.status, 'rejected');
+    assert.equal(body.executionStarted, false);
+    const update = db.queries.find(x => /UPDATE agent_tasks/.test(x.sql));
+    assert.ok(update);
+    assert.match(update!.sql, /tenant_id = \$2/);
+    assert.match(update!.sql, /status = 'waiting_approval'/);
+    assert.equal(update!.values[1], TENANT_A);
+    assert.ok(db.queries.some(x => /'rejected', 'approval', 'rejected'/.test(x.sql)));
+  });
+});
