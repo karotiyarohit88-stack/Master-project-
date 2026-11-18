@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getCsrfHeaders } from '../utils/csrf';
 import { 
   GitBranch, 
   Folder, 
@@ -221,12 +222,7 @@ export const GitHubCodeExplorer: React.FC<GitHubCodeExplorerProps> = ({ onAskCha
       const [owner, repo] = selectedRepo.split('/');
       const res = await fetch('/api/github/auth/token', {
         method: 'POST',
-        headers: (() : Record<string, string> => {
-          const cookie = document.cookie.split(';').map((part) => part.trim()).find((part) => part.startsWith('aaksh_csrf='));
-          const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-          if (cookie) headers['x-csrf-token'] = decodeURIComponent(cookie.slice('aaksh_csrf='.length));
-          return headers;
-        })(),
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({
           token: tokenInput.trim(),
           owner,
@@ -257,12 +253,7 @@ export const GitHubCodeExplorer: React.FC<GitHubCodeExplorerProps> = ({ onAskCha
     try {
       await fetch('/api/github/auth/disconnect', {
         method: 'POST',
-        headers: (() : Record<string, string> => {
-          const cookie = document.cookie.split(';').map((part) => part.trim()).find((part) => part.startsWith('aaksh_csrf='));
-          const headers: Record<string, string> = {};
-          if (cookie) headers['x-csrf-token'] = decodeURIComponent(cookie.slice('aaksh_csrf='.length));
-          return headers;
-        })()
+        headers: getCsrfHeaders()
       });
       setNoticeMessage('Switched back to Demo Sandbox Mode.');
       setIsAuthModalOpen(false);
@@ -326,7 +317,7 @@ export const GitHubCodeExplorer: React.FC<GitHubCodeExplorerProps> = ({ onAskCha
 
       const res = await fetch('/api/github/propose-change', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({
           filePath: activeFile.path,
           originalContent: activeFile.content,
@@ -357,7 +348,7 @@ export const GitHubCodeExplorer: React.FC<GitHubCodeExplorerProps> = ({ onAskCha
     try {
       const res = await fetch('/api/github/commit', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({
           proposalId: activeProposal.proposalId,
           directCommitConfirmed
