@@ -84,7 +84,7 @@ app.use('/api', (req, res, next) => {
       /^\/autopilot\/workflows\/[^/]+\/(toggle|run)$/,
       /^\/autopilot\/queue\/[^/]+\/(pause|resume|stop)$/,
       /^\/autopilot\/executions\/[^/]+\/(approve|retry)$/,
-      /^\\/publishing\\/(auto-post-policy|attach-verified-asset)$/,
+      /^\/publishing\/(auto-post-policy|attach-verified-asset)$/,
       /^\/accounting\/payout-requests(?:\/[^/]+\/approve)?$/,
       /^\/github\/auth\/(token|disconnect)$/,
       /^\/github\/select$/,
