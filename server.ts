@@ -13,6 +13,7 @@ import { GoogleGenAI } from '@google/genai';
 import { applyPendingPostgresMigrations, checkPostgresConnection, getPostgresMigrationStatus } from './database.ts';
 import { createAuthGuards, createAuthRouter, createCsrfMutationGuard } from './auth.ts';
 import { createAgentTaskRouter } from './taskQueue.ts';
+import { createUnifiedWorkspaceRouter } from './unifiedWorkspaces.ts';
 import { createSecretsRouter, resolveActiveSecretsForOwner, revokeSecretsForOwner, saveSecretForOwner } from './secrets.ts';
 import createSecurityMiddleware, { createRateLimitMiddleware } from './server/config/security.middleware.js';
 import { createRuntimeSecretsMiddleware, getRuntimeSecret } from './server/runtime-secrets-context.ts';
@@ -127,6 +128,47 @@ app.use('/api', (req, res, next) => {
 // They remain unavailable until PostgreSQL and the tenant/task migrations exist.
 app.use('/api/tasks', authGuards.requireTenantMembership, createAgentTaskRouter());
 
+const unifiedWorkspaceRouters = createUnifiedWorkspaceRouter({
+  dispatchPublishing: async ({ task }) => {
+    const webhook = getRuntimeSecret('publishing_webhook');
+    const apiKey = getRuntimeSecret('publishing');
+    if (!webhook) throw new Error('Publishing webhook is not configured.');
+    let target: URL;
+    try { target = new URL(webhook); } catch { throw new Error('Publishing webhook URL is invalid.'); }
+    if (target.protocol !== 'https:' || target.username || target.password ||
+        ['localhost', '127.0.0.1', '::1'].includes(target.hostname) ||
+        target.hostname.endsWith('.local')) {
+      throw new Error('Publishing webhook must use a public HTTPS endpoint.');
+    }
+    const payload = task.payload && typeof task.payload === 'object' ? task.payload : {};
+    const response = await fetch(target, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(apiKey ? { Authorization: 'Bearer ' + apiKey } : {})
+      },
+      body: JSON.stringify({
+        event: 'aaksh.approved_publish',
+        taskId: task.id,
+        platform: payload.platform,
+        topic: payload.topic,
+        caption: payload.caption,
+        hashtags: payload.hashtags,
+        approval: { approved: true, approvedBy: task.approved_by, approvedAt: task.approved_at }
+      }),
+      signal: AbortSignal.timeout(10000)
+    });
+    const result = await response.json().catch(() => ({})) as { success?: boolean; externalPostId?: string };
+    if (!response.ok || result.success !== true ||
+        typeof result.externalPostId !== 'string' || !result.externalPostId.trim()) {
+      throw new Error('Publishing provider did not return explicit publication confirmation.');
+    }
+    return { externalPostId: result.externalPostId.trim() };
+  }
+});
+app.use('/api/aaksh', authGuards.requireTenantMembership, unifiedWorkspaceRouters.aaksh);
+
+
 // AutoPilot mutations stay locked until the authenticated Owner explicitly
 // enables Safety & Security. Read-only status and configuration remain available.
 app.use('/api', createAutoPilotSafetyGuard(() => serverStore.autopilot.safetyEnabled));
@@ -135,6 +177,7 @@ app.use('/api', createAutoPilotSafetyGuard(() => serverStore.autopilot.safetyEna
 
 // Decrypted owner credentials remain request-scoped; never write them into serverStore.
 app.use('/api', createRuntimeSecretsMiddleware(resolveActiveSecretsForOwner));
+app.use('/api/publishing', authGuards.requireTenantMembership, unifiedWorkspaceRouters.publishing);
 
 app.use('/api/secrets', requireOwner, (req, res, next) => {
   if (req.method === 'GET') return next();
