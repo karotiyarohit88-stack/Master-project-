@@ -29,7 +29,7 @@ class TaskDb {
       query: async (sql: string, values: unknown[] = []) => {
         this.queries.push({ sql: sql.replace(/\s+/g, ' ').trim(), values });
         if (/INSERT INTO agent_tasks/.test(sql)) return { rows: [{ ...this.task, tenant_id: values[0], owner_id: values[1] }] };
-        if (/UPDATE agent_tasks/.test(sql)) return { rows: [{ id: TASK_ID }] };
+        if (/UPDATE agent_tasks/.test(sql)) return { rows: [{ id: TASK_ID, owner_id: 'user-123' }] };
         return { rows: [] };
       },
       release: () => undefined
