@@ -175,8 +175,8 @@ export function createAgentTaskRouter(options: { pool?: DbPool | null } = {}) {
       await client.query(
         `INSERT INTO agent_task_events
            (task_id, tenant_id, owner_id, event_type, stage, status, message, details)
-         VALUES ($1, $2, $3, 'approved', 'approval', 'queued', $4, '{}'::jsonb)`,
-        [req.params.taskId, context.tenant.tenantId, context.session.id, 'Workspace approval recorded; task is queued but has not started.']
+         VALUES ($1, $2, $3, 'approved', 'approval', 'queued', $4, $5::jsonb)`,
+        [req.params.taskId, context.tenant.tenantId, result.rows[0].owner_id, 'Workspace approval recorded; task is queued but has not started.', JSON.stringify({ approvedBy: context.session.id })]
       );
       await client.query('COMMIT');
       return res.json({ taskId: req.params.taskId, status: 'queued', executionStarted: false });
@@ -214,8 +214,8 @@ export function createAgentTaskRouter(options: { pool?: DbPool | null } = {}) {
       await client.query(
         `INSERT INTO agent_task_events
            (task_id, tenant_id, owner_id, event_type, stage, status, message, details)
-         VALUES ($1, $2, $3, 'cancelled', 'queue', 'cancelled', $4, '{}'::jsonb)`,
-        [req.params.taskId, context.tenant.tenantId, context.session.id, 'Task cancelled before execution.']
+         VALUES ($1, $2, $3, 'cancelled', 'queue', 'cancelled', $4, $5::jsonb)`,
+        [req.params.taskId, context.tenant.tenantId, result.rows[0].owner_id, 'Task cancelled before execution.', JSON.stringify({ cancelledBy: context.session.id })]
       );
       await client.query('COMMIT');
       return res.json({ taskId: req.params.taskId, status: 'cancelled' });
