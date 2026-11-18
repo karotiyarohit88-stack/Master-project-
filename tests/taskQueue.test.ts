@@ -1,0 +1,107 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import express from 'express';
+import { createAgentTaskRouter } from '../taskQueue.ts';
+
+const TASK_ID = '2c4c3d4e-5f60-4a71-8b92-123456789abc';
+const TENANT_A = '11111111-2222-4333-8444-555555555555';
+
+class TaskDb {
+  queries: { sql: string; values: unknown[] }[] = [];
+  task = {
+    id: TASK_ID, task_type: 'read_only', original_prompt: 'Check project status',
+    normalized_task: null, payload: {}, status: 'waiting_approval', priority: 100,
+    attempts: 0, max_attempts: 3, requires_approval: true, approved_by: null,
+    approved_at: null, result: null, last_error: null, created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(), started_at: null, completed_at: null
+  };
+
+  async query(sql: string, values: unknown[] = []) {
+    this.queries.push({ sql: sql.replace(/\\s+/g, ' ').trim(), values });
+    if (/SELECT .* FROM agent_tasks/.test(sql) && /WHERE tenant_id = \\$1/.test(sql)) return { rows: [this.task] };
+    if (/SELECT id FROM agent_tasks/.test(sql)) return { rows: [{ id: TASK_ID }] };
+    if (/SELECT id, event_type/.test(sql)) return { rows: [{ id: 1, event_type: 'created', message: 'created' }] };
+    return { rows: [] };
+  }
+
+  async connect() {
+    return {
+      query: async (sql: string, values: unknown[] = []) => {
+        this.queries.push({ sql: sql.replace(/\\s+/g, ' ').trim(), values });
+        if (/INSERT INTO agent_tasks/.test(sql)) return { rows: [{ ...this.task, tenant_id: values[0], owner_id: values[1] }] };
+        if (/UPDATE agent_tasks/.test(sql)) return { rows: [{ id: TASK_ID }] };
+        return { rows: [] };
+      },
+      release: () => undefined
+    };
+  }
+}
+
+async function withServer(role: 'owner' | 'admin' | 'member', run: (url: string, db: TaskDb) => Promise<void>) {
+  const db = new TaskDb();
+  const app = express();
+  app.use(express.json());
+  app.use((req, res, next) => {
+    res.locals.authSession = { id: 'user-123', role: 'owner' };
+    res.locals.tenantContext = { tenantId: TENANT_A, role };
+    next();
+  });
+  app.use('/api/tasks', createAgentTaskRouter({ pool: db as any }));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('No test port');
+  try { await run(`http://127.0.0.1:${address.port}`, db); }
+  finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+}
+
+test('task creation is durable, tenant-scoped, and waits for human approval', async () => withServer('member', async (url, db) => {
+  const response = await fetch(url + '/api/tasks', {
+    method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': 'task-001' },
+    body: JSON.stringify({ taskType: 'read_only', prompt: 'Check project status', payload: { source: 'dashboard' } })
+  });
+  assert.equal(response.status, 201);
+  const body = await response.json() as any;
+  assert.equal(body.task.status, 'waiting_approval');
+  assert.equal(body.task.requires_approval, true);
+  const insert = db.queries.find(x => /INSERT INTO agent_tasks/.test(x.sql));
+  assert.ok(insert);
+  assert.equal(insert!.values[0], TENANT_A);
+  assert.equal(insert!.values[1], 'user-123');
+  assert.ok(db.queries.some(x => /INSERT INTO agent_task_events/.test(x.sql)));
+}));
+
+test('task history query always filters by the resolved tenant', async () => withServer('member', async (url, db) => {
+  const response = await fetch(url + '/api/tasks');
+  assert.equal(response.status, 200);
+  const query = db.queries.find(x => /SELECT .* FROM agent_tasks/.test(x.sql));
+  assert.ok(query);
+  assert.match(query!.sql, /WHERE tenant_id = \\$1/);
+  assert.equal(query!.values[0], TENANT_A);
+}));
+
+test('only tenant Owner or Admin can approve and approval does not claim execution', async () => {
+  await withServer('member', async url => {
+    const response = await fetch(url + '/api/tasks/' + TASK_ID + '/approve', { method: 'POST' });
+    assert.equal(response.status, 403);
+  });
+  await withServer('owner', async (url, db) => {
+    const response = await fetch(url + '/api/tasks/' + TASK_ID + '/approve', { method: 'POST' });
+    assert.equal(response.status, 200);
+    const body = await response.json() as any;
+    assert.equal(body.status, 'queued');
+    assert.equal(body.executionStarted, false);
+    const update = db.queries.find(x => /UPDATE agent_tasks/.test(x.sql));
+    assert.ok(update);
+    assert.match(update!.sql, /tenant_id = \\$2/);
+    assert.equal(update!.values[1], TENANT_A);
+  });
+});
+
+test('task event history checks tenant ownership before returning events', async () => withServer('member', async (url, db) => {
+  const response = await fetch(url + '/api/tasks/' + TASK_ID + '/events');
+  assert.equal(response.status, 200);
+  const checks = db.queries.filter(x => /tenant_id = \\$2/.test(x.sql));
+  assert.ok(checks.length >= 2);
+  assert.ok(checks.every(x => x.values[1] === TENANT_A));
+}));
