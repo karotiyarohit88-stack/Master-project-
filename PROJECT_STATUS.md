@@ -239,3 +239,39 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 | Issue ID | Module | Finding | Status |
 | :--- | :--- | :--- | :--- |
 | MP-SEC-13 | API Authorization / Provider Actions | Several authenticated mutation endpoints were missing from the global Owner-only mutation guard. | Fixed in source; refetch verified; CI and runtime authorization tests pending |
+
+
+## 15. CSRF Coverage & Customer Data Isolation Audit (2026-11-18)
+
+**Audit scope:** latest feature-branch source for `server.ts`, `auth.ts`, `server/config/security.middleware.js`, `server/runtime-secrets-context.ts`, `src/App.tsx`, `src/components/AuthGate.tsx`, `secrets.ts`, auth migration, and `tests/auth.test.ts`.
+
+### MP-SEC-14 — Incomplete CSRF coverage across authenticated API mutations
+
+**Source-confirmed finding:**
+- `auth.ts` creates a session-bound CSRF cookie/token and exposes `requireCsrf`; the check validates same-origin host, cookie/header equality, and the stored token digest.
+- The auth router applies CSRF to `POST /api/auth/logout` and `POST /api/auth/invitations`.
+- `server.ts` applies CSRF to selected routes only, including `POST /api/secrets/*`, `POST /api/accounting/payout-requests*`, `POST /api/connections/save`, `POST /api/autopilot/safety`, `POST /api/autopilot/content-pipeline/prepare`, `POST /api/publishing/auto-post-policy`, `POST /api/publishing/attach-verified-asset`, and GitHub credential connect/disconnect.
+- Other authenticated state-changing routes were observed without explicit CSRF middleware, including chat command execution, project proposal apply/reject, worker delegation, video generation/render, AutoPilot config/trigger/queue/workflow/execution actions, publishing prepare/approve/publish, Sheets sync, and GitHub repository selection/commit.
+- The existing tests exercise CSRF rejection/acceptance for logout and the invitation flow; no route-wide CSRF coverage test was found in the inspected test file.
+
+**Why no blanket middleware was added in this audit:** The existing frontend sends the CSRF header only on routes specifically wired for it; a blanket token-based guard would break other current UI mutations until all API callers are migrated. Some authenticated endpoints also have webhook/API integration semantics that must be separated from browser-cookie routes. A safe fix needs a route inventory, a shared frontend CSRF fetch helper (or explicit per-route headers), and integration tests for both browser and non-browser callers. Do not treat the existing `SameSite=Lax` cookie as a substitute for explicit CSRF verification.
+
+**Status:** Source audit confirmed; no runtime exploit test performed; no route behavior changed. Fix pending.
+
+### MP-SEC-15 — Shared operational data is not tenant-isolated
+
+**Source-confirmed finding:**
+- `server.ts` stores operational state in process-wide arrays/objects such as `serverStore`, `workerAgents`, `changeProposals`, `autoPilotTasks`, `autoPilotWorkflows`, `workflowExecutions`, publishing queues, and audit records.
+- Inspected authenticated GET routes return shared collections without filtering by the authenticated user's ID, including `GET /api/analytics`, `GET /api/project/proposals`, `GET /api/worker-agents`, `GET /api/autopilot/queue`, `GET /api/autopilot/workflows`, and `GET /api/autopilot/executions`.
+- Inspected mutation handlers locate shared records by resource ID (for example proposal/task/workflow/execution IDs) without a tenant owner predicate. The global owner role guard is not a substitute for per-customer ownership.
+- `src/App.tsx` stores chat conversations under shared browser localStorage keys rather than a server-side user-scoped store. This is device/browser-local persistence, not multi-user server isolation.
+- In contrast, the Secret Manager queries inspected use `owner_id = $1`, showing an owner-scoped pattern for secrets only; that does not establish tenant isolation for operational records.
+
+**Impact:** If multiple customer accounts use this application, a signed-in account may see or mutate shared operational records belonging to another account. This is a release blocker for customer-facing multi-tenancy.
+
+**Status:** Source audit confirmed; no cross-account HTTP test or live database test performed. Fix pending. Do not enable customer onboarding/public multi-user access until every tenant-owned record and query is scoped and cross-tenant denial tests pass.
+
+| Issue ID | Module | Finding | Status |
+| :--- | :--- | :--- | :--- |
+| MP-SEC-14 | API CSRF Protection (`auth.ts`, `server.ts`, frontend API callers) | CSRF middleware is applied only to selected mutation routes; several authenticated state-changing routes have no explicit CSRF check. | Source-confirmed; route-wide fix and integration tests pending |
+| MP-SEC-15 | Customer / Tenant Data Isolation (`server.ts`, `src/App.tsx`, operational stores) | Operational records and shared in-memory collections are not consistently scoped to the authenticated user/tenant. | Source-confirmed; data-model, query scoping, migration and cross-tenant tests pending |
