@@ -165,7 +165,7 @@ export function createAgentTaskRouter(options: { pool?: DbPool | null } = {}) {
         `UPDATE agent_tasks
             SET status = 'queued', approved_by = $3, approved_at = NOW(), updated_at = NOW()
           WHERE id = $1 AND tenant_id = $2 AND status = 'waiting_approval' AND requires_approval = TRUE
-          RETURNING id`,
+          RETURNING id, owner_id`,
         [req.params.taskId, context.tenant.tenantId, context.session.id]
       );
       if (!result.rows[0]) {
@@ -204,7 +204,7 @@ export function createAgentTaskRouter(options: { pool?: DbPool | null } = {}) {
             SET status = 'cancelled', updated_at = NOW(), completed_at = NOW(), lease_owner = NULL, lease_expires_at = NULL
           WHERE id = $1 AND tenant_id = $2 AND status IN ('queued', 'retry_wait', 'waiting_approval')
             AND ($4::boolean = TRUE OR owner_id = $3)
-          RETURNING id`,
+          RETURNING id, owner_id`,
         [req.params.taskId, context.tenant.tenantId, context.session.id, canManageTenant]
       );
       if (!result.rows[0]) {
