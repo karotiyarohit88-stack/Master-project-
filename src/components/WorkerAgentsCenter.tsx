@@ -169,7 +169,7 @@ export const WorkerAgentsCenter: React.FC = () => {
             </div>
           ) : (
             <div className="p-8 text-center text-slate-400 text-xs bg-white rounded-2xl border border-slate-200">
-              No agent profile is available for this account. You can still create durable tasks below.
+              No agent profile is available for this account. Create and review durable tasks in Tasks & Approvals.
             </div>
           )}
         </div>
