@@ -12,6 +12,7 @@ import { promisify } from 'util';
 import { GoogleGenAI } from '@google/genai';
 import { applyPendingPostgresMigrations, checkPostgresConnection, getPostgresMigrationStatus } from './database.ts';
 import { createAuthGuards, createAuthRouter, createCsrfMutationGuard } from './auth.ts';
+import { createAgentTaskRouter } from './taskQueue.ts';
 import { createSecretsRouter, resolveActiveSecretsForOwner, revokeSecretsForOwner, saveSecretForOwner } from './secrets.ts';
 import createSecurityMiddleware, { createRateLimitMiddleware } from './server/config/security.middleware.js';
 import { createRuntimeSecretsMiddleware, getRuntimeSecret } from './server/runtime-secrets-context.ts';
@@ -121,6 +122,10 @@ app.use('/api', (req, res, next) => {
   if (!sharedOperationalStateRoutes.some((pattern) => pattern.test(req.path))) return next();
   return requireOwner(req, res, next);
 });
+
+// Durable task APIs resolve tenant identity only from the authenticated session.
+// They remain unavailable until PostgreSQL and the tenant/task migrations exist.
+app.use('/api/tasks', authGuards.requireTenantMembership, createAgentTaskRouter());
 
 // AutoPilot mutations stay locked until the authenticated Owner explicitly
 // enables Safety & Security. Read-only status and configuration remain available.
