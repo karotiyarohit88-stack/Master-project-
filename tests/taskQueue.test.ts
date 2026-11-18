@@ -74,6 +74,9 @@ test('task creation is durable, tenant-scoped, and waits for human approval', as
 test('task history query always filters by the resolved tenant', async () => withServer('member', async (url, db) => {
   const response = await fetch(url + '/api/tasks');
   assert.equal(response.status, 200);
+  const body = await response.json() as any;
+  assert.equal(body.tenantRole, 'member');
+  assert.equal(body.tasks[0].canCancel, false);
   const query = db.queries.find(x => /SELECT .* FROM agent_tasks/.test(x.sql));
   assert.ok(query);
   assert.match(query!.sql, /WHERE tenant_id = \$1/);
@@ -104,4 +107,11 @@ test('task event history checks tenant ownership before returning events', async
   const checks = db.queries.filter(x => /tenant_id = \$2/.test(x.sql));
   assert.ok(checks.length >= 2);
   assert.ok(checks.every(x => x.values[1] === TENANT_A));
+}));
+
+test('tenant Owner can cancel tasks across their workspace', async () => withServer('owner', async (url) => {
+  const response = await fetch(url + '/api/tasks');
+  const body = await response.json() as any;
+  assert.equal(body.tenantRole, 'owner');
+  assert.equal(body.tasks[0].canCancel, true);
 }));
