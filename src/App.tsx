@@ -47,6 +47,8 @@ import { ConnectionsCenter } from './components/ConnectionsCenter';
 import { AutomationLogsCenter } from './components/AutomationLogsCenter';
 import { GitHubCodeExplorer } from './components/GitHubCodeExplorer';
 import { AnalyticsCenter } from './components/AnalyticsCenter';
+import { DurableTaskQueuePanel } from './components/DurableTaskQueuePanel';
+import { WorkerAgentsCenter } from './components/WorkerAgentsCenter';
 import { FloatingChatWidget } from './components/FloatingChatWidget';
 
 const STORAGE_KEY = 'master_project_ai_agent_sessions_v1';
@@ -929,6 +931,19 @@ I am your central AI assistant and command center. You can manage engineering ta
 
         {/* VIEW 2: Analytics Center */}
         {activeView === 'analytics' && <AnalyticsCenter />}
+
+        {/* Durable tenant-scoped tasks use the shared Master Project task API. */}
+        {activeView === 'tasks' && (
+          <main className="flex-1 overflow-y-auto w-full max-w-5xl mx-auto p-3 sm:p-5 min-w-0">
+            <div className="mb-3">
+              <h2 className="text-lg font-bold text-slate-900">Tasks & Approvals</h2>
+              <p className="text-xs text-slate-500 mt-1">One tenant-scoped task queue for all workspaces. Approval records do not start a worker by themselves.</p>
+            </div>
+            <DurableTaskQueuePanel />
+          </main>
+        )}
+
+        {activeView === 'agents' && <WorkerAgentsCenter />}
 
         {/* VIEW 3: Auto Pilot & Trigger Center */}
         {activeView === 'autopilot' && (
