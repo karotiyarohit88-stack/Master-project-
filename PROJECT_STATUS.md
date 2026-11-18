@@ -579,3 +579,19 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 |---|---|---|---|
 | MP-WF-07 | Background Worker / Read-only Handler | Runtime scaffold had no registered production handler and therefore could not process any task. | One fixed read-only project-status handler + allowlist + intake validation + tests committed; CI run 44262764074 passed; worker activation and live DB execution not performed |
 | MP-WF-08 | Task Queue Result UI | Durable task result can be stored but the dashboard currently does not expose a tenant/permission-checked result viewer. | Pending; add safe result retrieval/viewer after handler CI passes |
+
+
+## 32. Read-only Task Result Retrieval and Dashboard Viewer (2026-11-18)
+
+**Implemented on the PR feature branch:**
+- Added tenant-scoped `GET /api/tasks/:taskId/result`. It returns only completed `read_only` task results, and only to the task creator or workspace Owner/Admin.
+- The query always requires both task ID and the tenant ID resolved from the authenticated session. It does not accept a tenant ID from the request.
+- The endpoint rejects invalid IDs, cross-tenant/missing tasks, non-read-only tasks, unauthorized tenant members, incomplete tasks, malformed result objects, and results larger than 64 KiB.
+- Updated the existing Durable Task Queue panel to show a “View result” control for completed read-only tasks and render the bounded status-document preview. No duplicate page or navigation item was added.
+- Added API tests for creator access, denial to another tenant member, and refusing results before completion.
+
+**Verification boundary:** These changes are committed on the feature branch. A fresh CI run for the result endpoint/UI/test changes is pending. No browser end-to-end test, live PostgreSQL test, worker process, task execution, migration application, or deployment has been performed.
+
+| Issue ID | Module | Finding | Status |
+|---|---|---|---|
+| MP-WF-08 | Task Queue Result UI | Task result persistence existed without a permission-checked retrieval route or dashboard viewer. | Tenant-scoped result endpoint and existing-panel viewer added; CI pending; browser/DB runtime verification pending |
