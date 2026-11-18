@@ -141,7 +141,7 @@ export function createUnifiedWorkspaceRouter(options: {
         );
         if (!existing.rows[0]) throw new Error('Idempotency replay could not be resolved.');
         await client.query('COMMIT');
-        return res.status(200).json({ success: true, task: input.source === 'aaksh' && input.module === 'workspace' ? publicAakshTask(existing.rows[0]) : publicPublishingTask(existing.rows[0]), idempotentReplay: true });
+        const view = input.source === 'aaksh' && input.module === 'workspace' ? publicAakshTask(existing.rows[0]) : publicPublishingTask(existing.rows[0]);\n        return res.status(200).json({ success: true, task: view, ...(input.module === 'publishing' ? { post: view } : {}), idempotentReplay: true });
       }
       const task = inserted.rows[0];
       await client.query(
@@ -151,7 +151,7 @@ export function createUnifiedWorkspaceRouter(options: {
         [task.id, ctx.tenant.tenantId, ctx.session.id, 'AAKSH workspace work item is waiting for approval in the shared Master Project queue.', JSON.stringify({ source: input.source, module: input.module, action: input.action })]
       );
       await client.query('COMMIT');
-      return res.status(201).json({ success: true, task: input.source === 'aaksh' && input.module === 'workspace' ? publicAakshTask(task) : publicPublishingTask(task), idempotentReplay: false });
+      const view = input.source === 'aaksh' && input.module === 'workspace' ? publicAakshTask(task) : publicPublishingTask(task);\n      return res.status(201).json({ success: true, task: view, ...(input.module === 'publishing' ? { post: view } : {}), idempotentReplay: false });
     } catch (cause) {
       try { await client.query('ROLLBACK'); } catch { /* preserve original error */ }
       const code = (cause as { code?: string })?.code;
