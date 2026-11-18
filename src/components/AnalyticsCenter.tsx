@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getCsrfHeaders } from '../utils/csrf';
 import { BarChart3, RefreshCw, Cpu, Activity, ShieldCheck, CheckCircle2, AlertCircle, HardDrive, Layers, Server } from 'lucide-react';
 
 export const AnalyticsCenter: React.FC = () => {
@@ -33,10 +34,10 @@ export const AnalyticsCenter: React.FC = () => {
     fetchAnalytics();
   }, []);
 
-  const csrfHeaders = () => {
-    const token = document.cookie.split('; ').find(value => value.startsWith('aaksh_csrf='))?.split('=').slice(1).join('=') || '';
-    return { 'Content-Type': 'application/json', 'X-CSRF-Token': decodeURIComponent(token) };
-  };
+  const csrfHeaders = () => ({
+    'Content-Type': 'application/json',
+    ...getCsrfHeaders()
+  });
 
   const createPayoutRequest = async () => {
     setPayoutBusy(true); setPayoutMessage('');
