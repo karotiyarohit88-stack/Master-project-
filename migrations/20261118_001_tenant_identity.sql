@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS app_tenants (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   display_name TEXT NOT NULL,
   owner_user_id UUID NOT NULL UNIQUE REFERENCES app_users(id) ON DELETE RESTRICT,
-  status NOT NULL DEFAULT 'active'
+  status TEXT NOT NULL DEFAULT 'active'
     CHECK (status IN ('active', 'suspended', 'closed')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
