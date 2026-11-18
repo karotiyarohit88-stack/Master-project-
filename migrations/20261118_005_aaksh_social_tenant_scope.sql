@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS aaksh_social_posts (
   body TEXT NOT NULL CHECK (length(trim(body)) BETWEEN 1 AND 5000),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  deleted_at TIMESTAMPTZ
+  deleted_at TIMESTAMPTZ,
+  CONSTRAINT aaksh_social_posts_id_tenant_unique UNIQUE (id, tenant_id)
 );
 
 CREATE INDEX IF NOT EXISTS aaksh_social_posts_tenant_feed_idx
@@ -41,9 +42,6 @@ CREATE TABLE IF NOT EXISTS aaksh_social_comments (
     REFERENCES aaksh_social_posts(id, tenant_id)
     ON DELETE CASCADE
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS aaksh_social_posts_id_tenant_idx
-  ON aaksh_social_posts (id, tenant_id);
 
 CREATE INDEX IF NOT EXISTS aaksh_social_likes_post_idx
   ON aaksh_social_likes (tenant_id, post_id, created_at DESC);
