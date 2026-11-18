@@ -595,3 +595,18 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 | Issue ID | Module | Finding | Status |
 |---|---|---|---|
 | MP-WF-08 | Task Queue Result UI | Task result persistence existed without a permission-checked retrieval route or dashboard viewer. | Tenant-scoped result endpoint and existing-panel viewer added; CI run 44263325597 passed; browser/DB runtime verification pending |
+
+
+## 33. TypeScript Worker Entrypoint Command Correction (2026-11-18)
+
+**Implemented on the PR feature branch:**
+- Corrected the `worker` npm script from `node agentWorker.ts` to `tsx agentWorker.ts`, matching the repository's existing TypeScript execution tooling.
+- Added a unit test that reads `package.json` and asserts the worker script uses the TypeScript-aware `tsx` runtime.
+
+**Verification:** The preceding result-viewer CI run `44263433004` completed successfully for commit `a196236bd938c0b1da2c3f652841968dd09f3c28`. This script correction and its test were added after that run; fresh CI is pending.
+
+**Limitations:** Correcting the command does not activate the worker. The worker remains disabled by default and requires the approved environment flag, reviewed handler registration, and confirmed database migrations. No process was launched or deployment performed.
+
+| Issue ID | Module | Finding | Status |
+|---|---|---|---|
+| MP-WF-07 | Worker Process Entrypoint | The worker npm script invoked a TypeScript entrypoint directly with `node`, which is not the project's configured TypeScript runner. | Script corrected to `tsx agentWorker.ts`; regression test added; fresh CI pending; worker not activated |
