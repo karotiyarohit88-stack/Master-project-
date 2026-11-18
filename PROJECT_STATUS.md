@@ -191,3 +191,27 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 | MP-SEC-05 | PostgreSQL Connection Test | Previous test only checked whether a database URL was present. | Real SQL connectivity probe implemented on feature branch; live database connection pending server-side DATABASE_URL and runtime test |
 | MP-WF-10 | Background Agent Queue / PostgreSQL | Durable task queue schema existed without a database migration runner. | Schema plus guarded migration runner committed; migrations not applied and queue runtime/worker still pending |
 | MP-DB-11 | PostgreSQL Dependency Integration | PostgreSQL driver and compatible type declarations were absent; existing esbuild range conflicted with Vite 8.3.x peer requirements. | pg production dependency, @types/pg dev dependency, lockfile, and esbuild compatibility committed; CI/bootstrap build checks passed |
+
+
+
+## 13. Unified AI Command Center — Architecture Baseline (2026-11-18)
+
+**Decision:** Master Project remains one application with one primary dashboard, one shared Work Engine, one central Approval Centre, one independent Audit pipeline, and one canonical activity/history system. Agent Studio, Model Center, Platform & Tool Studio, Customer Projects, Safe Repair, Analytics, and Settings are sections/workspaces within the existing dashboard shell—not separate dashboards or duplicate execution systems.
+
+**Design saved:** `docs/UNIFIED_AI_COMMAND_CENTER_DESIGN.md` defines the target navigation, Chief AI → Planner → Policy Gate → Work Engine → Worker → Independent Audit → Safe Repair/Retest → Chief AI report lifecycle, agent/model/platform creation rules, security invariants, data architecture, phased implementation and release gates.
+
+**Source inspection evidence on the feature branch:**
+- `src/App.tsx`: workflow steps are initialized in frontend state; modal callbacks update local step state/log strings.
+- `src/components/TaskWorkflowModal.tsx`: workflow controls are callback-driven UI and do not themselves execute a durable backend workflow.
+- `src/components/WorkerAgentsCenter.tsx`: calls `POST /api/worker-agents/delegate`; its success message describes delegation/status update.
+- `server.ts`: `GET /api/worker-agents` returns the in-memory worker list; `POST /api/worker-agents/delegate` updates agent status/mission and records an audit event. This route alone does not prove a worker executed or completed the mission.
+- `server.ts`: session middleware, rate limiting, security middleware and selected owner-role mutation guards are present; complete route-by-route authorization audit remains required.
+- `database.ts` and migration files provide PostgreSQL connection/migration foundations, but no live database connection or applied migration is claimed here.
+- `migrations/20261114_001_agent_task_queue.sql` is a schema foundation; it does not prove an active background worker.
+- `package.json` defines lint/build/test scripts and `.github/workflows/ci.yml` exists. CI for this documentation commit was queued at the time of inspection; no success is claimed.
+
+**Safety boundary:** This commit is documentation only. No runtime code, existing route, secret, database, migration, deployment, provider key, or paid API setting was changed. No production action was run.
+
+| Issue ID | Module | Finding | Status |
+| :--- | :--- | :--- | :--- |
+| MP-ARCH-12 | Unified Dashboard / Chief AI Orchestration | The intended one-dashboard architecture and shared Chief AI → Work Engine → independent Audit lifecycle were not captured in one implementation baseline. | Design baseline committed; implementation, route integration, runtime verification and release gates pending |
