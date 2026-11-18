@@ -374,7 +374,7 @@ export function createUnifiedWorkspaceRouter(options: {
         `SELECT id, owner_id, original_prompt, payload, status, requires_approval,
                 approved_at, result, created_at, updated_at, completed_at
            FROM agent_tasks
-          WHERE tenant_id = $1 AND payload->>'source' IN ('aaksh', 'master_publishing')
+          WHERE tenant_id = $1 AND payload->>'module' = 'publishing' AND payload->>'source' IN ('aaksh', 'master_publishing')
           ORDER BY created_at DESC LIMIT 100`,
         [ctx.tenant.tenantId]
       );
@@ -411,7 +411,7 @@ export function createUnifiedWorkspaceRouter(options: {
       const update = await client.query(
         `UPDATE agent_tasks
             SET status = 'queued', approved_by = $3, approved_at = NOW(), updated_at = NOW()
-          WHERE id = $1 AND tenant_id = $2 AND payload->>'source' IN ('aaksh', 'master_publishing')
+          WHERE id = $1 AND tenant_id = $2 AND payload->>'module' = 'publishing' AND payload->>'source' IN ('aaksh', 'master_publishing')
             AND status = 'waiting_approval' AND requires_approval = TRUE
           RETURNING id, owner_id`,
         [taskId, ctx.tenant.tenantId, ctx.session.id]
@@ -456,6 +456,7 @@ export function createUnifiedWorkspaceRouter(options: {
                 lease_owner = $3, lease_expires_at = NOW() + INTERVAL '2 minutes',
                 updated_at = NOW()
           WHERE id = $1 AND tenant_id = $2
+            AND payload->>'module' = 'publishing'
             AND payload->>'source' IN ('aaksh', 'master_publishing')
             AND status = 'queued' AND requires_approval = TRUE
             AND approved_by IS NOT NULL AND approved_at IS NOT NULL
