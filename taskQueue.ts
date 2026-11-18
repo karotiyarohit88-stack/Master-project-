@@ -130,6 +130,35 @@ export function createAgentTaskRouter(options: { pool?: DbPool | null } = {}) {
     }
   });
 
+  router.get('/:taskId/result', async (req, res) => {
+    const context = getContext(res);
+    if (!context) return jsonError(res, 401, 'Authenticated tenant context is required.');
+    if (!pool) return jsonError(res, 503, 'Durable task storage is unavailable.');
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(req.params.taskId)) {
+      return jsonError(res, 400, 'Task ID is invalid.');
+    }
+    try {
+      const result = await pool.query(
+        `SELECT id, owner_id, task_type, status, result
+           FROM agent_tasks
+          WHERE id = $1 AND tenant_id = $2
+          LIMIT 1`,
+        [req.params.taskId, context.tenant.tenantId]
+      );
+      const task = result.rows[0];
+      if (!task || task.task_type !== 'read_only') return jsonError(res, 404, 'Read-only task result not found.');
+      const canView = ['owner', 'admin'].includes(context.tenant.role) || task.owner_id === context.session.id;
+      if (!canView) return jsonError(res, 403, 'Only the task creator or workspace Owner/Admin can view this result.');
+      if (task.status !== 'completed') return jsonError(res, 409, 'Task result is not ready yet.');
+      if (!isPlainObject(task.result) || Buffer.byteLength(JSON.stringify(task.result), 'utf8') > 64 * 1024) {
+        return jsonError(res, 503, 'Stored task result is invalid or exceeds the result limit.');
+      }
+      return res.json({ taskId: task.id, result: task.result });
+    } catch {
+      return jsonError(res, 503, 'Task result is temporarily unavailable.');
+    }
+  });
+
   router.get('/:taskId/events', async (req, res) => {
     const context = getContext(res);
     if (!context) return jsonError(res, 401, 'Authenticated tenant context is required.');
