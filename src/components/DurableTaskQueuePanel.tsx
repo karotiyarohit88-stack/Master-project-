@@ -17,7 +17,7 @@ type QueueTask = {
 type QueueEvent = { id: number; event_type: string; message: string; created_at: string };
 
 const TASK_TYPES = [
-  { value: 'read_only', label: 'Read-only review' },
+  { value: 'read_only', label: 'Read project status (read-only)' },
   { value: 'user_request', label: 'General task' },
   { value: 'code_change', label: 'Code change' },
   { value: 'automation', label: 'Automation' },
@@ -63,7 +63,11 @@ export const DurableTaskQueuePanel: React.FC<{ refreshToken?: number }> = ({ ref
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ taskType, prompt: prompt.trim() })
+        body: JSON.stringify({
+          taskType,
+          prompt: prompt.trim(),
+          ...(taskType === 'read_only' ? { payload: { action: 'read_project_status' } } : {})
+        })
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || 'Task could not be saved.');
@@ -135,7 +139,7 @@ export const DurableTaskQueuePanel: React.FC<{ refreshToken?: number }> = ({ ref
           maxLength={12000} rows={3} placeholder="Describe the task. Do not paste passwords or API keys."
           className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 focus:border-emerald-500 focus:outline-none" />
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[10px] text-slate-500">All tasks wait for Owner/Admin approval.</span>
+          <span className="text-[10px] text-slate-500">All tasks wait for Owner/Admin approval. Read-only currently reads PROJECT_STATUS.md only.</span>
           <button type="button" onClick={() => void submitTask()} disabled={submitting || !prompt.trim()}
             className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50 flex items-center gap-1.5">
             {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
