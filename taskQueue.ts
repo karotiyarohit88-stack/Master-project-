@@ -113,7 +113,7 @@ export function createAgentTaskRouter(options: { pool?: DbPool | null } = {}) {
     const limit = Math.min(Math.max(Number.parseInt(String(_req.query.limit || '50'), 10) || 50, 1), 100);
     try {
       const result = await pool.query(
-        `SELECT ${TASK_COLUMNS}, owner_id FROM agent_tasks
+        `SELECT id, task_type, original_prompt, status, attempts, max_attempts, requires_approval, approved_at, created_at, owner_id FROM agent_tasks
           WHERE tenant_id = $1
           ORDER BY created_at DESC
           LIMIT $2`,
