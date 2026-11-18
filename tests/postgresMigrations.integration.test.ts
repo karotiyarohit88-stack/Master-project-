@@ -26,7 +26,8 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
     '20261118_001_tenant_identity.sql',
     '20261118_002_invitation_tenant_scope.sql',
     '20261118_003_agent_task_tenant_scope.sql',
-    '20261118_004_agent_task_rejection.sql'
+    '20261118_004_agent_task_rejection.sql',
+    '20261118_005_aaksh_social_tenant_scope.sql'
   ];
   assert.equal(status.migrationTableExists, true);
   for (const migration of required) assert.ok(status.appliedMigrations.includes(migration), 'Missing migration ' + migration);
@@ -82,6 +83,32 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
     );
     assert.equal(visibleToA.rows.length, 1);
     assert.equal(visibleToB.rows.length, 0);
+
+    const post = await client.query(
+      `INSERT INTO aaksh_social_posts (tenant_id, author_user_id, body)
+       VALUES ($1, $2, 'Tenant A social post') RETURNING id`,
+      [tenantA.rows[0].id, userA.rows[0].id]
+    );
+    await client.query(
+      `INSERT INTO aaksh_social_likes (tenant_id, post_id, user_id)
+       VALUES ($1, $2, $3)`,
+      [tenantA.rows[0].id, post.rows[0].id, userA.rows[0].id]
+    );
+    await client.query(
+      `INSERT INTO aaksh_social_comments (tenant_id, post_id, author_user_id, body)
+       VALUES ($1, $2, $3, 'Tenant A comment')`,
+      [tenantA.rows[0].id, post.rows[0].id, userA.rows[0].id]
+    );
+    const socialVisibleToA = await client.query(
+      'SELECT id FROM aaksh_social_posts WHERE tenant_id = $1',
+      [tenantA.rows[0].id]
+    );
+    const socialVisibleToB = await client.query(
+      'SELECT id FROM aaksh_social_posts WHERE tenant_id = $1',
+      [tenantB.rows[0].id]
+    );
+    assert.equal(socialVisibleToA.rows.length, 1);
+    assert.equal(socialVisibleToB.rows.length, 0);
 
     const rejected = await client.query(
       `INSERT INTO agent_tasks (tenant_id, owner_id, task_type, original_prompt, status, requires_approval)
