@@ -3762,14 +3762,14 @@ app.post('/api/autopilot/executions/:id/retry', (req: Request, res: Response) =>
 // -----------------------------------------------------------------------------
 
 // Owner-controlled daily auto-post policy. Safety remains a separate mandatory switch.
-app.get('/api/publishing/auto-post-policy', (req: Request, res: Response) => {
-  res.json({ enabled: serverStore.autopilot.autoPostDailyContentEnabled, safetyEnabled: serverStore.autopilot.safetyEnabled, mode: 'daily_content_only', requiresVerifiedVideoAsset: true });
+app.get('/api/publishing/auto-post-policy', (_req: Request, res: Response) => {
+  res.json({ enabled: false, safetyEnabled: serverStore.autopilot.safetyEnabled, approvalRequired: true, mode: 'per_post_human_approval' });
 });
 app.post('/api/publishing/auto-post-policy', authGuards.requireCsrf, (req: Request, res: Response) => {
   if (typeof req.body?.enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be a boolean.' });
-  serverStore.autopilot.autoPostDailyContentEnabled = req.body.enabled;
-  recordAudit({ category: 'security', action: req.body.enabled ? 'Daily Auto-Post Enabled' : 'Daily Auto-Post Disabled', status: req.body.enabled ? 'warning' : 'info', details: 'Owner changed daily auto-post policy. Safety switch and verified video asset checks remain mandatory.' });
-  return res.json({ success: true, enabled: serverStore.autopilot.autoPostDailyContentEnabled, safetyEnabled: serverStore.autopilot.safetyEnabled });
+  serverStore.autopilot.autoPostDailyContentEnabled = false;
+  recordAudit({ category: 'security', action: req.body.enabled ? 'Daily Auto-Post Blocked' : 'Daily Auto-Post Disabled', status: req.body.enabled ? 'blocked' : 'info', details: 'Per-post human approval is mandatory; automatic publication cannot bypass the shared PostgreSQL approval queue.' });
+  return res.json({ success: true, enabled: false, safetyEnabled: serverStore.autopilot.safetyEnabled, approvalRequired: true, message: 'Automatic publishing is disabled. Every post requires an individual Owner/Admin approval.' });
 });
 
 // GET /api/publishing/queue: Get publishing drafts
