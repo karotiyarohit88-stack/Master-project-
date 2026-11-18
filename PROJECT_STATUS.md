@@ -506,3 +506,20 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 | Issue ID | Module | Finding | Status |
 |---|---|---|---|
 | MP-WF-07 | Worker Execution / Handler Registry | Worker lease claim previously had no task-type handler allowlist. | Claim now requires an explicit allowlist and SQL-enforces it; CI pending; worker process and actual task handlers still pending |
+
+
+## 28. Separate Background Worker Runtime Scaffold (2026-11-18)
+
+**Implemented on the PR feature branch:**
+- Added `agentTaskWorkerRuntime.ts` with an explicit task-handler registry, sequential task processing, lease heartbeat/abort on lease loss, bounded poll intervals, and safe failure codes.
+- The runtime refuses to start unless `MASTER_PROJECT_WORKER_ENABLED=true`, at least one handler is explicitly registered, and the required queue/tenant migration versions are present in `schema_migrations`.
+- Added `agentWorker.ts` as a separate process entrypoint with SIGINT/SIGTERM graceful stop handling and `npm run worker` script. The normal web server startup is not changed.
+- No task handlers are registered by default. Therefore the worker cannot claim or execute any task until reviewed handlers are added in a later change.
+
+**Security boundary:** no model/provider calls, no API keys, no auto migrations, no task execution by default. A handler receives an AbortSignal and must honor it; lease loss aborts the handler and prevents completion. Runtime failures log only a fixed safe message, not raw task/provider/database details.
+
+**Verification boundary:** source + CI only. The worker was not launched, environment flags were not enabled, no DB connection/migration was attempted, no task was claimed, and no deployment/paid API call occurred.
+
+| Issue ID | Module | Finding | Status |
+|---|---|---|---|
+| MP-WF-07 | Background Worker Runtime | Lease primitives existed without a separately managed process lifecycle. | Runtime scaffold + disabled-by-default entrypoint committed; CI pending; no registered handlers or live worker |
