@@ -102,7 +102,7 @@ class MemoryAuthDb {
           return { rows: [{ id: task.id, owner_id: task.owner_id }] };
         }
         if (q.startsWith('insert into agent_task_events')) {
-          this.taskEvents.push({ task_id: values[0], tenant_id: values[1], owner_id: values[2], event_type: values[3], status: values[5] });
+          const eventType = sql.match(/VALUES\\s*\\(\\$1,\\s*\\$2,\\s*\\$3,\\s*'([^']+)'/i)?.[1] || 'unknown';\n          this.taskEvents.push({ task_id: values[0], tenant_id: values[1], owner_id: values[2], event_type: eventType, status: 'recorded' });
           return { rows: [] };
         }
         if (q.includes('from app_email_otp_challenges') && q.includes('for update')) {
@@ -379,7 +379,7 @@ test('one Master login session accesses AAKSH work and Master approvals through 
   assert.equal(create.status, 201);
   const created = await create.json() as Row;
   const taskId = created.task.id;
-  assert.equal(created.task.status, 'waiting_approval');
+  assert.equal(created.task.status, 'awaiting_approval');
   assert.equal(db.tasks.length, 1);
   assert.equal(db.tasks[0].tenant_id, db.tenants[0].id);
 
