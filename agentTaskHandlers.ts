@@ -6,7 +6,7 @@ import {
 
 const MAX_RESULT_BYTES = 48 * 1024;
 
-const readProjectStatus: AgentTaskHandler = async (task, { signal }) => {
+export const readProjectStatusHandler: AgentTaskHandler = async (task, { signal }) => {
   if (task.task_type !== 'read_only' || task.payload?.action !== 'read_project_status') {
     throw new Error('Unsupported read-only action.');
   }
@@ -34,4 +34,4 @@ const readProjectStatus: AgentTaskHandler = async (task, { signal }) => {
 };
 
 // Only this fixed, read-only action is registered. No arbitrary paths or shell commands.
-registerAgentTaskHandler('read_only', readProjectStatus);
+registerAgentTaskHandler('read_only', readProjectStatusHandler);
