@@ -19,7 +19,8 @@ class WorkerDb {
           original_prompt: 'Read a report', normalized_task: null, payload: {},
           attempts: 1, max_attempts: 3, lease_owner: values[0], lease_expires_at: new Date(Date.now() + 120000).toISOString()
         }] : [] };
-        if (/UPDATE agent_tasks/.test(sql) && /LEASE_EXPIRED_MAX_ATTEMPTS/.test(sql)) return { rows: [] };\n        if (/UPDATE agent_tasks/.test(sql)) return { rows: [{ id: TASK_ID, owner_id: 'creator-1', status: /CASE WHEN attempts/.test(sql) ? 'retry_wait' : 'completed' }] };
+        if (/UPDATE agent_tasks/.test(sql) && /LEASE_EXPIRED_MAX_ATTEMPTS/.test(sql)) return { rows: [] };
+        if (/UPDATE agent_tasks/.test(sql)) return { rows: [{ id: TASK_ID, owner_id: 'creator-1', status: /CASE WHEN attempts/.test(sql) ? 'retry_wait' : 'completed' }] };
         return { rows: [] };
       },
       release: () => undefined
