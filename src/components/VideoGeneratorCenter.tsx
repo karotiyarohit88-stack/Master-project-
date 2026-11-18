@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getCsrfHeaders } from '../utils/csrf';
 import { 
   Video, 
   Sparkles, 
@@ -75,7 +76,7 @@ export const VideoGeneratorCenter: React.FC = () => {
     try {
       const res = await fetch('/api/video/generate-script', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({
           topic: topic.trim(),
           duration,
@@ -117,7 +118,7 @@ export const VideoGeneratorCenter: React.FC = () => {
     try {
       const res = await fetch('/api/video/generate-voice', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({
           text: script,
           voiceId: selectedVoice
@@ -160,7 +161,7 @@ export const VideoGeneratorCenter: React.FC = () => {
     try {
       const res = await fetch('/api/video/render', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({
           topic: topic.trim(),
           script: script.trim(),
