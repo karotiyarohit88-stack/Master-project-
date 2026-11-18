@@ -14,6 +14,7 @@ export type AgentTaskHandler = (
 ) => Promise<Record<string, unknown>>;
 
 const handlers = new Map<string, AgentTaskHandler>();
+const activeControllers = new Set<AbortController>();
 let stopping = false;
 
 export function registerAgentTaskHandler(taskType: string, handler: AgentTaskHandler): void {
@@ -30,6 +31,11 @@ export function getRegisteredAgentTaskTypes(): string[] {
 
 export function requestAgentWorkerStop(): void {
   stopping = true;
+  for (const controller of activeControllers) controller.abort();
+}
+
+export function isAgentWorkerStopping(): boolean {
+  return stopping;
 }
 
 function wait(ms: number): Promise<void> {
@@ -62,6 +68,7 @@ async function executeOne(workerId: string, taskTypes: string[]): Promise<boolea
   }
 
   const controller = new AbortController();
+  activeControllers.add(controller);
   let leaseLost = false;
   let heartbeatBusy = false;
   const heartbeat = setInterval(async () => {
@@ -85,18 +92,30 @@ async function executeOne(workerId: string, taskTypes: string[]): Promise<boolea
 
   try {
     const result = await handler(task, { signal: controller.signal, workerId });
-    if (leaseLost || controller.signal.aborted) return true;
+    if (leaseLost) return true;
+    if (controller.signal.aborted) {
+      if (stopping) {
+        await failLeasedAgentTask({
+          taskId: task.id, tenantId: task.tenant_id, workerId, errorCode: 'WORKER_SHUTDOWN'
+        });
+      }
+      return true;
+    }
     await completeLeasedAgentTask({
       taskId: task.id, tenantId: task.tenant_id, workerId, result
     });
   } catch {
     if (!leaseLost) {
       await failLeasedAgentTask({
-        taskId: task.id, tenantId: task.tenant_id, workerId, errorCode: 'HANDLER_EXECUTION_FAILED'
+        taskId: task.id,
+        tenantId: task.tenant_id,
+        workerId,
+        errorCode: stopping && controller.signal.aborted ? 'WORKER_SHUTDOWN' : 'HANDLER_EXECUTION_FAILED'
       });
     }
   } finally {
     clearInterval(heartbeat);
+    activeControllers.delete(controller);
   }
   return true;
 }
