@@ -408,7 +408,7 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 
 **Issue classification:** This is a newly documented source-level confirmation of the existing MP-WF-07 / MP-WF-08 gap, not a separate new issue ID. It also blocks closure of MP-SEC-15 because queue execution and history cannot yet be tenant-scoped when no durable queue API/worker is wired.
 
-**Required implementation before calling delegation real:** introduce authenticated task create/read/cancel/approve endpoints that derive tenant context from the session; write task and event rows transactionally; require non-NULL tenant_id; scope every query, claim, retry, approval, and event read by tenant_id; add a worker claim loop with safe leases and bounded retries; ensure consequential tasks remain waiting_approval until a human approval is recorded; and add cross-tenant denial plus queue lifecycle tests. Do not report an agent as executing/completed until a durable task state transition and worker evidence support it.
+**Remaining implementation before calling delegation real:** connect a real worker claim loop with safe leases and bounded retries; require non-NULL tenant_id for every claim, retry and execution; add task-specific execution handlers and durable result/failure transitions; connect the dashboard UI to the durable task/event APIs; and add database-backed cross-tenant denial tests. The authenticated tenant-scoped task API was added later (Section 24). Do not report an agent as executing/completed until a durable worker state transition and execution evidence support it.
 
 **Verification boundary:** Source files and repository tree were inspected and refetched. No task was enqueued, no worker was run, no database migration was applied, and no production/runtime execution was tested.
 
@@ -417,3 +417,31 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 | MP-WF-07 | Worker Delegation / Orchestration | Delegation endpoint only mutates an in-memory status and audit log; no durable queue or real worker execution. | Source-confirmed; implementation pending |
 | MP-WF-08 | Workflow History / Notifications | Workflow modal state/logs are callback-driven UI state; durable task/event history is not wired to the interface. | Source-confirmed; implementation pending |
 | MP-SEC-15 | Agent Task Queue / Tenant Isolation | Tenant queue schema exists but no tenant-scoped queue API or worker uses it. | Schema committed; API/worker tenant predicates and cross-tenant tests pending |
+
+
+## 24. Tenant-Scoped Durable Agent Task API (2026-11-18)
+
+**Implemented on the PR feature branch:**
+- Added `taskQueue.ts` with authenticated tenant-scoped endpoints mounted at `/api/tasks` in `server.ts`.
+- `POST /api/tasks` derives the tenant and user only from server-resolved session context, validates task type/prompt/payload/idempotency key, and writes the task plus its initial event in one PostgreSQL transaction.
+- Every new task is conservatively created with `requires_approval = TRUE` and `status = 'waiting_approval'`; the client cannot request automatic execution.
+- `GET /api/tasks` filters history by the resolved tenant ID. `GET /api/tasks/:taskId/events` first confirms the parent task belongs to that tenant and then filters events by the same tenant.
+- `POST /api/tasks/:taskId/approve` is limited to tenant Owner/Admin, performs a tenant-filtered conditional state transition, records the approver in event details, and explicitly returns `executionStarted: false`.
+- `POST /api/tasks/:taskId/cancel` is tenant-filtered; a task creator may cancel their own not-yet-running task, while tenant Owner/Admin may cancel any not-yet-running task in that tenant.
+- Idempotent creation uses the existing owner/idempotency partial unique index and `ON CONFLICT DO NOTHING`, avoiding an aborted PostgreSQL transaction during replay.
+- Event `owner_id` remains the task creator; the approving/cancelling actor is recorded separately in event details.
+- The route is mounted behind `requireTenantMembership`, after the global session and CSRF guards. No client-supplied tenant ID is accepted.
+
+**Files changed:** `taskQueue.ts`, `server.ts`, `tests/taskQueue.test.ts`.
+
+**Fail-closed rollout:** If the PostgreSQL pool is unavailable, tenant membership cannot be resolved, or task/tenant schema is missing, the API returns an error and does not fall back to in-memory tasks. Existing legacy tasks with NULL tenant_id are not returned or modified by these endpoints. No worker claim or execution endpoint exists yet; approving a task only moves it to `queued` and does not execute it.
+
+**Tests and CI:** Added four API tests covering durable creation + mandatory approval, tenant-filtered task history, Owner/Admin-only approval with no execution claim, and tenant-filtered event history. Initial CI run `44256003586` exposed three incorrect regular-expression assertions in the new tests (not an application typecheck failure); those assertions were corrected. GitHub Actions run `44256188724` for commit `5229f5d5e1b976c65ae832ec93c5b3872d2bae0d` completed the dependency install, TypeScript check, all tests, and production build successfully. The CI job status was still finalizing when this status entry was prepared; confirm the run conclusion before treating it as fully complete.
+
+**Not verified:** PostgreSQL migrations have NOT been applied; no live DB query, worker execution, deployed HTTP test, UI integration, or production deployment was performed. The queue API source/tests do not certify cross-tenant isolation against a real PostgreSQL database.
+
+| Issue ID | Module | Finding | Status |
+|---|---|---|---|
+| MP-WF-07 | Worker Delegation / Orchestration | Old delegation endpoint remains an in-memory status mutation; the new durable task API now accepts and approves tasks but no worker claims or executes them. | Task API committed and CI checks passed; worker claim/lease/handler and actual execution pending |
+| MP-WF-08 | Workflow History / Notifications | Durable task and event history API exists, but dashboard UI, workflow lifecycle, progress notifications, and worker event writes are not connected. | API + unit tests committed; UI/worker integration pending |
+| MP-SEC-15 | Agent Task Queue / Tenant Isolation | Queue API create/list/approve/cancel/event reads now use authenticated tenant context and tenant predicates; migration and runtime DB verification remain outstanding. | Source implementation committed; CI checks passed; migrations unapplied; database-backed cross-tenant tests and worker scoping pending |
