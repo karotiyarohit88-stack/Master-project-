@@ -11,7 +11,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { GoogleGenAI } from '@google/genai';
 import { applyPendingPostgresMigrations, checkPostgresConnection, getPostgresMigrationStatus } from './database.ts';
-import { createAuthGuards, createAuthRouter } from './auth.ts';
+import { createAuthGuards, createAuthRouter, createCsrfMutationGuard } from './auth.ts';
 import { createSecretsRouter, resolveActiveSecretsForOwner, revokeSecretsForOwner, saveSecretForOwner } from './secrets.ts';
 import createSecurityMiddleware, { createRateLimitMiddleware } from './server/config/security.middleware.js';
 import { createRuntimeSecretsMiddleware, getRuntimeSecret } from './server/runtime-secrets-context.ts';
@@ -60,6 +60,11 @@ app.use('/api', (req, res, next) => {
   if (publicHealth || authEndpoint) return next();
   return requireSession(req, res, next);
 });
+
+// Enforce session-bound CSRF validation for every authenticated API mutation.
+// The auth router is mounted above this middleware and applies its own route-specific
+// CSRF checks; all remaining /api mutation routes are browser-session protected.
+app.use('/api', createCsrfMutationGuard(authGuards.requireCsrf));
 
 // Owner role is required for configuration, credential, approval, and publishing
 // mutations. Ordinary authenticated members retain access to non-admin workflows.
