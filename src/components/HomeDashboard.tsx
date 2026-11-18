@@ -547,19 +547,15 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                 <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center justify-center group-hover:bg-emerald-600 group-hover:text-white transition-colors">
                   <Activity className="w-5 h-5" />
                 </div>
-                <span className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded-full font-bold border ${
-                  currentTaskStatus === 'idle' ? 'bg-slate-100 text-slate-600 border-slate-200' :
-                  currentTaskStatus === 'Completed' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
-                  'bg-amber-50 text-amber-800 border-amber-200 animate-pulse'
-                }`}>
-                  {currentTaskStatus}
+                <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full font-bold border bg-slate-100 text-slate-600 border-slate-200">
+                  Queue
                 </span>
               </div>
               <h4 className="font-bold text-slate-900 text-sm group-hover:text-emerald-700 transition-colors">
                 Task Status Tracker
               </h4>
               <p className="text-xs text-slate-500 leading-relaxed">
-                Real-time task execution progress, dry-run validation, and pipeline telemetry.
+                Tenant-scoped task records, approval decisions, and activity history. Worker execution remains separately gated.
               </p>
             </div>
             <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs font-semibold text-emerald-700">
@@ -591,7 +587,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
 
           {/* Card 10: Human Approval Gate */}
           <div
-            onClick={() => onSelectView('tasks')}
+            onClick={() => onSelectView('publishing')}
             className="group p-4 rounded-2xl bg-white border border-slate-200/90 hover:border-emerald-500/80 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between space-y-3"
           >
             <div className="space-y-2">
