@@ -30,7 +30,7 @@ class WorkerDb {
 
 test('worker claims only approved, non-null-tenant tasks with atomic SKIP LOCKED lease', async () => {
   const db = new WorkerDb();
-  const task = await claimNextAgentTask('worker-a', { pool: db as any, leaseSeconds: 120 });
+  const task = await claimNextAgentTask('worker-a', { pool: db as any, leaseSeconds: 120, taskTypes: ['read_only'] });
   assert.equal(task?.id, TASK_ID);
   const claim = db.queries.find(x => /WITH candidate AS/.test(x.sql));
   assert.ok(claim);
@@ -39,12 +39,13 @@ test('worker claims only approved, non-null-tenant tasks with atomic SKIP LOCKED
   assert.match(claim!.sql, /approved_by IS NOT NULL AND approved_at IS NOT NULL/);
   assert.equal(claim!.values[0], 'worker-a');
   assert.equal(claim!.values[1], 120);
+  assert.deepEqual(claim!.values[2], ['read_only']);
   assert.ok(db.queries.some(x => /INSERT INTO agent_task_events/.test(x.sql)));
 });
 
 test('worker returns no task and records no event when queue is empty', async () => {
   const db = new WorkerDb(); db.returnTask = false;
-  assert.equal(await claimNextAgentTask('worker-a', { pool: db as any }), null);
+  assert.equal(await claimNextAgentTask('worker-a', { pool: db as any, taskTypes: ['read_only'] }), null);
   assert.equal(db.queries.some(x => /INSERT INTO agent_task_events/.test(x.sql)), false);
 });
 
@@ -85,7 +86,7 @@ test('invalid worker identity is rejected before touching the database', async (
 
 test('expired final-attempt leases are terminalized rather than stranded forever', async () => {
   const db = new WorkerDb();
-  await claimNextAgentTask('worker-a', { pool: db as any });
+  await claimNextAgentTask('worker-a', { pool: db as any, taskTypes: ['read_only'] });
   const sweep = db.queries.find(x => /LEASE_EXPIRED_MAX_ATTEMPTS/.test(x.sql));
   assert.ok(sweep);
   assert.match(sweep!.sql, /tenant_id IS NOT NULL/);
@@ -103,4 +104,20 @@ test('lease renewal requires the current tenant, worker and unexpired lease', as
   assert.match(update!.sql, /tenant_id = \$2/);
   assert.match(update!.sql, /lease_owner = \$3/);
   assert.equal(update!.values[3], 900);
+});
+
+
+test('worker refuses to claim when no registered task types are supplied', async () => {
+  const db = new WorkerDb();
+  assert.equal(await claimNextAgentTask('worker-a', { pool: db as any }), null);
+  assert.equal(db.queries.length, 0);
+});
+
+test('worker claim SQL is restricted to its explicit handler allowlist', async () => {
+  const db = new WorkerDb();
+  await claimNextAgentTask('worker-a', { pool: db as any, taskTypes: ['read_only', 'user_request'] });
+  const claim = db.queries.find(x => /WITH candidate AS/.test(x.sql));
+  assert.ok(claim);
+  assert.match(claim!.sql, /task_type = ANY\(\$3::text\[\]\)/);
+  assert.deepEqual(claim!.values[2], ['read_only', 'user_request']);
 });
