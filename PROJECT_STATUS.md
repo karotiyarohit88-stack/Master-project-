@@ -445,3 +445,25 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 | MP-WF-07 | Worker Delegation / Orchestration | Old delegation endpoint remains an in-memory status mutation; the new durable task API now accepts and approves tasks but no worker claims or executes them. | Task API committed and CI checks passed; worker claim/lease/handler and actual execution pending |
 | MP-WF-08 | Workflow History / Notifications | Durable task and event history API exists, but dashboard UI, workflow lifecycle, progress notifications, and worker event writes are not connected. | API + unit tests committed; UI/worker integration pending |
 | MP-SEC-15 | Agent Task Queue / Tenant Isolation | Queue API create/list/approve/cancel/event reads now use authenticated tenant context and tenant predicates; migration and runtime DB verification remain outstanding. | Source implementation committed; CI checks passed; migrations unapplied; database-backed cross-tenant tests and worker scoping pending |
+
+
+## 25. Atomic Agent Worker Lease Lifecycle Foundation (2026-11-18)
+
+**Implemented on the PR feature branch:**
+- Added `agentTaskWorker.ts` with internal server-side primitives for atomic claim, lease renewal, completion, and failure/retry transitions. These are not public HTTP endpoints and are not yet started as a background worker process.
+- Claim uses a PostgreSQL transaction and `FOR UPDATE SKIP LOCKED`, excludes NULL-tenant legacy tasks, requires a recorded approval for approval-gated tasks, checks availability and attempt limits, and records the claim event in the same transaction.
+- Expired running leases may be reclaimed by another worker. A stale worker cannot complete/fail a task after its lease expires or ownership changes because completion/failure updates require matching task ID, tenant ID, lease owner, running status, and an unexpired lease.
+- Lease renewal is bounded to 30–900 seconds and requires the same tenant, worker ID, running status, and a still-valid lease.
+- Failure transitions to `retry_wait` with a bounded 1–3600 second delay while attempts remain; otherwise it transitions to `failed`. Only a constrained error code is persisted, not arbitrary provider error text.
+- Expired leases at the maximum attempt count are terminalized as failed and an event is recorded, avoiding permanently stranded running tasks.
+- Completion, failure, lease recovery, and claim events preserve the task creator in event `owner_id`; worker identity is stored separately in event details.
+
+**Tests and CI:** Added `tests/agentTaskWorker.test.ts` covering atomic tenant-safe claim predicates, no-task behavior, lease-owner/tenant checks on completion, bounded retry/error recording, invalid worker identity, exhausted lease terminalization, and lease renewal. An initial TypeScript check caught a malformed newline in the test mock; it was corrected. GitHub Actions run `44256657348` for commit `e35c168e4e73fe883f622db2c7908185694af056` completed successfully: locked dependency install, TypeScript check, all tests, and production build passed.
+
+**Important limitation:** This is the queue's lease/state-transition foundation, not a running worker or an AI execution engine. No task handler registry, model/tool invocation, background process, scheduler, heartbeat loop, or UI event subscription has been connected. Do not mark tasks as executed merely because they were claimed. The tenant/task migrations remain unapplied; no PostgreSQL runtime test or deployment was performed.
+
+| Issue ID | Module | Finding | Status |
+|---|---|---|---|
+| MP-WF-07 | Worker Delegation / Orchestration | Durable task API and atomic worker lease lifecycle primitives exist; no background worker process or actual task handler executes work yet. | Source + tests committed; CI run 44256657348 passed; worker process/handlers/runtime pending |
+| MP-WF-08 | Workflow History / Notifications | Task/event persistence API and worker lifecycle event writes exist; dashboard UI and real-time progress notifications are not connected. | Backend foundation committed; UI/worker process integration pending |
+| MP-SEC-15 | Agent Task Queue / Tenant Isolation | Task API and worker claim/complete/fail transitions use tenant predicates and reject NULL tenant IDs. | Source + tests committed; CI run 44256657348 passed; migrations unapplied and database-backed cross-tenant runtime tests pending |
