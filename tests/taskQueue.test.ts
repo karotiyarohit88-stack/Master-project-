@@ -20,7 +20,7 @@ class TaskDb {
 
   async query(sql: string, values: unknown[] = []) {
     this.queries.push({ sql: sql.replace(/\s+/g, ' ').trim(), values });
-    if (/SELECT id, owner_id, task_type, status, result FROM agent_tasks/.test(sql)) return { rows: [{ id: TASK_ID, owner_id: this.resultOwnerId, task_type: 'read_only', status: this.resultStatus, result: { action: 'read_project_status', file: 'PROJECT_STATUS.md', content: '# Master Project AI Agent' } }] };
+    if (/SELECT id, owner_id, task_type, status, result\\s+FROM agent_tasks/.test(sql)) return { rows: [{ id: TASK_ID, owner_id: this.resultOwnerId, task_type: 'read_only', status: this.resultStatus, result: { action: 'read_project_status', file: 'PROJECT_STATUS.md', content: '# Master Project AI Agent' } }] };
     if (/SELECT .* FROM agent_tasks/.test(sql) && /WHERE tenant_id = \$1/.test(sql)) return { rows: [this.task] };
     if (/SELECT id FROM agent_tasks/.test(sql)) return { rows: [{ id: TASK_ID }] };
     if (/SELECT id, event_type/.test(sql)) return { rows: [{ id: 1, event_type: 'created', message: 'created' }] };
