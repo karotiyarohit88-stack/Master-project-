@@ -257,52 +257,94 @@ export function createUnifiedWorkspaceRouter(options: {
     if (!pool) return error(res, 503, 'Shared PostgreSQL task storage is unavailable.');
     const taskId = typeof req.body?.postId === 'string' ? req.body.postId : '';
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(taskId)) return error(res, 400, 'Publishing task ID is invalid.');
-    const client = await pool.connect();
+    if (!['owner', 'admin'].includes(ctx.tenant.role)) return error(res, 403, 'Only a workspace Owner/Admin can publish.');
+    if (!options.dispatchPublishing) return error(res, 503, 'A verified publishing provider adapter is not configured.');
+
+    const leaseOwner = 'publishing:' + ctx.session.id;
+    const claimClient = await pool.connect();
+    let task: Record<string, any> | undefined;
     try {
-      await client.query('BEGIN');
-      const selected = await client.query(
-        `SELECT id, owner_id, payload, status, approved_by, approved_at
-           FROM agent_tasks
-          WHERE id = $1 AND tenant_id = $2 AND payload->>'source' IN ('aaksh', 'master_publishing')
-          FOR UPDATE`,
-        [taskId, ctx.tenant.tenantId]
-      );
-      const task = selected.rows[0];
-      if (!task) {
-        await client.query('ROLLBACK');
-        return error(res, 404, 'Publishing task not found in this workspace.');
-      }
-      if (task.status !== 'queued' || !task.approved_by || !task.approved_at) {
-        await client.query('ROLLBACK');
-        return error(res, 403, 'A workspace Owner/Admin approval is required before publishing.');
-      }
-      if (!options.dispatchPublishing) {
-        await client.query('ROLLBACK');
-        return error(res, 503, 'A verified publishing provider adapter is not configured.');
-      }
-      const provider = await options.dispatchPublishing({ task, ownerId: task.owner_id });
-      if (!provider.externalPostId || provider.externalPostId.length > 200) throw new Error('Provider did not return a valid external post ID.');
-      const completed = await client.query(
+      await claimClient.query('BEGIN');
+      const claimed = await claimClient.query(
         `UPDATE agent_tasks
-            SET status = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW()
-          WHERE id = $1 AND tenant_id = $2 AND status = 'queued'
-          RETURNING id, owner_id`,
-        [taskId, ctx.tenant.tenantId, JSON.stringify({ externalPostId: provider.externalPostId, publicationConfirmed: true })]
+            SET status = 'running', started_at = COALESCE(started_at, NOW()),
+                lease_owner = $3, lease_expires_at = NOW() + INTERVAL '2 minutes',
+                updated_at = NOW()
+          WHERE id = $1 AND tenant_id = $2
+            AND payload->>'source' IN ('aaksh', 'master_publishing')
+            AND status = 'queued' AND requires_approval = TRUE
+            AND approved_by IS NOT NULL AND approved_at IS NOT NULL
+          RETURNING id, owner_id, payload, status, approved_by, approved_at`,
+        [taskId, ctx.tenant.tenantId, leaseOwner]
       );
-      if (!completed.rows[0]) throw new Error('Publishing state changed while provider was processing.');
-      await client.query(
+      task = claimed.rows[0];
+      if (!task) {
+        await claimClient.query('ROLLBACK');
+        return error(res, 409, 'Publishing item is not approved or is already being processed.');
+      }
+      await claimClient.query(
         `INSERT INTO agent_task_events
            (task_id, tenant_id, owner_id, event_type, stage, status, message, details)
-         VALUES ($1, $2, $3, 'published', 'provider', 'completed', $4, $5::jsonb)`,
-        [taskId, ctx.tenant.tenantId, task.owner_id, 'Publishing provider confirmed external publication.', JSON.stringify({ externalPostId: provider.externalPostId })]
+         VALUES ($1, $2, $3, 'dispatch_started', 'provider', 'running', $4, $5::jsonb)`,
+        [taskId, ctx.tenant.tenantId, task.owner_id, 'Approved publishing dispatch started.', JSON.stringify({ approvedBy: task.approved_by })]
       );
-      await client.query('COMMIT');
+      await claimClient.query('COMMIT');
+    } catch {
+      try { await claimClient.query('ROLLBACK'); } catch { /* ignore rollback failure */ }
+      return error(res, 503, 'Publishing dispatch could not be claimed safely.');
+    } finally {
+      claimClient.release();
+    }
+
+    try {
+      const provider = await options.dispatchPublishing({ task, ownerId: task.owner_id });
+      if (!provider.externalPostId || provider.externalPostId.length > 200) throw new Error('Provider did not return a valid external post ID.');
+      const finishClient = await pool.connect();
+      try {
+        await finishClient.query('BEGIN');
+        const completed = await finishClient.query(
+          `UPDATE agent_tasks
+              SET status = 'completed', result = $4::jsonb, completed_at = NOW(), updated_at = NOW(),
+                  lease_owner = NULL, lease_expires_at = NULL
+            WHERE id = $1 AND tenant_id = $2 AND status = 'running' AND lease_owner = $3
+            RETURNING id, owner_id`,
+          [taskId, ctx.tenant.tenantId, leaseOwner, JSON.stringify({ externalPostId: provider.externalPostId, publicationConfirmed: true })]
+        );
+        if (!completed.rows[0]) throw new Error('Publishing lease was lost before completion.');
+        await finishClient.query(
+          `INSERT INTO agent_task_events
+             (task_id, tenant_id, owner_id, event_type, stage, status, message, details)
+           VALUES ($1, $2, $3, 'published', 'provider', 'completed', $4, $5::jsonb)`,
+          [taskId, ctx.tenant.tenantId, task.owner_id, 'Publishing provider confirmed external publication.', JSON.stringify({ externalPostId: provider.externalPostId })]
+        );
+        await finishClient.query('COMMIT');
+      } catch (cause) {
+        try { await finishClient.query('ROLLBACK'); } catch { /* ignore rollback failure */ }
+        throw cause;
+      } finally {
+        finishClient.release();
+      }
       return res.json({ success: true, post: { id: taskId, status: 'published', externalPostId: provider.externalPostId }, mode: 'provider_confirmed', message: 'Provider confirmed publication.' });
     } catch {
-      try { await client.query('ROLLBACK'); } catch { /* ignore rollback failure */ }
-      return error(res, 502, 'Publishing provider did not confirm publication; the item remains uncompleted.');
-    } finally {
-      client.release();
+      const failClient = await pool.connect();
+      try {
+        await failClient.query(
+          `UPDATE agent_tasks
+              SET status = 'failed', last_error = 'PUBLISHING_PROVIDER_UNCONFIRMED',
+                  completed_at = NOW(), updated_at = NOW(), lease_owner = NULL, lease_expires_at = NULL
+            WHERE id = $1 AND tenant_id = $2 AND status = 'running' AND lease_owner = $3`,
+          [taskId, ctx.tenant.tenantId, leaseOwner]
+        );
+        await failClient.query(
+          `INSERT INTO agent_task_events
+             (task_id, tenant_id, owner_id, event_type, stage, status, message, details)
+           VALUES ($1, $2, $3, 'dispatch_failed', 'provider', 'failed', $4, '{}'::jsonb)`,
+          [taskId, ctx.tenant.tenantId, task.owner_id, 'Provider publication was not confirmed.']
+        );
+      } finally {
+        failClient.release();
+      }
+      return error(res, 502, 'Publishing provider did not confirm publication; the task is marked failed for manual reconciliation.');
     }
   });
 
