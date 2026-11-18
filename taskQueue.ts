@@ -224,6 +224,48 @@ export function createAgentTaskRouter(options: { pool?: DbPool | null } = {}) {
     }
   });
 
+  router.post('/:taskId/reject', async (req, res) => {
+    const context = getContext(res);
+    if (!context) return jsonError(res, 401, 'Authenticated tenant context is required.');
+    if (!pool) return jsonError(res, 503, 'Durable task storage is unavailable.');
+    if (!['owner', 'admin'].includes(context.tenant.role)) return jsonError(res, 403, 'Only a workspace Owner or Admin can reject tasks.');
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(req.params.taskId)) {
+      return jsonError(res, 400, 'Task ID is invalid.');
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `UPDATE agent_tasks
+            SET status = 'rejected', updated_at = NOW(), completed_at = NOW(),
+                lease_owner = NULL, lease_expires_at = NULL
+          WHERE id = $1 AND tenant_id = $2 AND status = 'waiting_approval'
+            AND requires_approval = TRUE
+          RETURNING id, owner_id`,
+        [req.params.taskId, context.tenant.tenantId]
+      );
+      if (!result.rows[0]) {
+        await client.query('ROLLBACK');
+        return jsonError(res, 409, 'Task is not awaiting approval in this workspace.');
+      }
+      await client.query(
+        `INSERT INTO agent_task_events
+           (task_id, tenant_id, owner_id, event_type, stage, status, message, details)
+         VALUES ($1, $2, $3, 'rejected', 'approval', 'rejected', $4, $5::jsonb)`,
+        [req.params.taskId, context.tenant.tenantId, result.rows[0].owner_id,
+          'Workspace Owner/Admin rejected the task before execution.',
+          JSON.stringify({ rejectedBy: context.session.id })]
+      );
+      await client.query('COMMIT');
+      return res.json({ taskId: req.params.taskId, status: 'rejected', executionStarted: false });
+    } catch {
+      try { await client.query('ROLLBACK'); } catch { /* ignore rollback failure */ }
+      return jsonError(res, 503, 'Task rejection could not be recorded.');
+    } finally {
+      client.release();
+    }
+  });
+
   router.post('/:taskId/cancel', async (req, res) => {
     const context = getContext(res);
     if (!context) return jsonError(res, 401, 'Authenticated tenant context is required.');
