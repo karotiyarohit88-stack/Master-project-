@@ -215,3 +215,27 @@ Added `.github/workflows/ci.yml` on the feature branch. On pushes and pull reque
 | Issue ID | Module | Finding | Status |
 | :--- | :--- | :--- | :--- |
 | MP-ARCH-12 | Unified Dashboard / Chief AI Orchestration | The intended one-dashboard architecture and shared Chief AI → Work Engine → independent Audit lifecycle were not captured in one implementation baseline. | Design baseline committed; implementation, route integration, runtime verification and release gates pending |
+
+
+## 14. Security Audit — Owner Guard Coverage Hardening (2026-11-18)
+
+**New finding MP-SEC-13:** The global owner-only mutation allow-list did not include several authenticated mutation endpoints. As a result, a signed-in non-owner member could delegate a worker mission, invoke provider-backed video script/voice generation, enqueue a video render, prepare a publishing draft (which can call Gemini), write Sheets sync records, or trigger the manual AutoPilot endpoint after the AutoPilot safety switch was enabled.
+
+**Minimal fix committed:** `server.ts` now includes these paths in the existing server-side `requireOwner` guard:
+- `POST /api/worker-agents/delegate`
+- `POST /api/video/generate-script`
+- `POST /api/video/generate-voice`
+- `POST /api/video/render`
+- `POST /api/publishing/prepare`
+- `POST /api/sheets/sync`
+- `POST /api/autopilot/trigger/manual`
+
+**Evidence:** The modified `server.ts` was fetched again from the target branch. All seven route patterns were present in the global owner-only guard. Commit: `dbb48ecffcdc3b209dec96b32409b6d028396e82`.
+
+**Status:** Source-level guard coverage verified. GitHub Actions for this commit was still `in_progress` at the time of this status update. No local lint/test, HTTP authorization test, live database test, or deployed runtime test is claimed. This role guard reduces member access; it does **not** replace per-action explicit paid-API approval, CSRF coverage, tenant isolation, or a durable task execution engine.
+
+**Next unresolved security work:** Review route-by-route CSRF enforcement and owner/customer data isolation. Also introduce explicit per-call approval/budget enforcement before enabling paid provider execution.
+
+| Issue ID | Module | Finding | Status |
+| :--- | :--- | :--- | :--- |
+| MP-SEC-13 | API Authorization / Provider Actions | Several authenticated mutation endpoints were missing from the global Owner-only mutation guard. | Fixed in source; refetch verified; CI and runtime authorization tests pending |
