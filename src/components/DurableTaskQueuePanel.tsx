@@ -14,7 +14,8 @@ type QueueTask = {
   canCancel: boolean;
 };
 
-type QueueEvent = { id: number; event_type: string; message: string; created_at: string };\ntype QueueResult = { file: string; content: string; truncated: boolean; sourceBytes: number };
+type QueueEvent = { id: number; event_type: string; message: string; created_at: string };
+type QueueResult = { file: string; content: string; truncated: boolean; sourceBytes: number };
 
 const TASK_TYPES = [
   { value: 'read_only', label: 'Read project status (read-only)' },
@@ -30,7 +31,8 @@ export const DurableTaskQueuePanel: React.FC<{ refreshToken?: number }> = ({ ref
   const [tenantRole, setTenantRole] = useState<string>('');
   const [taskType, setTaskType] = useState('user_request');
   const [prompt, setPrompt] = useState('');
-  const [events, setEvents] = useState<Record<string, QueueEvent[]>>({});\n  const [results, setResults] = useState<Record<string, QueueResult>>({});
+  const [events, setEvents] = useState<Record<string, QueueEvent[]>>({});
+  const [results, setResults] = useState<Record<string, QueueResult>>({});
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [workingTask, setWorkingTask] = useState<string | null>(null);
