@@ -58,7 +58,7 @@ async function withServer(role: 'owner' | 'admin' | 'member', run: (url: string,
 test('task creation is durable, tenant-scoped, and waits for human approval', async () => withServer('member', async (url, db) => {
   const response = await fetch(url + '/api/tasks', {
     method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': 'task-001' },
-    body: JSON.stringify({ taskType: 'read_only', prompt: 'Check project status', payload: { source: 'dashboard' } })
+    body: JSON.stringify({ taskType: 'read_only', prompt: 'Check project status', payload: { action: 'read_project_status' } })
   });
   assert.equal(response.status, 201);
   const body = await response.json() as any;
@@ -69,6 +69,17 @@ test('task creation is durable, tenant-scoped, and waits for human approval', as
   assert.equal(insert!.values[0], TENANT_A);
   assert.equal(insert!.values[1], 'user-123');
   assert.ok(db.queries.some(x => /INSERT INTO agent_task_events/.test(x.sql)));
+}));
+
+
+test('read-only task intake rejects unsupported actions', async () => withServer('member', async url => {
+  const response = await fetch(url + '/api/tasks', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ taskType: 'read_only', prompt: 'Read a file', payload: { action: 'read_any_file' } })
+  });
+  assert.equal(response.status, 400);
+  const body = await response.json() as any;
+  assert.match(body.error, /read_project_status/);
 }));
 
 test('task history query always filters by the resolved tenant', async () => withServer('member', async (url, db) => {
