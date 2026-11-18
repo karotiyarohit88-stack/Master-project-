@@ -15,6 +15,7 @@ import {
   Eye
 } from 'lucide-react';
 import { PublishingPost } from '../types';
+import { getCsrfHeaders } from '../utils/csrf';
 
 export const PublishingCenter: React.FC = () => {
   const [queue, setQueue] = useState<PublishingPost[]>([]);
@@ -51,8 +52,7 @@ export const PublishingCenter: React.FC = () => {
   const updateAutoPostPolicy = async (enabled: boolean) => {
     setIsSavingAutoPost(true);
     try {
-      const csrf = document.cookie.split('; ').find(value => value.startsWith('aaksh_csrf='))?.split('=').slice(1).join('=') || '';
-      const res = await fetch('/api/publishing/auto-post-policy', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': decodeURIComponent(csrf) }, body: JSON.stringify({ enabled }) });
+      const res = await fetch('/api/publishing/auto-post-policy', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() }, body: JSON.stringify({ enabled }) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Could not update Auto-Post policy.');
       setAutoPostEnabled(data.enabled === true); setAutoPostSafetyEnabled(data.safetyEnabled === true);
@@ -75,7 +75,7 @@ export const PublishingCenter: React.FC = () => {
     try {
       const res = await fetch('/api/publishing/prepare', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({ topic: newTopic.trim(), platform: newPlatform })
       });
       if (res.ok) {
@@ -97,7 +97,7 @@ export const PublishingCenter: React.FC = () => {
     try {
       const res = await fetch('/api/publishing/approve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({ postId })
       });
       const data = await res.json();
@@ -124,7 +124,7 @@ export const PublishingCenter: React.FC = () => {
     try {
       const res = await fetch('/api/publishing/publish', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({ postId })
       });
       const data = await res.json();
