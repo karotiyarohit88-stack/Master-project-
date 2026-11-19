@@ -25,6 +25,7 @@ import { createAutoPilotSafetyGuard } from './src/utils/autoPilotSafetyGuard.ts'
 import { buildAutomatedContentPackage } from './src/utils/automatedContentPipeline.ts';
 import { buildMultiPlatformAnalytics, buildVerifiedEarningsSummary, evaluatePayoutGuard, type VerifiedEarningEntry } from './src/utils/phase9Accounting.ts';
 import { sanitizeUntrustedText, validateAgentConversationHistory, validateWorkspaceChangePath, wrapUntrustedContext } from './server/security/zeroTrust.ts';
+import { evaluateSystemDoctor } from './server/systemDoctor.ts';
 
 const execAsync = promisify(exec);
 
@@ -1256,6 +1257,40 @@ app.get('/api/health', requireOwnerForSecrets, async (req: Request, res: Respons
       sheets: serverStore.sheets.spreadsheetId ? 'Configured' : 'Local Memory Mirror'
     }
   });
+});
+
+app.get('/api/system-doctor', requireOwnerForSecrets, async (_req: Request, res: Response) => {
+  const database = await checkPostgresConnection();
+  let appliedMigrations: string[] = [];
+  if (database.connected) {
+    try {
+      const status = await getPostgresMigrationStatus();
+      appliedMigrations = status.appliedMigrations;
+    } catch {
+      appliedMigrations = [];
+    }
+  }
+  const rawEncryptionKey = process.env.AAKSH_SECRETS_ENCRYPTION_KEY || '';
+  const encryptionKeyConfigured = /^[a-f0-9]{64}$/i.test(rawEncryptionKey)
+    ? Buffer.from(rawEncryptionKey, 'hex').length === 32
+    : Buffer.from(rawEncryptionKey, 'base64').length === 32;
+  const requiredMigrations = [
+    '20261117_001_app_secrets.sql',
+    '20261118_001_tenant_identity.sql',
+    '20261119_001_owner_audit_logs.sql',
+    '20261119_002_owner_operational_records.sql',
+    '20261119_003_autopilot_record_types.sql'
+  ];
+  const report = evaluateSystemDoctor({
+    databaseConnected: database.connected,
+    appliedMigrations,
+    requiredMigrations,
+    encryptionKeyConfigured,
+    cspMode: process.env.CSP_ENFORCE === 'true' ? 'enforce' : 'report-only',
+    globalProviderKeyFallbackDisabled: true,
+    ownerScopedSecretResolverAvailable: typeof resolveActiveSecretsForOwner === 'function'
+  });
+  return res.status(report.status === 'critical' ? 503 : 200).json(report);
 });
 
 // GET /api/database/status: read-only, live PostgreSQL connectivity and migration state.
