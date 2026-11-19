@@ -1771,6 +1771,9 @@ app.post('/api/connections/test', requireOwnerForSecrets, async (req: Request, r
   }
 
   if (provider === 'openai') {
+    const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id || '';
+    try { await assertOwnerEmergencyHaltClear(ownerId); }
+    catch { return res.status(423).json({ success: false, status: 'blocked', message: 'Emergency halt is active or its durable state is unavailable. OpenAI provider call blocked.' }); }
     if (!getOwnerSecret('openai')) {
       return res.status(403).json({ error: 'Owner-scoped OpenAI API key is not configured.' });
     }
