@@ -240,6 +240,7 @@ function getOwnerSecret(provider: string): string {
     publishing_webhook: ['publishing_webhook'],
     github: ['github', 'GITHUB_TOKEN', 'GH_TOKEN'],
     sheets: ['sheets', 'GOOGLE_SHEETS_KEY'],
+    search: ['search', 'bing_search', 'brave_search', 'tavily_search', 'SEARCH_API_KEY', 'BING_SEARCH_API_KEY', 'BRAVE_SEARCH_API_KEY', 'TAVILY_API_KEY'],
     workspace_client_secret: ['workspace_client_secret', 'GOOGLE_CLIENT_SECRET'],
     workspace_oauth_token: ['workspace_oauth_token', 'GOOGLE_OAUTH_TOKEN'],
     database_url: ['database_url', 'DATABASE_URL', 'POSTGRES_URL'],
