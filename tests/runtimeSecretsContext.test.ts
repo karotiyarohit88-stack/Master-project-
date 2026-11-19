@@ -9,11 +9,12 @@ test('runtime provider credentials are isolated by authenticated Owner and never
   const app = express();
   app.use((req, res, next) => {
     res.locals.authSession = { id: req.header('x-owner-id') || '' };
+    res.locals.tenantContext = { tenantId: req.header('x-tenant-id') || '' };
     next();
   });
-  app.use(createRuntimeSecretsMiddleware(async (ownerId): Promise<Record<string, string>> => {
-    if (ownerId === 'owner-a') return { openai: 'encrypted-owner-a-key' };
-    if (ownerId === 'owner-b') return { openai: 'encrypted-owner-b-key' };
+  app.use(createRuntimeSecretsMiddleware(async (ownerId, tenantId): Promise<Record<string, string>> => {
+    if (ownerId === 'owner-a' && tenantId === 'tenant-a') return { openai: 'encrypted-owner-a-key' };
+    if (ownerId === 'owner-b' && tenantId === 'tenant-b') return { openai: 'encrypted-owner-b-key' };
     return {};
   }));
   app.get('/key', (_req, res) => res.json({
@@ -26,8 +27,8 @@ test('runtime provider credentials are isolated by authenticated Owner and never
   if (!address || typeof address === 'string') throw new Error('Runtime-secret test server did not bind.');
   const base = 'http://127.0.0.1:' + address.port;
   try {
-    const a = await fetch(base + '/key', { headers: { 'x-owner-id': 'owner-a' } });
-    const b = await fetch(base + '/key', { headers: { 'x-owner-id': 'owner-b' } });
+    const a = await fetch(base + '/key', { headers: { 'x-owner-id': 'owner-a', 'x-tenant-id': 'tenant-a' } });
+    const b = await fetch(base + '/key', { headers: { 'x-owner-id': 'owner-b', 'x-tenant-id': 'tenant-b' } });
     const anonymous = await fetch(base + '/key');
     assert.deepEqual(await a.json(), { openai: 'encrypted-owner-a-key', gemini: '' });
     assert.deepEqual(await b.json(), { openai: 'encrypted-owner-b-key', gemini: '' });
