@@ -19,7 +19,7 @@ import createSecurityMiddleware, { createRateLimitMiddleware } from './server/co
 import { createRuntimeSecretsMiddleware, getRuntimeSecret } from './server/runtime-secrets-context.ts';
 import { requireOwnerForSecrets } from './server/requireOwnerSecrets.ts';
 import { createOwnerAuditMiddleware, queueOwnerAuditLog, listOwnerAuditLogs, countOwnerAuditLogs, type OwnerAuditEntry } from './server/ownerAudit.ts';
-import { countOwnerOperationalRecords, listOwnerOperationalRecords, getOwnerOperationalRecord, upsertOwnerOperationalRecord } from './server/ownerOperationalRecords.ts';
+import { countOwnerOperationalRecords, listOwnerOperationalRecords, getOwnerOperationalRecord, upsertOwnerOperationalRecord, deleteOwnerOperationalRecord } from './server/ownerOperationalRecords.ts';
 import { createPublishingDraftForOwner, listOwnerPublishingDrafts, countOwnerPublishingDrafts } from './server/publishingDrafts.ts';
 import { createAutoPilotSafetyGuard } from './src/utils/autoPilotSafetyGuard.ts';
 import { buildAutomatedContentPackage } from './src/utils/automatedContentPipeline.ts';
@@ -3203,12 +3203,14 @@ app.get('/api/autopilot/content-pipeline/latest', (_req:Request,res:Response) =>
 });
 
 // GET /api/autopilot/workflows: List all workflows
-app.get('/api/autopilot/workflows', (req: Request, res: Response) => {
-  res.json({ workflows: autoPilotWorkflows });
+app.get('/api/autopilot/workflows', async (_req: Request, res: Response) => {
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const workflows = await listOwnerOperationalRecords<AutoPilotWorkflow>(tenant.ownerId, tenant.tenantId, 'autopilot_workflow');
+  return res.json({ workflows });
 });
 
 // POST /api/autopilot/workflows: Create new automation workflow
-app.post('/api/autopilot/workflows', (req: Request, res: Response) => {
+app.post('/api/autopilot/workflows', async (req: Request, res: Response) => {
   const {
     name,
     description = '',
@@ -3329,7 +3331,8 @@ app.post('/api/autopilot/workflows', (req: Request, res: Response) => {
     createdAt: new Date().toISOString()
   };
 
-  autoPilotWorkflows.unshift(newWorkflow);
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  await upsertOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'autopilot_workflow', newWorkflow);
 
   recordAudit({
     category: 'autopilot',
@@ -3342,9 +3345,10 @@ app.post('/api/autopilot/workflows', (req: Request, res: Response) => {
 });
 
 // PUT /api/autopilot/workflows/:id: Update existing workflow
-app.put('/api/autopilot/workflows/:id', (req: Request, res: Response) => {
+app.put('/api/autopilot/workflows/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const wf = autoPilotWorkflows.find(w => w.id === id);
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const wf = await getOwnerOperationalRecord<AutoPilotWorkflow>(tenant.ownerId, tenant.tenantId, 'autopilot_workflow', id);
   if (!wf) return res.status(404).json({ error: 'Workflow not found.' });
 
   const { name, description, topic, targetPlatform, language, requireApprovalBeforePublish, maxRetries, triggerType, triggerConfig, tools } = req.body;
@@ -3360,6 +3364,7 @@ app.put('/api/autopilot/workflows/:id', (req: Request, res: Response) => {
   if (triggerConfig) wf.triggerConfig = triggerConfig;
   if (Array.isArray(tools)) wf.tools = tools;
 
+  await upsertOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'autopilot_workflow', wf);
   recordAudit({
     category: 'autopilot',
     action: `Workflow Updated [${id}]`,
@@ -3371,12 +3376,14 @@ app.put('/api/autopilot/workflows/:id', (req: Request, res: Response) => {
 });
 
 // POST /api/autopilot/workflows/:id/toggle: Enable / Pause workflow
-app.post('/api/autopilot/workflows/:id/toggle', (req: Request, res: Response) => {
+app.post('/api/autopilot/workflows/:id/toggle', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const wf = autoPilotWorkflows.find(w => w.id === id);
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const wf = await getOwnerOperationalRecord<AutoPilotWorkflow>(tenant.ownerId, tenant.tenantId, 'autopilot_workflow', id);
   if (!wf) return res.status(404).json({ error: 'Workflow not found.' });
 
   wf.enabled = !wf.enabled;
+  await upsertOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'autopilot_workflow', wf);
 
   recordAudit({
     category: 'autopilot',
@@ -3389,12 +3396,12 @@ app.post('/api/autopilot/workflows/:id/toggle', (req: Request, res: Response) =>
 });
 
 // DELETE /api/autopilot/workflows/:id: Delete workflow
-app.delete('/api/autopilot/workflows/:id', (req: Request, res: Response) => {
+app.delete('/api/autopilot/workflows/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const index = autoPilotWorkflows.findIndex(w => w.id === id);
-  if (index === -1) return res.status(404).json({ error: 'Workflow not found.' });
-
-  const removed = autoPilotWorkflows.splice(index, 1)[0];
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const removed = await getOwnerOperationalRecord<AutoPilotWorkflow>(tenant.ownerId, tenant.tenantId, 'autopilot_workflow', id);
+  if (!removed) return res.status(404).json({ error: 'Workflow not found.' });
+  await deleteOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'autopilot_workflow', id);
 
   recordAudit({
     category: 'autopilot',
@@ -3409,7 +3416,8 @@ app.delete('/api/autopilot/workflows/:id', (req: Request, res: Response) => {
 // POST /api/autopilot/workflows/:id/run: Execute workflow pipeline immediately
 app.post('/api/autopilot/workflows/:id/run', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const wf = autoPilotWorkflows.find(w => w.id === id);
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const wf = await getOwnerOperationalRecord<AutoPilotWorkflow>(tenant.ownerId, tenant.tenantId, 'autopilot_workflow', id);
   if (!wf) return res.status(404).json({ error: 'Workflow not found.' });
 
   const execId = 'exec_' + Date.now() + '_' + Math.random().toString(36).substring(2, 5);
@@ -3487,12 +3495,13 @@ app.post('/api/autopilot/workflows/:id/run', async (req: Request, res: Response)
     ]
   };
 
-  workflowExecutions.unshift(execution);
+  await upsertOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'workflow_execution', execution);
 
   // Update workflow stats
   wf.totalRuns += 1;
   wf.lastRunAt = now.toISOString();
   wf.lastStatus = execution.status === 'completed' ? 'success' : execution.status === 'waiting_approval' ? 'waiting_approval' : execution.status === 'failed' ? 'failed' : 'running';
+  await upsertOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'autopilot_workflow', wf);
 
   recordAudit({
     category: 'autopilot',
@@ -3505,14 +3514,17 @@ app.post('/api/autopilot/workflows/:id/run', async (req: Request, res: Response)
 });
 
 // GET /api/autopilot/executions: Get execution history
-app.get('/api/autopilot/executions', (req: Request, res: Response) => {
-  res.json({ executions: workflowExecutions });
+app.get('/api/autopilot/executions', async (_req: Request, res: Response) => {
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const executions = await listOwnerOperationalRecords<WorkflowExecutionRecord>(tenant.ownerId, tenant.tenantId, 'workflow_execution');
+  return res.json({ executions });
 });
 
 // POST /api/autopilot/executions/:id/approve: Approve staged execution
-app.post('/api/autopilot/executions/:id/approve', (req: Request, res: Response) => {
+app.post('/api/autopilot/executions/:id/approve', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const exec = workflowExecutions.find(e => e.id === id);
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const exec = await getOwnerOperationalRecord<WorkflowExecutionRecord>(tenant.ownerId, tenant.tenantId, 'workflow_execution', id);
   if (!exec) return res.status(404).json({ error: 'Execution record not found.' });
 
   if (exec.status !== 'waiting_approval') {
@@ -3537,10 +3549,12 @@ app.post('/api/autopilot/executions/:id/approve', (req: Request, res: Response) 
   exec.logs.push(`[${new Date().toLocaleTimeString()}] Human operator approved execution with token [${approvalToken}]. Pipeline finished.`);
 
   // If there is a corresponding workflow, update its status
-  const wf = autoPilotWorkflows.find(w => w.id === exec.workflowId);
+  const wf = await getOwnerOperationalRecord<AutoPilotWorkflow>(tenant.ownerId, tenant.tenantId, 'autopilot_workflow', exec.workflowId);
   if (wf) {
     wf.lastStatus = 'success';
+    await upsertOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'autopilot_workflow', wf);
   }
+  await upsertOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'workflow_execution', exec);
 
   recordAudit({
     category: 'approval',
@@ -3554,20 +3568,24 @@ app.post('/api/autopilot/executions/:id/approve', (req: Request, res: Response) 
 });
 
 // POST /api/autopilot/executions/:id/retry: Retry execution
-app.post('/api/autopilot/executions/:id/retry', (req: Request, res: Response) => {
+app.post('/api/autopilot/executions/:id/retry', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const exec = workflowExecutions.find(e => e.id === id);
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const exec = await getOwnerOperationalRecord<WorkflowExecutionRecord>(tenant.ownerId, tenant.tenantId, 'workflow_execution', id);
   if (!exec) return res.status(404).json({ error: 'Execution record not found.' });
 
   exec.status = 'running';
   exec.progress = 50;
   exec.logs.push(`[${new Date().toLocaleTimeString()}] Execution retried by operator.`);
+  await upsertOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'workflow_execution', exec);
 
-  setTimeout(() => {
+  setTimeout(async () => {
     exec.status = 'completed';
     exec.progress = 100;
     exec.completedAt = new Date().toISOString();
     exec.logs.push(`[${new Date().toLocaleTimeString()}] Retried execution completed successfully.`);
+    try { await upsertOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'workflow_execution', exec); }
+    catch (error) { console.error('Failed to persist AutoPilot retry completion:', error); }
   }, 1000);
 
   res.json({ success: true, execution: exec });
