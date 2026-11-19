@@ -242,3 +242,41 @@ test('secret revocation is restricted to the selected Owner and provider', async
   assert.match(capturedSql, /lower\(provider\) = lower\(\$3\)/i);
   assert.deepEqual(capturedValues, [OWNER_ID, OWNER_TENANT_ID, 'github']);
 });
+
+test('legacy encrypted Owner secrets are lazily re-encrypted with tenant-bound AES-GCM associated data', async () => {
+  const key = randomBytes(32);
+  const id = '44444444-4444-4444-8444-444444444444';
+  const legacy = encryptSecret('tenant-search-key-value', key, OWNER_ID + ':' + id);
+  const row: Row = {
+    id, owner_id: OWNER_ID, tenant_id: OWNER_TENANT_ID, name: 'Brave Search Key', provider: 'search',
+    ciphertext: legacy.ciphertext, nonce: legacy.nonce, auth_tag: legacy.authTag
+  };
+  let updateSql = '';
+  let updateValues: any[] = [];
+  const pool = {
+    async connect() {
+      return {
+        async query(sql: string, values: any[] = []) {
+          const normalized = sql.trim().toLowerCase();
+          if (normalized.startsWith('select id, provider')) return { rows: [row] };
+          if (normalized.startsWith('update app_secrets')) {
+            updateSql = sql;
+            updateValues = values;
+            row.ciphertext = values[3];
+            row.nonce = values[4];
+            row.auth_tag = values[5];
+            return { rows: [] };
+          }
+          return { rows: [] };
+        },
+        release: () => undefined
+      };
+    }
+  };
+  const resolved = await resolveActiveSecretsForOwner(OWNER_ID, OWNER_TENANT_ID, { pool, encryptionKey: key.toString('base64') });
+  assert.equal(resolved.search, 'tenant-search-key-value');
+  assert.match(updateSql, /owner_id = \$2 AND tenant_id = \$3/i);
+  assert.deepEqual(updateValues.slice(0, 3), [id, OWNER_ID, OWNER_TENANT_ID]);
+  assert.equal(decryptSecret({ ciphertext: row.ciphertext, nonce: row.nonce, authTag: row.auth_tag }, key, OWNER_ID + ':' + OWNER_TENANT_ID + ':' + id), 'tenant-search-key-value');
+  assert.throws(() => decryptSecret({ ciphertext: row.ciphertext, nonce: row.nonce, authTag: row.auth_tag }, key, OWNER_ID + ':' + id));
+});
