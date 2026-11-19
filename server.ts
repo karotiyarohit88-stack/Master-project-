@@ -51,6 +51,9 @@ app.use('/api', createRateLimitMiddleware({
 }));
 app.use(express.json({ limit: '8mb' }));
 
+// Minimal unauthenticated liveness endpoint for infrastructure probes only.
+app.get('/healthz', (_req, res) => res.status(200).json({ status: 'ok' }));
+
 // Application authentication endpoints; legacy business routes remain unchanged in Phase 1.
 app.use('/api/auth', createAuthRouter());
 
@@ -61,9 +64,8 @@ const requireOwner = authGuards.requireRole('owner');
 // Every application API, including AutoPilot webhooks, requires a valid
 // application session. Login sessions are issued only after email OTP verification.
 app.use('/api', (req, res, next) => {
-  const publicHealth = req.path === '/health';
   const authEndpoint = req.path === '/auth' || req.path.startsWith('/auth/');
-  if (publicHealth || authEndpoint) return next();
+  if (authEndpoint) return next();
   return requireSession(req, res, next);
 });
 
@@ -75,9 +77,8 @@ app.use('/api', createCsrfMutationGuard(authGuards.requireCsrf));
 // Every authenticated API is bound to exactly one active tenant from the session.
 // Public health and auth endpoints are handled separately.
 app.use('/api', (req, res, next) => {
-  const publicHealth = req.path === '/health';
   const authEndpoint = req.path === '/auth' || req.path.startsWith('/auth/');
-  if (publicHealth || authEndpoint) return next();
+  if (authEndpoint) return next();
   return authGuards.requireTenantMembership(req, res, next);
 });
 app.use('/api', createOwnerAuditMiddleware());
@@ -114,7 +115,7 @@ app.use('/api', (req, res, next) => {
     (method === 'PUT' && /^\/autopilot\/workflows\/[^/]+$/.test(path)) ||
     (method === 'DELETE' && /^\/autopilot\/workflows\/[^/]+$/.test(path));
   if (!ownerOnly) return next();
-  return requireOwner(req, res, next);
+  return requireOwnerForSecrets(req, res, next);
 });
 
 // Shared in-memory operational records are not yet tenant-scoped. Until each
@@ -133,9 +134,7 @@ const sharedOperationalStateRoutes = [
 ];
 app.use('/api', (req, res, next) => {
   if (!sharedOperationalStateRoutes.some((pattern) => pattern.test(req.path))) return next();
-  const tenantRole = (res.locals.tenantContext as { role?: string } | undefined)?.role;
-  if (tenantRole !== 'owner') return res.status(403).json({ error: 'Tenant Owner access is required.' });
-  return requireOwner(req, res, next);
+  return requireOwnerForSecrets(req, res, next);
 });
 
 // Durable task APIs resolve tenant identity only from the authenticated session.
@@ -1244,7 +1243,7 @@ function classifyRequest(prompt: string): 'question' | 'task_execution' | 'code_
 // -----------------------------------------------------------------------------
 
 // GET /api/health: application health plus a real PostgreSQL reachability probe.
-app.get('/api/health', async (req: Request, res: Response) => {
+app.get('/api/health', requireOwnerForSecrets, async (req: Request, res: Response) => {
   const database = await checkPostgresConnection();
   let migrations = { migrationTableExists: false, appliedMigrations: [] as string[] };
   if (database.connected) {
@@ -1284,7 +1283,7 @@ app.get('/api/health', async (req: Request, res: Response) => {
 });
 
 // GET /api/database/status: read-only, live PostgreSQL connectivity and migration state.
-app.get('/api/database/status', async (req: Request, res: Response) => {
+app.get('/api/database/status', requireOwnerForSecrets, async (req: Request, res: Response) => {
   const connection = await checkPostgresConnection();
   if (!connection.connected) {
     return res.status(connection.configured ? 503 : 200).json({
@@ -1308,7 +1307,7 @@ app.get('/api/database/status', async (req: Request, res: Response) => {
 });
 
 // POST /api/database/migrate: admin-only and disabled unless explicitly enabled server-side.
-app.post('/api/database/migrate', requireAdminToken, async (req: Request, res: Response) => {
+app.post('/api/database/migrate', requireOwnerForSecrets, requireAdminToken, async (req: Request, res: Response) => {
   if (process.env.RUN_DB_MIGRATIONS !== 'true') {
     return res.status(403).json({
       success: false,
@@ -1440,7 +1439,7 @@ app.post('/api/automation/trigger', (req: Request, res: Response) => {
 });
 
 // GET /api/connections: Return status with masked secrets
-app.get('/api/connections', async (req: Request, res: Response) => {
+app.get('/api/connections', requireOwnerForSecrets, async (req: Request, res: Response) => {
   const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
   const sheetsRecords = await listOwnerOperationalRecords<SheetsRecord>(tenant.ownerId, tenant.tenantId, 'sheets_sync_record');
   const hasGemini = Boolean(getOwnerSecret('gemini'));
@@ -3827,7 +3826,7 @@ async function getWorkspaceTree(baseDir = process.cwd()): Promise<Array<{ path: 
 }
 
 // GET /api/github/status: Return repository and auth status
-app.get('/api/github/status', (req: Request, res: Response) => {
+app.get('/api/github/status', requireOwnerForSecrets, (req: Request, res: Response) => {
   res.json({
     configured: Boolean(getOwnerSecret('github')),
     status: serverStore.github.status,
