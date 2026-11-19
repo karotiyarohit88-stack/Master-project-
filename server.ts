@@ -59,7 +59,6 @@ app.use('/api/auth', createAuthRouter());
 
 const authGuards = createAuthGuards();
 const requireSession = authGuards.requireSession;
-const requireOwner = authGuards.requireRole('owner');
 
 // Every application API, including AutoPilot webhooks, requires a valid
 // application session. Login sessions are issued only after email OTP verification.
@@ -1537,7 +1536,7 @@ app.get('/api/connections', requireOwnerForSecrets, async (req: Request, res: Re
 });
 
 // POST /api/connections/save: Save connection settings on server (secrets never stored in localStorage)
-app.post('/api/connections/save', requireOwner, authGuards.requireCsrf, async (req: Request, res: Response) => {
+app.post('/api/connections/save', requireOwnerForSecrets, authGuards.requireCsrf, async (req: Request, res: Response) => {
   const { provider, config } = req.body;
 
   if (!provider || !config) {
@@ -1606,7 +1605,7 @@ app.post('/api/connections/save', requireOwner, authGuards.requireCsrf, async (r
 });
 
 // POST /api/connections/test: Safely test connection reachability
-app.post('/api/connections/test', requireOwner, async (req: Request, res: Response) => {
+app.post('/api/connections/test', requireOwnerForSecrets, async (req: Request, res: Response) => {
   const { provider } = req.body;
 
   if (!provider) {
@@ -1924,7 +1923,7 @@ app.get('/api/registry', (req: Request, res: Response) => {
 });
 
 // POST /api/registry/test-connection: Run actual test check on a capability and update registry status
-app.post('/api/registry/test-connection', requireOwner, async (req: Request, res: Response) => {
+app.post('/api/registry/test-connection', requireOwnerForSecrets, async (req: Request, res: Response) => {
   const { id, type } = req.body;
   if (!id) {
     return res.status(400).json({ error: 'Item ID is required.' });
@@ -1981,7 +1980,7 @@ app.post('/api/registry/test-connection', requireOwner, async (req: Request, res
 });
 
 // POST /api/registry/update: Update item status or config in capability registry
-app.post('/api/registry/update', requireOwner, (req: Request, res: Response) => {
+app.post('/api/registry/update', requireOwnerForSecrets, (req: Request, res: Response) => {
   const { id, status, requiredScopes } = req.body;
   if (!id || !status) {
     return res.status(400).json({ error: 'ID and status are required.' });
@@ -3846,7 +3845,7 @@ app.get('/api/github/status', requireOwnerForSecrets, (req: Request, res: Respon
 });
 
 // POST /api/github/auth/token: Save personal access token
-app.post('/api/github/auth/token', requireOwner, authGuards.requireCsrf, async (req: Request, res: Response) => {
+app.post('/api/github/auth/token', requireOwnerForSecrets, authGuards.requireCsrf, async (req: Request, res: Response) => {
   const { token, owner, repo, branch } = req.body;
   if (!token || typeof token !== 'string') {
     return res.status(400).json({ error: 'Personal Access Token is required.' });
@@ -3912,7 +3911,7 @@ app.post('/api/github/auth/token', requireOwner, authGuards.requireCsrf, async (
 });
 
 // POST /api/github/auth/disconnect: Disconnect token
-app.post('/api/github/auth/disconnect', requireOwner, authGuards.requireCsrf, async (req: Request, res: Response) => {
+app.post('/api/github/auth/disconnect', requireOwnerForSecrets, authGuards.requireCsrf, async (req: Request, res: Response) => {
   const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id;
   if (!ownerId) return res.status(401).json({ error: 'Authentication required.' });
   try {
