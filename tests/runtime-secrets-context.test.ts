@@ -6,7 +6,7 @@ import { createRuntimeSecretsMiddleware, getRuntimeSecret } from '../server/runt
 test('concurrent requests resolve and retain only their own Owner secrets', async () => {
   const app = express();
   app.use((req, res, next) => { res.locals.authSession = { id: req.header('x-owner-id') || '' }; res.locals.tenantContext = { tenantId: req.header('x-tenant-id') || '' }; next(); });
-  app.use(createRuntimeSecretsMiddleware(async (ownerId, tenantId) => {
+  app.use(createRuntimeSecretsMiddleware(async (ownerId, tenantId): Promise<Record<string, string>> => {
     await new Promise((resolve) => setTimeout(resolve, ownerId === 'owner-a' ? 25 : 5));
     return ownerId === 'owner-a' && tenantId === 'tenant-a'
       ? { openai: 'owner-a-openai-secret', gemini: 'owner-a-gemini-secret' }
