@@ -15,6 +15,7 @@ import {
   Eye
 } from 'lucide-react';
 import { PublishingPost } from '../types';
+import { getCsrfHeaders } from '../utils/csrf';
 
 export const PublishingCenter: React.FC = () => {
   const [queue, setQueue] = useState<PublishingPost[]>([]);
@@ -43,7 +44,7 @@ export const PublishingCenter: React.FC = () => {
 
   useEffect(() => {
     fetchQueue();
-    const interval = setInterval(fetchQueue, 4000);
+    const interval = setInterval(() => { fetchQueue(); }, 4000);
     return () => clearInterval(interval);
   }, []);
 
@@ -55,7 +56,7 @@ export const PublishingCenter: React.FC = () => {
     try {
       const res = await fetch('/api/publishing/prepare', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({ topic: newTopic.trim(), platform: newPlatform })
       });
       if (res.ok) {
@@ -77,14 +78,14 @@ export const PublishingCenter: React.FC = () => {
     try {
       const res = await fetch('/api/publishing/approve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({ postId })
       });
       const data = await res.json();
       if (res.ok) {
         setNotification({
           type: 'success',
-          text: `Post approved by human operator (Approval Token: ${data.approvalHash}). Ready to publish.`
+          text: 'Human approval recorded in the shared task audit. The provider dispatch is now available.'
         });
         fetchQueue();
       } else {
@@ -104,7 +105,7 @@ export const PublishingCenter: React.FC = () => {
     try {
       const res = await fetch('/api/publishing/publish', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({ postId })
       });
       const data = await res.json();
@@ -160,12 +161,17 @@ export const PublishingCenter: React.FC = () => {
           </div>
         </div>
 
+        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/70 p-3">
+          <h4 className="text-xs font-bold text-slate-900">Per-Post Human Approval Required</h4>
+          <p className="text-[11px] text-slate-700 mt-1">Automatic publishing is disabled. Every external post must be individually approved by a workspace Owner/Admin and confirmed by the configured provider.</p>
+        </div>
+
         {/* Notification feedback */}
         {notification && (
           <div className={`mt-3 p-2.5 rounded-xl text-xs flex items-center gap-2 ${
             notification.type === 'success' ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' :
             notification.type === 'warning' ? 'bg-amber-50 border border-amber-200 text-amber-900' :
-            'bg-rose-50 border border-rose-200 text-rose-800'
+            'bg-amber-50 border border-amber-200 text-amber-900'
           }`}>
             {notification.type === 'success' ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" /> : <AlertTriangle className="w-4 h-4 flex-shrink-0" />}
             <span className="truncate">{notification.text}</span>
@@ -369,7 +375,7 @@ export const PublishingCenter: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => setIsReviewingGate(false)}
-                          className="px-3 py-2.5 rounded-xl bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 text-xs font-semibold transition-all cursor-pointer"
+                          className="px-3 py-2.5 rounded-xl bg-white hover:bg-amber-50 text-amber-800 border border-amber-300 text-xs font-semibold transition-all cursor-pointer"
                         >
                           रद्द करें (Cancel)
                         </button>

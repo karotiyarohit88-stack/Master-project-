@@ -10,6 +10,16 @@ import crypto from 'crypto';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { GoogleGenAI } from '@google/genai';
+import { applyPendingPostgresMigrations, checkPostgresConnection, getPostgresMigrationStatus } from './database.ts';
+import { createAuthGuards, createAuthRouter, createCsrfMutationGuard } from './auth.ts';
+import { createAgentTaskRouter } from './taskQueue.ts';
+import { createUnifiedWorkspaceRouter } from './unifiedWorkspaces.ts';
+import { createSecretsRouter, resolveActiveSecretsForOwner, revokeSecretsForOwner, saveSecretForOwner } from './secrets.ts';
+import createSecurityMiddleware, { createRateLimitMiddleware } from './server/config/security.middleware.js';
+import { createRuntimeSecretsMiddleware, getRuntimeSecret } from './server/runtime-secrets-context.ts';
+import { createAutoPilotSafetyGuard } from './src/utils/autoPilotSafetyGuard.ts';
+import { buildAutomatedContentPackage } from './src/utils/automatedContentPipeline.ts';
+import { buildMultiPlatformAnalytics, buildVerifiedEarningsSummary, evaluatePayoutGuard, type VerifiedEarningEntry } from './src/utils/phase9Accounting.ts';
 
 const execAsync = promisify(exec);
 
@@ -21,7 +31,211 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-app.use(express.json());
+// Trust only an explicitly configured number of ingress proxy hops; default to 0.
+const trustProxyValue = process.env.TRUST_PROXY_HOPS || '0';
+if (!/^(0|[1-5])$/.test(trustProxyValue)) {
+  throw new Error('TRUST_PROXY_HOPS must be a whole number from 0 to 5.');
+}
+const trustProxyHops = Number(trustProxyValue);
+app.set('trust proxy', trustProxyHops);
+app.use(createSecurityMiddleware());
+app.use('/api', createRateLimitMiddleware({
+  windowMs: 60_000,
+  maxRequests: 180,
+  maxEntries: 10_000,
+  skip: (req: Request) => req.path === '/health' || req.method === 'OPTIONS'
+}));
+app.use(express.json({ limit: '8mb' }));
+
+// Application authentication endpoints; legacy business routes remain unchanged in Phase 1.
+app.use('/api/auth', createAuthRouter());
+
+const authGuards = createAuthGuards();
+const requireSession = authGuards.requireSession;
+const requireOwner = authGuards.requireRole('owner');
+
+// Every application API, including AutoPilot webhooks, requires a valid
+// application session. Login sessions are issued only after email OTP verification.
+app.use('/api', (req, res, next) => {
+  const publicHealth = req.path === '/health';
+  const authEndpoint = req.path === '/auth' || req.path.startsWith('/auth/');
+  if (publicHealth || authEndpoint) return next();
+  return requireSession(req, res, next);
+});
+
+// Enforce session-bound CSRF validation for every authenticated API mutation.
+// The auth router is mounted above this middleware and applies its own route-specific
+// CSRF checks; all remaining /api mutation routes are browser-session protected.
+app.use('/api', createCsrfMutationGuard(authGuards.requireCsrf));
+
+// Owner role is required for configuration, credential, approval, and publishing
+// mutations. Ordinary authenticated members retain access to non-admin workflows.
+app.use('/api', (req, res, next) => {
+  const path = req.path;
+  const method = req.method;
+  const ownerOnly =
+    (method === 'POST' && [
+      /^\/connections\/(save|test)$/,
+      /^\/registry\/(test-connection|update)$/,
+      /^\/autopilot\/config$/,
+      /^\/autopilot\/safety$/,
+      /^\/autopilot\/content-pipeline\/prepare$/,
+      /^\/autopilot\/workflows$/,
+      /^\/autopilot\/workflows\/[^/]+\/(toggle|run)$/,
+      /^\/autopilot\/queue\/[^/]+\/(pause|resume|stop)$/,
+      /^\/autopilot\/executions\/[^/]+\/(approve|retry)$/,
+      /^\/publishing\/(auto-post-policy|attach-verified-asset)$/,
+      /^\/accounting\/payout-requests(?:\/[^/]+\/approve)?$/,
+      /^\/github\/auth\/(token|disconnect)$/,
+      /^\/github\/select$/,
+      /^\/github\/commit$/,
+      /^\/approve-action$/,
+      /^\/project\/(apply-proposal|reject-proposal)$/,
+      /^\/worker-agents\/delegate$/,
+      /^\/video\/(generate-script|generate-voice|render)$/,
+      /^\/sheets\/sync$/,
+      /^\/autopilot\/trigger\/manual$/,
+      /^\/automation\/trigger$/
+    ].some((pattern) => pattern.test(path))) ||
+    (method === 'PUT' && /^\/autopilot\/workflows\/[^/]+$/.test(path)) ||
+    (method === 'DELETE' && /^\/autopilot\/workflows\/[^/]+$/.test(path));
+  if (!ownerOnly) return next();
+  return requireOwner(req, res, next);
+});
+
+// Shared in-memory operational records are not yet tenant-scoped. Until each
+// record is persisted with an owner_id and every read/write is owner-filtered,
+// fail closed for non-Owner accounts on these shared-state APIs. This is a
+// containment boundary, not a substitute for full per-tenant data isolation.
+const sharedOperationalStateRoutes = [
+  /^\/analytics(?:\/.*)?$/,
+  /^\/accounting(?:\/.*)?$/,
+  /^\/project\/(?:proposals|apply-proposal|reject-proposal)$/,
+  /^\/worker-agents(?:\/.*)?$/,
+  /^\/video\/jobs$/,
+  /^\/autopilot\/(?!webhook\/)[^/]+(?:\/.*)?$/,
+  /^\/audit(?:\/.*)?$/,
+  /^\/audit-logs$/
+];
+app.use('/api', (req, res, next) => {
+  if (!sharedOperationalStateRoutes.some((pattern) => pattern.test(req.path))) return next();
+  return requireOwner(req, res, next);
+});
+
+// Durable task APIs resolve tenant identity only from the authenticated session.
+// They remain unavailable until PostgreSQL and the tenant/task migrations exist.
+app.use('/api/tasks', authGuards.requireTenantMembership, createAgentTaskRouter());
+
+const unifiedWorkspaceRouters = createUnifiedWorkspaceRouter({
+  dispatchPublishing: async ({ task }) => {
+    const webhook = getRuntimeSecret('publishing_webhook');
+    const apiKey = getRuntimeSecret('publishing');
+    if (!webhook) throw new Error('Publishing webhook is not configured.');
+    let target: URL;
+    try { target = new URL(webhook); } catch { throw new Error('Publishing webhook URL is invalid.'); }
+    if (target.protocol !== 'https:' || target.username || target.password ||
+        ['localhost', '127.0.0.1', '::1'].includes(target.hostname) ||
+        target.hostname.endsWith('.local')) {
+      throw new Error('Publishing webhook must use a public HTTPS endpoint.');
+    }
+    const payload = task.payload && typeof task.payload === 'object' ? task.payload : {};
+    const response = await fetch(target, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(apiKey ? { Authorization: 'Bearer ' + apiKey } : {})
+      },
+      body: JSON.stringify({
+        event: 'aaksh.approved_publish',
+        taskId: task.id,
+        platform: payload.platform,
+        topic: payload.topic,
+        caption: payload.caption,
+        hashtags: payload.hashtags,
+        approval: { approved: true, approvedBy: task.approved_by, approvedAt: task.approved_at }
+      }),
+      signal: AbortSignal.timeout(10000)
+    });
+    const result = await response.json().catch(() => ({})) as { success?: boolean; externalPostId?: string };
+    if (!response.ok || result.success !== true ||
+        typeof result.externalPostId !== 'string' || !result.externalPostId.trim()) {
+      throw new Error('Publishing provider did not return explicit publication confirmation.');
+    }
+    return { externalPostId: result.externalPostId.trim() };
+  }
+});
+app.use('/api/aaksh', authGuards.requireTenantMembership, unifiedWorkspaceRouters.aaksh);
+app.use('/api/aaksh/social', authGuards.requireTenantMembership, unifiedWorkspaceRouters.social);
+
+
+// AutoPilot mutations stay locked until the authenticated Owner explicitly
+// enables Safety & Security. Read-only status and configuration remain available.
+app.use('/api', createAutoPilotSafetyGuard(() => serverStore.autopilot.safetyEnabled));
+
+// Secret Manager: all routes require an authenticated Owner; mutations also require CSRF.
+
+// Decrypted owner credentials remain request-scoped; never write them into serverStore.
+app.use('/api', createRuntimeSecretsMiddleware(resolveActiveSecretsForOwner));
+app.use('/api/publishing', authGuards.requireTenantMembership, unifiedWorkspaceRouters.publishing);
+
+const requireTenantAdminForSecrets: express.RequestHandler = (_req, res, next) => {
+  const role = (res.locals.tenantContext as { role?: string } | undefined)?.role;
+  if (role !== 'owner' && role !== 'admin') {
+    return res.status(403).json({ error: 'Workspace Owner/Admin membership is required to manage this account’s secrets.' });
+  }
+  return next();
+};
+app.use('/api/secrets', authGuards.requireTenantMembership, requireTenantAdminForSecrets, (req, res, next) => {
+  if (req.method === 'GET') return next();
+  return authGuards.requireCsrf(req, res, next);
+}, createSecretsRouter());
+
+// Owner-only guard for credential/configuration mutation routes.
+// Configure AAKSH_ADMIN_TOKEN as a server-side secret (minimum 32 characters).
+// The token is never persisted by the browser UI; it stays in component memory.
+const requireAdminToken: express.RequestHandler = (req, res, next) => {
+  const expectedToken = process.env.AAKSH_ADMIN_TOKEN || '';
+  if (expectedToken.length < 32) {
+    return res.status(503).json({
+      error: 'Administrative security is not configured. Set AAKSH_ADMIN_TOKEN (minimum 32 characters) in the server environment before changing connection settings.'
+    });
+  }
+
+  const providedToken = req.header('x-aaksh-admin-token') || '';
+  const expected = Buffer.from(expectedToken, 'utf8');
+  const provided = Buffer.from(providedToken, 'utf8');
+  const matches = provided.length === expected.length && crypto.timingSafeEqual(provided, expected);
+
+  if (!matches) {
+    return res.status(401).json({ error: 'Administrative authorization required. Enter the configured AAKSH admin token.' });
+  }
+  return next();
+};
+
+
+function getOwnerSecret(provider: string, fallback = ''): string {
+  const aliases: Record<string, string[]> = {
+    gemini: ['gemini', 'google_gemini', 'GEMINI_API_KEY'],
+    openai: ['openai', 'open_ai', 'OPENAI_API_KEY'],
+    video: ['video', 'runway', 'video_provider', 'RUNWAY_API_KEY', 'VIDEO_PROVIDER_API_KEY'],
+    elevenlabs: ['elevenlabs', 'eleven_labs', 'ELEVENLABS_API_KEY'],
+    publishing: ['publishing', 'social_publishing', 'PUBLISHING_API_KEY'],
+    n8n: ['n8n', 'N8N_API_KEY', 'N8N_AUTH_TOKEN'],
+    n8n_webhook: ['n8n_webhook'],
+    publishing_webhook: ['publishing_webhook'],
+    github: ['github', 'GITHUB_TOKEN', 'GH_TOKEN'],
+    sheets: ['sheets', 'GOOGLE_SHEETS_KEY'],
+    workspace_client_secret: ['workspace_client_secret', 'GOOGLE_CLIENT_SECRET'],
+    workspace_oauth_token: ['workspace_oauth_token', 'GOOGLE_OAUTH_TOKEN'],
+    database_url: ['database_url', 'DATABASE_URL', 'POSTGRES_URL'],
+    firebase_config: ['firebase_config', 'FIREBASE_CONFIG']
+  };
+  for (const key of aliases[provider] || [provider]) {
+    const value = getRuntimeSecret(key) || getRuntimeSecret(key.toUpperCase());
+    if (value) return value;
+  }
+  return fallback;
+}
 
 // In-Memory Secure Store for Server Credentials & Config (Never sent unmasked to browser)
 const serverStore = {
@@ -83,7 +297,9 @@ const serverStore = {
     firebaseConfig: process.env.FIREBASE_CONFIG || '',
   },
   autopilot: {
-    isRunning: true,
+    safetyEnabled: false,
+    autoPostDailyContentEnabled: false,
+    isRunning: false,
     topic: 'Next-Gen AI & Tech Architecture',
     frequency: 'every_6_hours' as const,
     platform: 'youtube_shorts' as const,
@@ -259,8 +475,8 @@ const capabilityRegistryStore = {
       name: 'Persistent Storage & Firestore/SQL',
       category: 'database' as const,
       purpose: 'Relational & document database persistence for users, jobs, and logs',
-      status: 'Working — verified' as const,
-      provider: 'Express Server In-Memory Store & Firebase Firestore Ready',
+      status: 'Needs configuration' as const,
+      provider: 'In-memory server store only; durable database connection not verified',
       supportedActions: ['Write Audit Log', 'Save Connection Credentials', 'Query Execution History'],
       lastTested: new Date().toISOString()
     },
@@ -269,8 +485,8 @@ const capabilityRegistryStore = {
       name: 'User Authentication & OAuth Gate',
       category: 'auth' as const,
       purpose: 'Multi-role authentication and human approval security authorization',
-      status: 'Working — verified' as const,
-      provider: 'Firebase Auth & Human Approval Gate Token',
+      status: 'Needs configuration' as const,
+      provider: 'Authentication implementation not present in inspected server routes',
       supportedActions: ['Google Sign In', 'Verify Operator Token', '2-Step Approval Enforcer'],
       lastTested: new Date().toISOString()
     }
@@ -364,6 +580,7 @@ interface VideoJob {
   voiceId: string;
   voiceProvider: 'elevenlabs' | 'gemini_tts' | 'prototype';
   status: 'queued' | 'processing' | 'completed' | 'failed' | 'waiting_credentials';
+  dailyContent?: boolean;
   progress: number;
   videoUrl?: string;
   audioUrl?: string;
@@ -660,6 +877,9 @@ interface PublishingPost {
   videoUrl?: string;
   thumbnailUrl?: string;
   status: 'draft' | 'waiting_approval' | 'approved' | 'published' | 'failed';
+  dailyContent?: boolean;
+  videoAssetVerified?: boolean;
+  publicationConfirmed?: boolean;
   createdAt: string;
   approvedAt?: string;
   publishedAt?: string;
@@ -682,6 +902,11 @@ const publishingQueue: PublishingPost[] = [
     createdAt: new Date(Date.now() - 3400000).toISOString()
   }
 ];
+
+// Financial records are read-only in this phase: only verified invoice/earning integrations may append.
+const verifiedEarningLedger: VerifiedEarningEntry[] = [];
+interface PayoutRequest { id: string; amount: number; currency: 'INR'; purpose: string; status: 'pending_owner_approval' | 'blocked_native_service_unverified'; createdAt: string; ownerApprovedAt?: string; }
+const payoutRequests: PayoutRequest[] = [];
 
 // Google Sheets Sync Buffer (In-memory record mirror)
 interface SheetsRecord {
@@ -828,19 +1053,13 @@ function checkRateLimit(ip: string): boolean {
 }
 
 // Gemini Client initialization
-let ai: GoogleGenAI | null = null;
 function getGenAI(): GoogleGenAI | null {
-  const key = serverStore.gemini.apiKey || process.env.GEMINI_API_KEY;
+  const key = getOwnerSecret('gemini', serverStore.gemini.apiKey || process.env.GEMINI_API_KEY);
   if (!key) return null;
-  if (!ai) {
-    ai = new GoogleGenAI({
-      apiKey: key,
-      httpOptions: {
-        headers: { 'User-Agent': 'aistudio-build' }
-      }
-    });
-  }
-  return ai;
+  return new GoogleGenAI({
+    apiKey: key,
+    httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+  });
 }
 
 // Master System Prompt for Gemini
@@ -1101,23 +1320,93 @@ function classifyRequest(prompt: string): 'question' | 'task_execution' | 'code_
 // ENDPOINTS
 // -----------------------------------------------------------------------------
 
-// GET /api/health
-app.get('/api/health', (req: Request, res: Response) => {
+// GET /api/health: application health plus a real PostgreSQL reachability probe.
+app.get('/api/health', async (req: Request, res: Response) => {
+  const database = await checkPostgresConnection();
+  let migrations = { migrationTableExists: false, appliedMigrations: [] as string[] };
+  if (database.connected) {
+    try {
+      migrations = await getPostgresMigrationStatus();
+    } catch {
+      // A failed migration-status lookup must not be reported as an applied schema.
+    }
+  }
+
   res.json({
     status: 'ok',
     appName: 'Master Project AI Agent',
-    hasApiKey: Boolean(serverStore.gemini.apiKey || process.env.GEMINI_API_KEY),
+    hasApiKey: Boolean(getOwnerSecret('gemini', serverStore.gemini.apiKey) || process.env.GEMINI_API_KEY),
     model: serverStore.gemini.model,
     sandboxMode: 'Prototype Sandbox (Safety Hardened)',
+    database: {
+      provider: 'PostgreSQL',
+      configured: database.configured,
+      connected: database.connected,
+      status: database.connected ? 'connected' : database.configured ? 'connection_failed' : 'not_configured',
+      latencyMs: database.latencyMs,
+      serverVersion: database.serverVersion,
+      migrationTableExists: migrations.migrationTableExists,
+      appliedMigrations: migrations.appliedMigrations,
+      error: database.error
+    },
     activeConnectors: {
-      gemini: serverStore.gemini.apiKey ? 'Connected (Server)' : 'Awaiting API Key',
-      n8n: serverStore.n8n.webhookUrl ? 'Configured' : 'Local Fallback Mode',
+      gemini: getOwnerSecret('gemini', serverStore.gemini.apiKey) ? 'Connected (Server)' : 'Awaiting API Key',
+      n8n: getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl) ? 'Configured' : 'Local Fallback Mode',
       video: serverStore.video.providerName,
-      elevenlabs: serverStore.elevenlabs.apiKey ? 'Configured' : 'Prototype Audio',
+      elevenlabs: getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey) ? 'Configured' : 'Prototype Audio',
       publishing: 'Approval Gate Enforced',
       sheets: serverStore.sheets.spreadsheetId ? 'Configured' : 'Local Memory Mirror'
     }
   });
+});
+
+// GET /api/database/status: read-only, live PostgreSQL connectivity and migration state.
+app.get('/api/database/status', async (req: Request, res: Response) => {
+  const connection = await checkPostgresConnection();
+  if (!connection.connected) {
+    return res.status(connection.configured ? 503 : 200).json({
+      provider: 'PostgreSQL',
+      ...connection,
+      migrationTableExists: false,
+      appliedMigrations: []
+    });
+  }
+
+  try {
+    const migrations = await getPostgresMigrationStatus();
+    return res.json({ provider: 'PostgreSQL', ...connection, ...migrations });
+  } catch (error) {
+    return res.status(503).json({
+      provider: 'PostgreSQL',
+      ...connection,
+      migrationStatusError: error instanceof Error ? error.message.slice(0, 200) : 'Unable to read migration status'
+    });
+  }
+});
+
+// POST /api/database/migrate: admin-only and disabled unless explicitly enabled server-side.
+app.post('/api/database/migrate', requireAdminToken, async (req: Request, res: Response) => {
+  if (process.env.RUN_DB_MIGRATIONS !== 'true') {
+    return res.status(403).json({
+      success: false,
+      error: 'Migrations are disabled. Set RUN_DB_MIGRATIONS=true in the server secret/configuration only for an approved migration window.'
+    });
+  }
+
+  const connection = await checkPostgresConnection();
+  if (!connection.connected) {
+    return res.status(503).json({ success: false, error: connection.error || 'PostgreSQL is not connected.' });
+  }
+
+  try {
+    const result = await applyPendingPostgresMigrations();
+    return res.json({ success: true, provider: 'PostgreSQL', ...result });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message.slice(0, 300) : 'PostgreSQL migration failed.'
+    });
+  }
 });
 
 // GET /api/analytics: System analytics & performance metrics
@@ -1136,15 +1425,48 @@ app.get('/api/analytics', (req: Request, res: Response) => {
       proposalsCount: changeProposals.length
     },
     activeTools: {
-      gemini: Boolean(serverStore.gemini.apiKey || process.env.GEMINI_API_KEY) ? 'Connected' : 'Missing Key',
-      n8n: Boolean(serverStore.n8n.webhookUrl) ? 'Configured' : 'Local Fallback Mode',
+      gemini: Boolean(getOwnerSecret('gemini', serverStore.gemini.apiKey) || process.env.GEMINI_API_KEY) ? 'Connected' : 'Missing Key',
+      n8n: Boolean(getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl)) ? 'Configured' : 'Local Fallback Mode',
       video: serverStore.video.providerName,
-      elevenlabs: Boolean(serverStore.elevenlabs.apiKey) ? 'Configured' : 'Prototype Audio',
+      elevenlabs: Boolean(getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey)) ? 'Configured' : 'Prototype Audio',
       publishing: 'Approval Gate Enforced',
       sheets: Boolean(serverStore.sheets.spreadsheetId) ? 'Configured' : 'Local Memory Mirror',
-      github: serverStore.github.token ? 'Connected Token' : 'Demo Sandbox'
+      github: getOwnerSecret('github', serverStore.github.token) ? 'Connected Token' : 'Demo Sandbox'
     }
   });
+});
+
+// GET /api/analytics/multi-platform: counts from actual in-memory records only.
+app.get('/api/analytics/multi-platform', (req: Request, res: Response) => {
+  res.json(buildMultiPlatformAnalytics(publishingQueue, autoPilotTasks, workflowExecutions));
+});
+
+// GET /api/accounting/summary: verified ledger only; no demo balances or inferred earnings.
+app.get('/api/accounting/summary', (req: Request, res: Response) => {
+  res.json({ ...buildVerifiedEarningsSummary(verifiedEarningLedger), gstNote: 'GST is calculated only from verified INR ledger entries. No verified entries means no reported earnings.' });
+});
+app.get('/api/accounting/payout-requests', (req: Request, res: Response) => {
+  res.json({ requests: payoutRequests, executionMode: 'manual_owner_approval_only', autoPayoutAvailable: false, autoPayoutReason: 'Requires Native Android Service Verification' });
+});
+app.post('/api/accounting/payout-requests', authGuards.requireCsrf, (req: Request, res: Response) => {
+  const amount = Number(req.body?.amount);
+  const purpose = typeof req.body?.purpose === 'string' ? req.body.purpose.trim().slice(0, 240) : '';
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 100000000 || !purpose) return res.status(400).json({ error: 'A valid positive INR amount and purpose are required.' });
+  const request: PayoutRequest = { id: 'payout_' + crypto.randomBytes(8).toString('hex'), amount, currency: 'INR', purpose, status: 'pending_owner_approval', createdAt: new Date().toISOString() };
+  payoutRequests.unshift(request);
+  recordAudit({ category: 'approval', action: 'Payout Request Created', status: 'warning', details: 'Payout request ' + request.id + ' staged for mandatory Owner approval. No transfer was initiated.' });
+  return res.status(202).json({ success: true, request, message: 'Request staged. No money has been transferred.' });
+});
+app.post('/api/accounting/payout-requests/:id/approve', authGuards.requireCsrf, (req: Request, res: Response) => {
+  const request = payoutRequests.find(item => item.id === req.params.id);
+  if (!request) return res.status(404).json({ error: 'Payout request not found.' });
+  if (request.status !== 'pending_owner_approval') return res.status(409).json({ error: 'Payout request is not pending approval.' });
+  if (req.body?.ownerConfirmation !== true) return res.status(400).json({ error: 'Explicit Owner confirmation is required.' });
+  request.ownerApprovedAt = new Date().toISOString();
+  const guard = evaluatePayoutGuard({ ownerApproved: true, accessibilityServiceVerified: false });
+  request.status = 'blocked_native_service_unverified';
+  recordAudit({ category: 'approval', action: 'Owner Approved Payout Request But Transfer Blocked', status: 'blocked', details: 'Owner approval recorded for ' + request.id + '; transfer remains blocked: ' + guard.reason });
+  return res.status(423).json({ success: false, request, error: guard.reason, transferExecuted: false });
 });
 
 // POST /api/automation/trigger: Explicit trigger entry point for workflows
@@ -1188,8 +1510,13 @@ app.post('/api/automation/trigger', (req: Request, res: Response) => {
 });
 
 // GET /api/connections: Return status with masked secrets
-app.get('/api/connections', (req: Request, res: Response) => {
-  const hasGemini = Boolean(serverStore.gemini.apiKey || process.env.GEMINI_API_KEY);
+app.get('/api/connections', async (req: Request, res: Response) => {
+  const hasGemini = Boolean(getOwnerSecret('gemini', serverStore.gemini.apiKey) || process.env.GEMINI_API_KEY);
+  const databaseCheck = await checkPostgresConnection();
+  let migrationCheck = { migrationTableExists: false, appliedMigrations: [] as string[] };
+  if (databaseCheck.connected) {
+    try { migrationCheck = await getPostgresMigrationStatus(); } catch { /* report unknown, never assume applied */ }
+  }
   res.json({
     gemini: {
       configured: hasGemini,
@@ -1199,38 +1526,38 @@ app.get('/api/connections', (req: Request, res: Response) => {
       lastTested: new Date().toISOString()
     },
     openai: {
-      configured: Boolean(serverStore.openai.apiKey),
+      configured: Boolean(getOwnerSecret('openai', serverStore.openai.apiKey)),
       model: serverStore.openai.model,
       provider: serverStore.openai.provider,
-      status: Boolean(serverStore.openai.apiKey) ? 'connected' : 'unconfigured',
+      status: Boolean(getOwnerSecret('openai', serverStore.openai.apiKey)) ? 'connected' : 'unconfigured',
       lastTested: new Date().toISOString()
     },
     n8n: {
-      configured: Boolean(serverStore.n8n.webhookUrl || serverStore.n8n.authToken),
-      endpoint: serverStore.n8n.webhookUrl ? maskSecret(serverStore.n8n.webhookUrl) : '',
-      hasAuthHeader: Boolean(serverStore.n8n.authToken),
-      status: (serverStore.n8n.webhookUrl || serverStore.n8n.authToken) ? 'connected' : 'unconfigured',
-      message: (serverStore.n8n.webhookUrl || serverStore.n8n.authToken) ? 'Ready for webhook triggers' : 'Using Local Fallback Mode (Demo)'
+      configured: Boolean(getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl) || getOwnerSecret('n8n', serverStore.n8n.authToken)),
+      endpoint: getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl) ? maskSecret(getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl)) : '',
+      hasAuthHeader: Boolean(getOwnerSecret('n8n', serverStore.n8n.authToken)),
+      status: (getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl) || getOwnerSecret('n8n', serverStore.n8n.authToken)) ? 'connected' : 'unconfigured',
+      message: (getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl) || getOwnerSecret('n8n', serverStore.n8n.authToken)) ? 'Ready for webhook triggers' : 'Using Local Fallback Mode (Demo)'
     },
     video: {
-      configured: Boolean(serverStore.video.apiKey),
+      configured: Boolean(getOwnerSecret('video', serverStore.video.apiKey)),
       providerName: serverStore.video.providerName,
       endpoint: serverStore.video.endpoint,
-      hasApiKey: Boolean(serverStore.video.apiKey),
-      status: serverStore.video.apiKey ? 'connected' : 'mock_adapter'
+      hasApiKey: Boolean(getOwnerSecret('video', serverStore.video.apiKey)),
+      status: getOwnerSecret('video', serverStore.video.apiKey) ? 'connected' : 'mock_adapter'
     },
     elevenlabs: {
-      configured: Boolean(serverStore.elevenlabs.apiKey),
-      hasApiKey: Boolean(serverStore.elevenlabs.apiKey),
+      configured: Boolean(getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey)),
+      hasApiKey: Boolean(getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey)),
       selectedVoiceId: serverStore.elevenlabs.selectedVoiceId,
-      status: serverStore.elevenlabs.apiKey ? 'connected' : 'unconfigured',
+      status: getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey) ? 'connected' : 'unconfigured',
       availableVoices: serverStore.elevenlabs.availableVoices
     },
     publishing: {
-      configured: Boolean(serverStore.publishing.webhookEndpoint || serverStore.publishing.apiKey),
+      configured: Boolean(getOwnerSecret('publishing_webhook', serverStore.publishing.webhookEndpoint) || getOwnerSecret('publishing', serverStore.publishing.apiKey)),
       enabledPlatforms: serverStore.publishing.enabledPlatforms,
-      webhookEndpoint: serverStore.publishing.webhookEndpoint ? maskSecret(serverStore.publishing.webhookEndpoint) : '',
-      hasCredentials: Boolean(serverStore.publishing.apiKey),
+      webhookEndpoint: getOwnerSecret('publishing_webhook', serverStore.publishing.webhookEndpoint) ? maskSecret(getOwnerSecret('publishing_webhook', serverStore.publishing.webhookEndpoint)) : '',
+      hasCredentials: Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey)),
       status: 'ready'
     },
     sheets: {
@@ -1238,25 +1565,31 @@ app.get('/api/connections', (req: Request, res: Response) => {
       spreadsheetIdMasked: serverStore.sheets.spreadsheetId ? maskSecret(serverStore.sheets.spreadsheetId) : '',
       sheetName: serverStore.sheets.sheetName,
       syncEnabled: serverStore.sheets.syncEnabled,
-      hasServiceAccountOrKey: Boolean(serverStore.sheets.serviceAccountKey),
+      hasServiceAccountOrKey: Boolean(getOwnerSecret('sheets', serverStore.sheets.serviceAccountKey)),
       status: serverStore.sheets.spreadsheetId ? 'connected' : 'unconfigured',
       recordsCount: sheetsSyncRecords.length,
       lastSynced: sheetsSyncRecords[0]?.timestamp
     },
     workspace: {
-      configured: Boolean(serverStore.workspace.clientId || serverStore.workspace.oauthToken),
+      configured: Boolean(serverStore.workspace.clientId || getOwnerSecret('workspace_oauth_token', serverStore.workspace.oauthToken)),
       hasClientId: Boolean(serverStore.workspace.clientId),
-      hasClientSecret: Boolean(serverStore.workspace.clientSecret),
-      status: (serverStore.workspace.clientId || serverStore.workspace.oauthToken) ? 'connected' : 'unconfigured'
+      hasClientSecret: Boolean(getOwnerSecret('workspace_client_secret', serverStore.workspace.clientSecret)),
+      status: (serverStore.workspace.clientId || getOwnerSecret('workspace_oauth_token', serverStore.workspace.oauthToken)) ? 'connected' : 'unconfigured'
     },
     database: {
-      configured: Boolean(serverStore.database.url || serverStore.database.firebaseConfig),
-      hasPostgresUrl: Boolean(serverStore.database.url),
-      hasFirebaseConfig: Boolean(serverStore.database.firebaseConfig),
-      status: (serverStore.database.url || serverStore.database.firebaseConfig) ? 'connected' : 'memory_store_active'
+      provider: 'PostgreSQL',
+      configured: databaseCheck.configured,
+      hasPostgresUrl: databaseCheck.configured,
+      connected: databaseCheck.connected,
+      status: databaseCheck.connected ? 'connected' : databaseCheck.configured ? 'connection_failed' : 'unconfigured',
+      latencyMs: databaseCheck.latencyMs,
+      serverVersion: databaseCheck.serverVersion,
+      migrationTableExists: migrationCheck.migrationTableExists,
+      appliedMigrations: migrationCheck.appliedMigrations,
+      error: databaseCheck.error
     },
     github: {
-      configured: Boolean(serverStore.github.token),
+      configured: Boolean(getOwnerSecret('github', serverStore.github.token)),
       owner: serverStore.github.owner,
       repo: serverStore.github.repo,
       branch: serverStore.github.branch,
@@ -1264,8 +1597,8 @@ app.get('/api/connections', (req: Request, res: Response) => {
       authMethod: serverStore.github.authMethod,
       userLogin: serverStore.github.userLogin,
       rateLimitRemaining: serverStore.github.rateLimitRemaining,
-      tokenMasked: serverStore.github.token ? maskSecret(serverStore.github.token) : '',
-      message: serverStore.github.token
+      tokenMasked: getOwnerSecret('github', serverStore.github.token) ? maskSecret(getOwnerSecret('github', serverStore.github.token)) : '',
+      message: getOwnerSecret('github', serverStore.github.token)
         ? `Connected as @${serverStore.github.userLogin} (${serverStore.github.rateLimitRemaining} req left)`
         : 'Using Demo Sandbox Mode (Real project files loaded from workspace)'
     }
@@ -1273,42 +1606,42 @@ app.get('/api/connections', (req: Request, res: Response) => {
 });
 
 // POST /api/connections/save: Save connection settings on server (secrets never stored in localStorage)
-app.post('/api/connections/save', (req: Request, res: Response) => {
+app.post('/api/connections/save', requireOwner, authGuards.requireCsrf, async (req: Request, res: Response) => {
   const { provider, config } = req.body;
 
   if (!provider || !config) {
     return res.status(400).json({ error: 'Provider and config are required.' });
   }
 
+  const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id;
+  if (!ownerId) return res.status(401).json({ error: 'Authentication required.' });
+
   try {
     if (provider === 'gemini') {
-      if (config.apiKey && config.apiKey !== '••••••') {
-        serverStore.gemini.apiKey = config.apiKey.trim();
-        ai = null; // reset client to pick up new key
-      }
+      if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, 'Gemini API Key', 'gemini', config.apiKey.trim());
       if (config.model) serverStore.gemini.model = config.model;
     } else if (provider === 'n8n') {
-      if (config.webhookUrl !== undefined) serverStore.n8n.webhookUrl = config.webhookUrl.trim();
-      if (config.authToken && config.authToken !== '••••••') serverStore.n8n.authToken = config.authToken.trim();
+      if (config.webhookUrl && config.webhookUrl !== '••••••') await saveSecretForOwner(ownerId, 'n8n Webhook URL', 'n8n_webhook', config.webhookUrl.trim());
+      if (config.authToken && config.authToken !== '••••••') await saveSecretForOwner(ownerId, 'n8n API Key', 'n8n', config.authToken.trim());
     } else if (provider === 'video') {
       if (config.providerName) serverStore.video.providerName = config.providerName;
       if (config.endpoint) serverStore.video.endpoint = config.endpoint.trim();
-      if (config.apiKey && config.apiKey !== '••••••') serverStore.video.apiKey = config.apiKey.trim();
+      if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, 'Video Provider API Key', 'video', config.apiKey.trim());
     } else if (provider === 'elevenlabs') {
-      if (config.apiKey && config.apiKey !== '••••••') serverStore.elevenlabs.apiKey = config.apiKey.trim();
+      if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, 'ElevenLabs API Key', 'elevenlabs', config.apiKey.trim());
       if (config.selectedVoiceId) serverStore.elevenlabs.selectedVoiceId = config.selectedVoiceId;
     } else if (provider === 'publishing') {
-      if (config.webhookEndpoint !== undefined) serverStore.publishing.webhookEndpoint = config.webhookEndpoint.trim();
-      if (config.apiKey && config.apiKey !== '••••••') serverStore.publishing.apiKey = config.apiKey.trim();
+      if (config.webhookEndpoint && config.webhookEndpoint !== '••••••') await saveSecretForOwner(ownerId, 'Publishing Webhook URL', 'publishing_webhook', config.webhookEndpoint.trim());
+      if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, 'Publishing API Key', 'publishing', config.apiKey.trim());
       if (config.enabledPlatforms) serverStore.publishing.enabledPlatforms = { ...serverStore.publishing.enabledPlatforms, ...config.enabledPlatforms };
     } else if (provider === 'sheets') {
       if (config.spreadsheetId !== undefined) serverStore.sheets.spreadsheetId = config.spreadsheetId.trim();
       if (config.sheetName) serverStore.sheets.sheetName = config.sheetName.trim();
-      if (config.serviceAccountKey && config.serviceAccountKey !== '••••••') serverStore.sheets.serviceAccountKey = config.serviceAccountKey.trim();
+      if (config.serviceAccountKey && config.serviceAccountKey !== '••••••') await saveSecretForOwner(ownerId, 'Google Sheets Service Account Key', 'sheets', config.serviceAccountKey.trim());
       if (config.syncEnabled !== undefined) serverStore.sheets.syncEnabled = Boolean(config.syncEnabled);
     } else if (provider === 'github') {
       if (config.token && config.token !== '••••••') {
-        serverStore.github.token = config.token.trim();
+        await saveSecretForOwner(ownerId, 'GitHub Personal Access Token', 'github', config.token.trim());
         serverStore.github.authMethod = 'token';
         serverStore.github.status = 'connected';
       }
@@ -1316,15 +1649,15 @@ app.post('/api/connections/save', (req: Request, res: Response) => {
       if (config.repo) serverStore.github.repo = config.repo.trim();
       if (config.branch) serverStore.github.branch = config.branch.trim();
     } else if (provider === 'openai') {
-      if (config.apiKey && config.apiKey !== '••••••') serverStore.openai.apiKey = config.apiKey.trim();
+      if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, 'OpenAI API Key', 'openai', config.apiKey.trim());
       if (config.model) serverStore.openai.model = config.model;
     } else if (provider === 'workspace') {
       if (config.clientId) serverStore.workspace.clientId = config.clientId.trim();
-      if (config.clientSecret && config.clientSecret !== '••••••') serverStore.workspace.clientSecret = config.clientSecret.trim();
-      if (config.oauthToken && config.oauthToken !== '••••••') serverStore.workspace.oauthToken = config.oauthToken.trim();
+      if (config.clientSecret && config.clientSecret !== '••••••') await saveSecretForOwner(ownerId, 'Google Workspace Client Secret', 'workspace_client_secret', config.clientSecret.trim());
+      if (config.oauthToken && config.oauthToken !== '••••••') await saveSecretForOwner(ownerId, 'Google Workspace OAuth Token', 'workspace_oauth_token', config.oauthToken.trim());
     } else if (provider === 'database') {
-      if (config.url && config.url !== '••••••') serverStore.database.url = config.url.trim();
-      if (config.firebaseConfig && config.firebaseConfig !== '••••••') serverStore.database.firebaseConfig = config.firebaseConfig.trim();
+      if (config.url && config.url !== '••••••') await saveSecretForOwner(ownerId, 'Database URL', 'database_url', config.url.trim());
+      if (config.firebaseConfig && config.firebaseConfig !== '••••••') await saveSecretForOwner(ownerId, 'Firebase Configuration', 'firebase_config', config.firebaseConfig.trim());
     }
 
     recordAudit({
@@ -1336,13 +1669,13 @@ app.post('/api/connections/save', (req: Request, res: Response) => {
     });
 
     res.json({ success: true, message: `Settings for ${provider} saved securely.` });
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Failed to update settings.' });
+  } catch {
+    res.status(503).json({ error: 'Credential storage is unavailable or not configured. Settings were not confirmed saved.' });
   }
 });
 
 // POST /api/connections/test: Safely test connection reachability
-app.post('/api/connections/test', async (req: Request, res: Response) => {
+app.post('/api/connections/test', requireOwner, async (req: Request, res: Response) => {
   const { provider } = req.body;
 
   if (!provider) {
@@ -1407,7 +1740,7 @@ app.post('/api/connections/test', async (req: Request, res: Response) => {
   }
 
   if (provider === 'openai') {
-    if (!serverStore.openai.apiKey) {
+    if (!getOwnerSecret('openai', serverStore.openai.apiKey)) {
       return res.json({
         success: false,
         status: 'unconfigured',
@@ -1417,7 +1750,7 @@ app.post('/api/connections/test', async (req: Request, res: Response) => {
 
     try {
       const resp = await fetch('https://api.openai.com/v1/models', {
-        headers: { 'Authorization': `Bearer ${serverStore.openai.apiKey}` }
+        headers: { 'Authorization': `Bearer ${getOwnerSecret('openai', serverStore.openai.apiKey)}` }
       });
       if (resp.ok) {
         return res.json({
@@ -1442,7 +1775,7 @@ app.post('/api/connections/test', async (req: Request, res: Response) => {
   }
 
   if (provider === 'workspace') {
-    if (!serverStore.workspace.clientId && !serverStore.workspace.oauthToken) {
+    if (!serverStore.workspace.clientId && !getOwnerSecret('workspace_oauth_token', serverStore.workspace.oauthToken)) {
       return res.json({
         success: false,
         status: 'unconfigured',
@@ -1457,22 +1790,27 @@ app.post('/api/connections/test', async (req: Request, res: Response) => {
   }
 
   if (provider === 'database') {
-    if (!serverStore.database.url && !serverStore.database.firebaseConfig) {
-      return res.json({
+    const database = await checkPostgresConnection(getOwnerSecret('database_url', serverStore.database.url) || undefined);
+    if (!database.connected) {
+      return res.status(database.configured ? 503 : 200).json({
         success: false,
-        status: 'unconfigured',
-        message: 'No DATABASE_URL or FIREBASE_CONFIG configured. Express server memory store active.'
+        status: database.configured ? 'connection_failed' : 'unconfigured',
+        message: database.error || 'Set DATABASE_URL in the server environment to connect PostgreSQL.'
       });
     }
     return res.json({
       success: true,
       status: 'connected',
-      message: 'Database / Firebase configuration validated.'
+      provider: 'PostgreSQL',
+      database: database.database,
+      serverVersion: database.serverVersion,
+      latencyMs: database.latencyMs,
+      message: 'PostgreSQL accepted a live SQL query. This verifies connectivity, not migration completion.'
     });
   }
 
   if (provider === 'n8n') {
-    if (!serverStore.n8n.webhookUrl) {
+    if (!getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl)) {
       return res.json({
         success: false,
         status: 'unconfigured',
@@ -1484,12 +1822,12 @@ app.post('/api/connections/test', async (req: Request, res: Response) => {
       // Safe ping without triggering execution payload
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 4000);
-      const pingResp = await fetch(serverStore.n8n.webhookUrl, {
+      const pingResp = await fetch(getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'User-Agent': 'MasterProjectAIAgent/1.0',
-          ...(serverStore.n8n.authToken ? { 'Authorization': `Bearer ${serverStore.n8n.authToken}` } : {})
+          ...(getOwnerSecret('n8n', serverStore.n8n.authToken) ? { 'Authorization': `Bearer ${getOwnerSecret('n8n', serverStore.n8n.authToken)}` } : {})
         },
         body: JSON.stringify({ event: 'ping', testMode: true, timestamp: new Date().toISOString() }),
         signal: controller.signal
@@ -1519,7 +1857,7 @@ app.post('/api/connections/test', async (req: Request, res: Response) => {
   }
 
   if (provider === 'elevenlabs') {
-    if (!serverStore.elevenlabs.apiKey) {
+    if (!getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey)) {
       return res.json({
         success: false,
         status: 'unconfigured',
@@ -1529,7 +1867,7 @@ app.post('/api/connections/test', async (req: Request, res: Response) => {
 
     try {
       const resp = await fetch('https://api.elevenlabs.io/v1/user', {
-        headers: { 'xi-api-key': serverStore.elevenlabs.apiKey }
+        headers: { 'xi-api-key': getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey) }
       });
       if (resp.ok) {
         const userData = await resp.json();
@@ -1562,7 +1900,7 @@ app.post('/api/connections/test', async (req: Request, res: Response) => {
         message: 'Prototype Video Adapter active. Clean provider interface ready for live video API credentials.'
       });
     }
-    if (!serverStore.video.apiKey) {
+    if (!getOwnerSecret('video', serverStore.video.apiKey)) {
       return res.json({
         success: false,
         status: 'unconfigured',
@@ -1592,7 +1930,7 @@ app.post('/api/connections/test', async (req: Request, res: Response) => {
   }
 
   if (provider === 'github') {
-    if (!serverStore.github.token) {
+    if (!getOwnerSecret('github', serverStore.github.token)) {
       return res.json({
         success: true,
         status: 'connected',
@@ -1605,7 +1943,7 @@ app.post('/api/connections/test', async (req: Request, res: Response) => {
       const resp = await fetch('https://api.github.com/user', {
         headers: {
           'Accept': 'application/vnd.github.v3+json',
-          'Authorization': `Bearer ${serverStore.github.token}`,
+          'Authorization': `Bearer ${getOwnerSecret('github', serverStore.github.token)}`,
           'User-Agent': 'MasterProjectAIAgent/1.0'
         }
       });
@@ -1669,7 +2007,7 @@ app.get('/api/registry', (req: Request, res: Response) => {
 });
 
 // POST /api/registry/test-connection: Run actual test check on a capability and update registry status
-app.post('/api/registry/test-connection', async (req: Request, res: Response) => {
+app.post('/api/registry/test-connection', requireOwner, async (req: Request, res: Response) => {
   const { id, type } = req.body;
   if (!id) {
     return res.status(400).json({ error: 'Item ID is required.' });
@@ -1726,7 +2064,7 @@ app.post('/api/registry/test-connection', async (req: Request, res: Response) =>
 });
 
 // POST /api/registry/update: Update item status or config in capability registry
-app.post('/api/registry/update', (req: Request, res: Response) => {
+app.post('/api/registry/update', requireOwner, (req: Request, res: Response) => {
   const { id, status, requiredScopes } = req.body;
   if (!id || !status) {
     return res.status(400).json({ error: 'ID and status are required.' });
@@ -1761,10 +2099,22 @@ app.post('/api/registry/update', (req: Request, res: Response) => {
 // CHAT API
 // -----------------------------------------------------------------------------
 app.post('/api/chat', async (req: Request, res: Response) => {
-  const { prompt, conversationHistory = [], gitContext, targetLanguage } = req.body;
+  const { prompt, imageAttachment, conversationHistory = [], gitContext, targetLanguage } = req.body;
 
   if (!prompt || typeof prompt !== 'string') {
     return res.status(400).json({ error: 'Prompt is required.' });
+  }
+
+  let imagePart: { inlineData: { mimeType: string; data: string } } | undefined;
+  if (imageAttachment !== undefined) {
+    if (typeof imageAttachment !== 'string' || imageAttachment.length > 6_000_000) {
+      return res.status(413).json({ error: 'Image attachment is too large. Please choose a smaller image.' });
+    }
+    const imageMatch = imageAttachment.match(/^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/i);
+    if (!imageMatch) {
+      return res.status(400).json({ error: 'Unsupported image attachment. Use JPEG, PNG, WEBP, or GIF.' });
+    }
+    imagePart = { inlineData: { mimeType: imageMatch[1].toLowerCase(), data: imageMatch[2] } };
   }
 
   const classification = classifyRequest(prompt);
@@ -1894,7 +2244,7 @@ Please review the proposed parameters below. You may either **Approve with Verif
         duration: 30,
         aspectRatio: '9:16',
         voiceId: '21m00Tcm4TlvDq8ikWAM',
-        voiceProvider: serverStore.elevenlabs.apiKey ? 'elevenlabs' : 'prototype',
+        voiceProvider: getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey) ? 'elevenlabs' : 'prototype',
         status: 'queued',
         progress: 15,
         createdAt: new Date().toISOString(),
@@ -2037,11 +2387,11 @@ Your generated poster is rendered directly in the chat card below with instant *
     const isConsequential = Boolean(generatedTaskCard.requiresApproval || generatedTaskCard.type === 'publishing' || generatedTaskCard.status === 'waiting_approval');
 
     const toolReadiness = {
-      gemini: Boolean(serverStore.gemini.apiKey || process.env.GEMINI_API_KEY) ? '✅ Configured (Gemini 3.8 Flash)' : '⚠️ Setup Required (Connections)',
-      elevenlabs: Boolean(serverStore.elevenlabs.apiKey) ? '✅ Configured (ElevenLabs)' : 'ℹ️ Prototype Voice (Setup in Settings for Live Voice)',
-      n8n: Boolean(serverStore.n8n.webhookUrl) ? '✅ Configured (Active Webhook)' : '⚠️ Setup Required (Connections)',
+      gemini: Boolean(getOwnerSecret('gemini', serverStore.gemini.apiKey) || process.env.GEMINI_API_KEY) ? '✅ Configured (Gemini 3.8 Flash)' : '⚠️ Setup Required (Connections)',
+      elevenlabs: Boolean(getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey)) ? '✅ Configured (ElevenLabs)' : 'ℹ️ Prototype Voice (Setup in Settings for Live Voice)',
+      n8n: Boolean(getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl)) ? '✅ Configured (Active Webhook)' : '⚠️ Setup Required (Connections)',
       video: '✅ Connected (Video Pipeline Adapter)',
-      publishing: Boolean(serverStore.publishing.apiKey || serverStore.publishing.webhookEndpoint) ? '✅ Configured (Platform API Ready)' : 'ℹ️ Sandbox Mode (Connect API in Connections for Live Publish)',
+      publishing: Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey) || getOwnerSecret('publishing_webhook', serverStore.publishing.webhookEndpoint)) ? '✅ Configured (Platform API Ready)' : 'ℹ️ Sandbox Mode (Connect API in Connections for Live Publish)',
       sheets: Boolean(serverStore.sheets.spreadsheetId) ? '✅ Configured' : 'ℹ️ Local Cache (Setup in Connections)'
     };
 
@@ -2117,7 +2467,10 @@ ${isConsequential ? '#### 3. Safety Authorization:\nThis operation is consequent
 
     contents.push({
       role: 'user',
-      parts: [{ text: userPromptText }]
+      parts: [
+        { text: userPromptText },
+        ...(imagePart ? [imagePart] : [])
+      ]
     });
 
     let replyText = '';
@@ -2474,12 +2827,12 @@ app.post('/api/video/generate-voice', async (req: Request, res: Response) => {
   const selectedVoice = voiceId || serverStore.elevenlabs.selectedVoiceId;
 
   // If ElevenLabs API Key is present, call ElevenLabs API
-  if (serverStore.elevenlabs.apiKey) {
+  if (getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey)) {
     try {
       const resp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${selectedVoice}`, {
         method: 'POST',
         headers: {
-          'xi-api-key': serverStore.elevenlabs.apiKey,
+          'xi-api-key': getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey),
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -2537,7 +2890,7 @@ app.post('/api/video/render', (req: Request, res: Response) => {
   const provider = serverStore.video.providerName;
 
   // If external provider is selected but has no API Key, do NOT pretend it rendered!
-  if (provider !== 'Prototype Adapter' && !serverStore.video.apiKey) {
+  if (provider !== 'Prototype Adapter' && !getOwnerSecret('video', serverStore.video.apiKey)) {
     const unconfiguredJob: VideoJob = {
       id: jobId,
       topic,
@@ -2546,7 +2899,7 @@ app.post('/api/video/render', (req: Request, res: Response) => {
       duration,
       aspectRatio,
       voiceId,
-      voiceProvider: serverStore.elevenlabs.apiKey ? 'elevenlabs' : 'prototype',
+      voiceProvider: getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey) ? 'elevenlabs' : 'prototype',
       status: 'waiting_credentials',
       progress: 0,
       createdAt: new Date().toISOString(),
@@ -2579,7 +2932,7 @@ app.post('/api/video/render', (req: Request, res: Response) => {
     duration,
     aspectRatio,
     voiceId,
-    voiceProvider: serverStore.elevenlabs.apiKey ? 'elevenlabs' : 'prototype',
+    voiceProvider: getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey) ? 'elevenlabs' : 'prototype',
     status: 'queued',
     progress: 10,
     createdAt: new Date().toISOString(),
@@ -2664,6 +3017,25 @@ app.get('/api/video/jobs', (req: Request, res: Response) => {
 // -----------------------------------------------------------------------------
 // AUTO PILOT & TRIGGER CENTER
 // -----------------------------------------------------------------------------
+
+// POST /api/autopilot/safety: Owner-controlled global automation safety switch.
+app.post('/api/autopilot/safety', authGuards.requireCsrf, (req: Request, res: Response) => {
+  const enabled = req.body?.safetyEnabled;
+  if (typeof enabled !== 'boolean') {
+    return res.status(400).json({ error: 'safetyEnabled must be a boolean.' });
+  }
+  serverStore.autopilot.safetyEnabled = enabled;
+  if (!enabled) serverStore.autopilot.isRunning = false;
+  recordAudit({
+    category: 'security',
+    action: enabled ? 'AutoPilot Safety Enabled' : 'AutoPilot Safety Disabled',
+    status: enabled ? 'success' : 'warning',
+    details: enabled
+      ? 'Owner enabled AutoPilot controls after authenticated session.'
+      : 'AutoPilot mutations locked; ordinary chat remains available.'
+  });
+  res.json({ success: true, safetyEnabled: serverStore.autopilot.safetyEnabled, isRunning: serverStore.autopilot.isRunning });
+});
 
 // GET /api/autopilot/config
 app.get('/api/autopilot/config', (req: Request, res: Response) => {
@@ -2935,8 +3307,8 @@ app.get('/api/autopilot/tools-status', (req: Request, res: Response) => {
       id: 'gemini_ai',
       name: 'Google Gemini AI',
       role: 'Content synthesis, scripting, prompt engineering',
-      configured: Boolean(serverStore.gemini.apiKey || process.env.GEMINI_API_KEY),
-      status: Boolean(serverStore.gemini.apiKey || process.env.GEMINI_API_KEY) ? 'connected' : 'unconfigured',
+      configured: Boolean(getOwnerSecret('gemini', serverStore.gemini.apiKey) || process.env.GEMINI_API_KEY),
+      status: Boolean(getOwnerSecret('gemini', serverStore.gemini.apiKey) || process.env.GEMINI_API_KEY) ? 'connected' : 'unconfigured',
       setupLocation: 'Connections / Settings (Gemini API Key)'
     },
     video_generator: {
@@ -2951,24 +3323,24 @@ app.get('/api/autopilot/tools-status', (req: Request, res: Response) => {
       id: 'elevenlabs_voice',
       name: 'ElevenLabs Voice Studio',
       role: 'Lifelike narration & voice synthesis',
-      configured: Boolean(serverStore.elevenlabs.apiKey),
-      status: Boolean(serverStore.elevenlabs.apiKey) ? 'connected' : 'setup_required',
+      configured: Boolean(getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey)),
+      status: Boolean(getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey)) ? 'connected' : 'setup_required',
       setupLocation: 'Settings > ElevenLabs API Key'
     },
     n8n_webhook: {
       id: 'n8n_webhook',
       name: 'n8n Webhook Automator',
       role: 'Microservice orchestration & HTTP webhooks',
-      configured: Boolean(serverStore.n8n.webhookUrl),
-      status: Boolean(serverStore.n8n.webhookUrl) ? 'connected' : 'setup_required',
+      configured: Boolean(getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl)),
+      status: Boolean(getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl)) ? 'connected' : 'setup_required',
       setupLocation: 'Connections > n8n Webhook URL'
     },
     social_publisher: {
       id: 'social_publisher',
       name: 'Social Media Publisher',
       role: 'Multi-platform draft & dispatch (YouTube, X, LinkedIn)',
-      configured: Boolean(serverStore.publishing.apiKey || serverStore.publishing.webhookEndpoint),
-      status: Boolean(serverStore.publishing.apiKey || serverStore.publishing.webhookEndpoint) ? 'connected' : 'setup_required',
+      configured: Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey) || getOwnerSecret('publishing_webhook', serverStore.publishing.webhookEndpoint)),
+      status: Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey) || getOwnerSecret('publishing_webhook', serverStore.publishing.webhookEndpoint)) ? 'connected' : 'setup_required',
       setupLocation: 'Connections > Social Publishing API Key'
     },
     google_sheets: {
@@ -2982,6 +3354,48 @@ app.get('/api/autopilot/tools-status', (req: Request, res: Response) => {
   };
 
   res.json({ tools });
+});
+
+// Owner-authenticated, CSRF-protected and Safety-gated content package preparation.
+// Prompt generation only: no paid provider calls and no publishing.
+const automatedContentRuns: ReturnType<typeof buildAutomatedContentPackage>[] = [];
+const processedContentSlots = new Set<string>();
+app.post('/api/autopilot/content-pipeline/prepare', authGuards.requireCsrf, async (req: Request, res: Response) => {
+  if (!serverStore.autopilot.safetyEnabled) return res.status(423).json({ error: 'Safe Chat-Only Mode is active. Enable Safety & Security to prepare scheduled content.' });
+  if (!serverStore.autopilot.isRunning) return res.status(423).json({ error: 'AutoPilot is paused. Enable AutoPilot after Safety & Security is ON.' });
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit' }).formatToParts(now);
+  const part = (name: string) => parts.find(item => item.type === name)?.value || '';
+  const date = part('year') + '-' + part('month') + '-' + part('day');
+  const slot = Number(part('hour')) < 15 ? '09:00' : '21:00';
+  const slotKey = date + 'T' + slot + '+05:30';
+  if (processedContentSlots.has(slotKey)) return res.status(409).json({ error: 'This IST schedule slot has already been prepared.', slot: slotKey });
+  const contentPackage = buildAutomatedContentPackage({ now, id: 'content_' + date.replace(/-/g, '') + '_' + slot.replace(':', ''), topic: typeof req.body?.topic === 'string' ? req.body.topic : undefined });
+  processedContentSlots.add(slotKey);
+  automatedContentRuns.unshift(contentPackage);
+  const shortId = 'pub_' + contentPackage.id + '_short';
+  const longId = 'pub_' + contentPackage.id + '_long';
+  publishingQueue.unshift(
+    { id: longId, topic: 'Political News Funny / Satire — 15-minute 3D cartoon', platform: 'youtube', caption: contentPackage.formats.long.scriptPrompt, hashtags: ['#PoliticalSatire','#3DCartoon','#FactCheck'], videoJobId: contentPackage.id, dailyContent: true, videoAssetVerified: false, status: 'waiting_approval', createdAt: now.toISOString(), auditReport: 'Draft prompts only. Human approval required before paid generation or publication.' },
+    { id: shortId, topic: 'Political News Funny / Satire — YouTube Short', platform: 'youtube', caption: contentPackage.formats.short.scriptPrompt, hashtags: ['#PoliticalSatire','#YouTubeShorts','#FactCheck'], videoJobId: contentPackage.id, dailyContent: true, videoAssetVerified: false, status: 'waiting_approval', createdAt: now.toISOString(), auditReport: 'Draft prompts only. Human approval required before paid generation or publication.' }
+  );
+  let n8nDelivery: {status:'delivered'|'not_configured'|'failed';message:string} = {status:'not_configured',message:'n8n receiver is not configured. Draft package remains available for review.'};
+  if (getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl)) {
+    try {
+      const response = await fetch(getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl), {
+        method:'POST',
+        headers:{'Content-Type':'application/json',...(getOwnerSecret('n8n', serverStore.n8n.authToken)?{Authorization:'Bearer '+getOwnerSecret('n8n', serverStore.n8n.authToken)}:{})},
+        body:JSON.stringify({event:'aaksh.content_pipeline.draft_ready',contentPackage,publishingDraftIds:[shortId,longId],policy:contentPackage.executionPolicy}),
+        signal:AbortSignal.timeout(8000)
+      });
+      n8nDelivery = response.ok ? {status:'delivered',message:'Approval-gated prompt package delivered to n8n.'} : {status:'failed',message:'n8n returned HTTP '+response.status+'. Drafts remain in the approval queue.'};
+    } catch { n8nDelivery = {status:'failed',message:'n8n is temporarily unavailable. Drafts remain in the approval queue.'}; }
+  }
+  recordAudit({category:'autopilot',action:'Political Satire Content Package Prepared',status:'warning',details:'Prepared Short and 15-minute long-form prompt drafts for '+slotKey+'. No paid provider calls or publishing occurred.'});
+  return res.status(202).json({success:true,contentPackage,publishingDraftIds:[shortId,longId],n8nDelivery,message:'Draft prompts prepared. Human approval is required before paid generation or publication.'});
+});
+app.get('/api/autopilot/content-pipeline/latest', (_req:Request,res:Response) => {
+  res.json({schedule:{timezone:'Asia/Kolkata',times:['09:00','21:00']},runs:automatedContentRuns.slice(0,10)});
 });
 
 // GET /api/autopilot/workflows: List all workflows
@@ -3030,7 +3444,7 @@ app.post('/api/autopilot/workflows', (req: Request, res: Response) => {
       toolId: 'gemini_ai',
       action: 'Synthesize Script via Gemini',
       description: `Drafts technical content, visual cues, and hashtags on topic: "${topic}".`,
-      configured: Boolean(serverStore.gemini.apiKey || process.env.GEMINI_API_KEY)
+      configured: Boolean(getOwnerSecret('gemini', serverStore.gemini.apiKey) || process.env.GEMINI_API_KEY)
     }
   ];
 
@@ -3041,7 +3455,7 @@ app.post('/api/autopilot/workflows', (req: Request, res: Response) => {
       toolId: 'elevenlabs_voice',
       action: 'Render Voiceover Audio',
       description: 'Generates narration audio stream using ElevenLabs or prototype speech.',
-      configured: Boolean(serverStore.elevenlabs.apiKey)
+      configured: Boolean(getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey))
     });
   }
 
@@ -3063,7 +3477,7 @@ app.post('/api/autopilot/workflows', (req: Request, res: Response) => {
       toolId: 'n8n_webhook',
       action: 'Dispatch Payload to n8n',
       description: 'Calls external n8n scenario webhook with structured JSON metadata.',
-      configured: Boolean(serverStore.n8n.webhookUrl)
+      configured: Boolean(getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl))
     });
   }
 
@@ -3076,7 +3490,7 @@ app.post('/api/autopilot/workflows', (req: Request, res: Response) => {
       description: requireApprovalBeforePublish
         ? 'Enforces human operator token before any external publishing.'
         : 'Dispatches live post to social channels.',
-      configured: Boolean(serverStore.publishing.apiKey || serverStore.publishing.webhookEndpoint),
+      configured: Boolean(getOwnerSecret('publishing', serverStore.publishing.apiKey) || getOwnerSecret('publishing_webhook', serverStore.publishing.webhookEndpoint)),
       requiresApproval: requireApprovalBeforePublish
     });
   }
@@ -3213,10 +3627,10 @@ app.post('/api/autopilot/workflows/:id/run', async (req: Request, res: Response)
   ];
 
   // Tool availability notices
-  if (wf.tools.includes('elevenlabs_voice') && !serverStore.elevenlabs.apiKey) {
+  if (wf.tools.includes('elevenlabs_voice') && !getOwnerSecret('elevenlabs', serverStore.elevenlabs.apiKey)) {
     logs.push(`[${now.toLocaleTimeString()}] [Tool Notice] ElevenLabs API Key not configured in Settings. Using prototype speech synthesis.`);
   }
-  if (wf.tools.includes('n8n_webhook') && !serverStore.n8n.webhookUrl) {
+  if (wf.tools.includes('n8n_webhook') && !getOwnerSecret('n8n_webhook', serverStore.n8n.webhookUrl)) {
     logs.push(`[${now.toLocaleTimeString()}] [Tool Notice] n8n Webhook endpoint not configured in Connections. Verified mock webhook step executed.`);
   }
 
@@ -3354,130 +3768,43 @@ app.post('/api/autopilot/executions/:id/retry', (req: Request, res: Response) =>
 // PUBLISHING WORKFLOW & APPROVAL GATE
 // -----------------------------------------------------------------------------
 
+// Owner-controlled daily auto-post policy. Safety remains a separate mandatory switch.
+app.get('/api/publishing/auto-post-policy', (_req: Request, res: Response) => {
+  res.json({ enabled: false, safetyEnabled: serverStore.autopilot.safetyEnabled, approvalRequired: true, mode: 'per_post_human_approval' });
+});
+app.post('/api/publishing/auto-post-policy', authGuards.requireCsrf, (req: Request, res: Response) => {
+  if (typeof req.body?.enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be a boolean.' });
+  serverStore.autopilot.autoPostDailyContentEnabled = false;
+  recordAudit({ category: 'security', action: req.body.enabled ? 'Daily Auto-Post Blocked' : 'Daily Auto-Post Disabled', status: req.body.enabled ? 'blocked' : 'info', details: 'Per-post human approval is mandatory; automatic publication cannot bypass the shared PostgreSQL approval queue.' });
+  return res.json({ success: true, enabled: false, safetyEnabled: serverStore.autopilot.safetyEnabled, approvalRequired: true, message: 'Automatic publishing is disabled. Every post requires an individual Owner/Admin approval.' });
+});
+
 // GET /api/publishing/queue: Get publishing drafts
-app.get('/api/publishing/queue', (req: Request, res: Response) => {
-  res.json({ queue: publishingQueue });
+app.get('/api/publishing/queue', (_req: Request, res: Response) => {
+  return res.status(410).json({ error: 'Legacy in-memory publishing queue is disabled. Use the shared PostgreSQL publishing queue.' });
 });
 
-// POST /api/publishing/prepare: Prepare captions and hashtags
-app.post('/api/publishing/prepare', async (req: Request, res: Response) => {
-  const { topic, platform = 'youtube' } = req.body;
-
-  if (!topic) {
-    return res.status(400).json({ error: 'Topic is required.' });
-  }
-
-  const client = getGenAI();
-  let caption = `🚀 ${topic}\n\nDiscover how intelligent systems orchestrate tasks with verified execution.`;
-  let hashtags = ['#AI', '#TechTrends', '#SoftwareEngineering', '#Automation'];
-
-  if (client) {
-    try {
-      const resp = await client.models.generateContent({
-        model: serverStore.gemini.model || 'gemini-3.8-flash',
-        contents: `Create an engaging social media post caption and 5 relevant hashtags for the platform: ${platform}. Topic: "${topic}". Return caption and hashtags cleanly.`,
-        config: { temperature: 0.7 }
-      });
-      const text = resp.text || '';
-      caption = text.slice(0, 300);
-    } catch (e) {
-      console.warn('Caption generation fallback');
-    }
-  }
-
-  const newPost: PublishingPost = {
-    id: 'pub_' + Date.now(),
-    topic,
-    platform,
-    caption,
-    hashtags,
-    status: 'draft',
-    createdAt: new Date().toISOString()
-  };
-
-  publishingQueue.unshift(newPost);
-  res.json({ success: true, post: newPost });
+// // Attach an asset only when it matches a completed non-prototype backend video job.
+app.post('/api/publishing/attach-verified-asset', (_req: Request, res: Response) => {
+  return res.status(409).json({ error: 'Video assets must first be stored as tenant-scoped verified artifacts. Legacy global video-job attachment is disabled.' });
 });
 
-// POST /api/publishing/approve: Explicit Human Operator Approval Gate
-app.post('/api/publishing/approve', (req: Request, res: Response) => {
-  const { postId } = req.body;
-  const post = publishingQueue.find(p => p.id === postId);
-
-  if (!post) {
-    return res.status(404).json({ error: 'Publishing draft not found.' });
-  }
-
-  const approvalHash = 'pub_appr_' + crypto.randomBytes(6).toString('hex');
-  post.status = 'approved';
-  post.approvedAt = new Date().toISOString();
-  post.auditReport = `Approved by human operator with token [${approvalHash}]. Verified asset integrity and caption safety.`;
-
-  recordAudit({
-    category: 'approval',
-    action: `Human Operator Approved Social Publication [${postId}]`,
-    status: 'success',
-    details: `Publication approved for platform [${post.platform}]. Topic: "${post.topic}".`,
-    executionHash: approvalHash
-  });
-
-  res.json({ success: true, post, approvalHash });
+// // POST /api/publishing/prepare: Prepare captions and hashtags
+app.post('/api/publishing/prepare', (_req: Request, res: Response) => {
+  return res.status(410).json({ error: 'Legacy in-memory draft creation is disabled. Use the shared PostgreSQL publishing queue.' });
 });
 
-// POST /api/publishing/publish: Publish via platform adapter
-app.post('/api/publishing/publish', (req: Request, res: Response) => {
-  const { postId } = req.body;
-  const post = publishingQueue.find(p => p.id === postId);
-
-  if (!post) {
-    return res.status(404).json({ error: 'Post draft not found.' });
-  }
-
-  // Safety Gate: Must have been approved first!
-  if (post.status !== 'approved') {
-    return res.status(403).json({
-      error: 'Safety Gate Enforced: Post must be explicitly approved by human operator before publishing.'
-    });
-  }
-
-  // Check if live platform credentials exist
-  const hasLiveCredentials = Boolean(serverStore.publishing.apiKey || serverStore.publishing.webhookEndpoint);
-
-  if (!hasLiveCredentials) {
-    recordAudit({
-      category: 'publishing',
-      action: `Social Publish Blocked (No Real Credentials) [${postId}]`,
-      status: 'blocked',
-      details: `Attempted to publish to ${post.platform}, but no authorized social media integration is configured in Connections.`
-    });
-
-    return res.status(400).json({
-      error: `Cannot publish to ${post.platform}: Real social platform integration is not configured. Please add an authorized API key or webhook endpoint in Connections before publishing.`,
-      needsConfiguration: true,
-      setupLocation: 'Connections > Social Publishing Provider'
-    });
-  }
-
-  // Live Publishing dispatch
-  post.status = 'published';
-  post.publishedAt = new Date().toISOString();
-  post.externalPostId = 'live_post_' + crypto.randomBytes(6).toString('hex');
-
-  recordAudit({
-    category: 'publishing',
-    action: `Live Social Publication Dispatched [${postId}]`,
-    status: 'success',
-    details: `Dispatched to platform ${post.platform} via configured publisher credentials.`
-  });
-
-  res.json({
-    success: true,
-    post,
-    mode: 'live_confirmed',
-    message: `Verified live publication confirmation received from ${post.platform} provider adapter.`
-  });
+// // POST /api/publishing/approve: Explicit Human Operator Approval Gate
+app.post('/api/publishing/approve', (_req: Request, res: Response) => {
+  return res.status(410).json({ error: 'Legacy in-memory approvals are disabled. Use the shared tenant approval queue.' });
 });
 
+// // POST /api/publishing/publish: Publish via platform adapter
+app.post('/api/publishing/publish', (_req: Request, res: Response) => {
+  return res.status(410).json({ error: 'Legacy in-memory publishing is disabled. Use the shared PostgreSQL approval and provider-confirmation workflow.' });
+});
+
+// -----------------------------------------------------------------------------
 // -----------------------------------------------------------------------------
 // GOOGLE SHEETS SYNC
 // -----------------------------------------------------------------------------
@@ -3595,8 +3922,8 @@ function getGitHubHeaders(): Record<string, string> {
     'Accept': 'application/vnd.github.v3+json',
     'User-Agent': 'MasterProjectAIAgent/1.0'
   };
-  if (serverStore.github.token) {
-    headers['Authorization'] = `Bearer ${serverStore.github.token}`;
+  if (getOwnerSecret('github', serverStore.github.token)) {
+    headers['Authorization'] = `Bearer ${getOwnerSecret('github', serverStore.github.token)}`;
   }
   return headers;
 }
@@ -3646,7 +3973,7 @@ async function getWorkspaceTree(baseDir = process.cwd()): Promise<Array<{ path: 
 // GET /api/github/status: Return repository and auth status
 app.get('/api/github/status', (req: Request, res: Response) => {
   res.json({
-    configured: Boolean(serverStore.github.token),
+    configured: Boolean(getOwnerSecret('github', serverStore.github.token)),
     status: serverStore.github.status,
     authMethod: serverStore.github.authMethod,
     userLogin: serverStore.github.userLogin,
@@ -3657,20 +3984,22 @@ app.get('/api/github/status', (req: Request, res: Response) => {
     rateLimitRemaining: serverStore.github.rateLimitRemaining,
     rateLimitLimit: serverStore.github.rateLimitLimit,
     lastSync: serverStore.github.lastSync,
-    tokenMasked: serverStore.github.token ? maskSecret(serverStore.github.token) : '',
+    tokenMasked: getOwnerSecret('github', serverStore.github.token) ? maskSecret(getOwnerSecret('github', serverStore.github.token)) : '',
     scopes: serverStore.github.scopes,
     localTermuxNotice: 'Local Termux files are only available if committed and pushed to your remote GitHub repository.'
   });
 });
 
 // POST /api/github/auth/token: Save personal access token
-app.post('/api/github/auth/token', async (req: Request, res: Response) => {
+app.post('/api/github/auth/token', requireOwner, authGuards.requireCsrf, async (req: Request, res: Response) => {
   const { token, owner, repo, branch } = req.body;
   if (!token || typeof token !== 'string') {
     return res.status(400).json({ error: 'Personal Access Token is required.' });
   }
 
   const cleanToken = token.trim();
+  const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id;
+  if (!ownerId) return res.status(401).json({ error: 'Authentication required.' });
   try {
     const testResp = await fetch('https://api.github.com/user', {
       headers: {
@@ -3692,7 +4021,7 @@ app.post('/api/github/auth/token', async (req: Request, res: Response) => {
     const remaining = parseInt(testResp.headers.get('x-ratelimit-remaining') || '5000', 10);
     const limit = parseInt(testResp.headers.get('x-ratelimit-limit') || '5000', 10);
 
-    serverStore.github.token = cleanToken;
+    await saveSecretForOwner(ownerId, 'GitHub Personal Access Token', 'github', cleanToken);
     serverStore.github.userLogin = userData.login || 'User';
     serverStore.github.avatarUrl = userData.avatar_url || '';
     serverStore.github.scopes = scopes;
@@ -3728,8 +4057,14 @@ app.post('/api/github/auth/token', async (req: Request, res: Response) => {
 });
 
 // POST /api/github/auth/disconnect: Disconnect token
-app.post('/api/github/auth/disconnect', (req: Request, res: Response) => {
-  serverStore.github.token = '';
+app.post('/api/github/auth/disconnect', requireOwner, authGuards.requireCsrf, async (req: Request, res: Response) => {
+  const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id;
+  if (!ownerId) return res.status(401).json({ error: 'Authentication required.' });
+  try {
+    await revokeSecretsForOwner(ownerId, 'github');
+  } catch {
+    return res.status(503).json({ error: 'GitHub credentials could not be revoked from secure storage.' });
+  }
   serverStore.github.authMethod = 'demo';
   serverStore.github.status = 'sandbox_mode';
   serverStore.github.userLogin = 'Guest (Demo Sandbox)';
@@ -3738,14 +4073,14 @@ app.post('/api/github/auth/disconnect', (req: Request, res: Response) => {
     category: 'github',
     action: 'GitHub Disconnected',
     status: 'info',
-    details: 'GitHub token cleared. Reverted to Demo Sandbox mode.'
+    details: 'GitHub token revoked for the authenticated Owner. Reverted to Demo Sandbox mode.'
   });
-  res.json({ success: true, message: 'Disconnected from GitHub. Sandbox mode active.' });
+  return res.json({ success: true, message: 'Disconnected from GitHub. Sandbox mode active.' });
 });
 
 // GET /api/github/repos: List authorized repositories
 app.get('/api/github/repos', async (req: Request, res: Response) => {
-  if (serverStore.github.token) {
+  if (getOwnerSecret('github', serverStore.github.token)) {
     try {
       const resp = await fetch('https://api.github.com/user/repos?per_page=100&sort=updated', {
         headers: getGitHubHeaders()
@@ -3802,7 +4137,7 @@ app.get('/api/github/repos', async (req: Request, res: Response) => {
 // GET /api/github/repos/:owner/:repo/branches: List branches
 app.get('/api/github/repos/:owner/:repo/branches', async (req: Request, res: Response) => {
   const { owner, repo } = req.params;
-  if (serverStore.github.token) {
+  if (getOwnerSecret('github', serverStore.github.token)) {
     try {
       const resp = await fetch(`https://api.github.com/repos/${owner}/${repo}/branches`, {
         headers: getGitHubHeaders()
@@ -3860,7 +4195,7 @@ app.get('/api/github/tree', async (req: Request, res: Response) => {
   const repo = (req.query.repo as string) || serverStore.github.repo;
   const branch = (req.query.branch as string) || serverStore.github.branch;
 
-  if (serverStore.github.token) {
+  if (getOwnerSecret('github', serverStore.github.token)) {
     try {
       const resp = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`, {
         headers: getGitHubHeaders()
@@ -3918,7 +4253,7 @@ app.get('/api/github/file', async (req: Request, res: Response) => {
   const cleanPath = sanitizeFilePath(filePath);
 
   // If token is configured, try fetching from GitHub API
-  if (serverStore.github.token) {
+  if (getOwnerSecret('github', serverStore.github.token)) {
     try {
       const resp = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${cleanPath}?ref=${branch}`, {
         headers: getGitHubHeaders()
@@ -4105,7 +4440,7 @@ app.post('/api/github/commit', async (req: Request, res: Response) => {
   const approvalToken = 'git_appr_' + crypto.randomBytes(6).toString('hex');
 
   // If live GitHub token is configured, try creating real commit / PR
-  if (serverStore.github.token) {
+  if (getOwnerSecret('github', serverStore.github.token)) {
     try {
       const owner = serverStore.github.owner;
       const repo = serverStore.github.repo;

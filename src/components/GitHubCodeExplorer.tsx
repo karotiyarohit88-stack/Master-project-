@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getCsrfHeaders } from '../utils/csrf';
 import { 
   GitBranch, 
   Folder, 
@@ -221,7 +222,7 @@ export const GitHubCodeExplorer: React.FC<GitHubCodeExplorerProps> = ({ onAskCha
       const [owner, repo] = selectedRepo.split('/');
       const res = await fetch('/api/github/auth/token', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({
           token: tokenInput.trim(),
           owner,
@@ -250,7 +251,10 @@ export const GitHubCodeExplorer: React.FC<GitHubCodeExplorerProps> = ({ onAskCha
   // Disconnect Token
   const handleDisconnect = async () => {
     try {
-      await fetch('/api/github/auth/disconnect', { method: 'POST' });
+      await fetch('/api/github/auth/disconnect', {
+        method: 'POST',
+        headers: getCsrfHeaders()
+      });
       setNoticeMessage('Switched back to Demo Sandbox Mode.');
       setIsAuthModalOpen(false);
       fetchStatus();
@@ -313,7 +317,7 @@ export const GitHubCodeExplorer: React.FC<GitHubCodeExplorerProps> = ({ onAskCha
 
       const res = await fetch('/api/github/propose-change', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({
           filePath: activeFile.path,
           originalContent: activeFile.content,
@@ -344,7 +348,7 @@ export const GitHubCodeExplorer: React.FC<GitHubCodeExplorerProps> = ({ onAskCha
     try {
       const res = await fetch('/api/github/commit', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({
           proposalId: activeProposal.proposalId,
           directCommitConfirmed
@@ -903,7 +907,7 @@ export const GitHubCodeExplorer: React.FC<GitHubCodeExplorerProps> = ({ onAskCha
               </div>
 
               {authError && (
-                <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700">
+                <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800">
                   {authError}
                 </div>
               )}
@@ -921,7 +925,7 @@ export const GitHubCodeExplorer: React.FC<GitHubCodeExplorerProps> = ({ onAskCha
                   <button
                     type="button"
                     onClick={handleDisconnect}
-                    className="px-3 py-2 rounded-xl text-xs font-medium text-rose-600 hover:bg-rose-50 border border-rose-200 cursor-pointer"
+                    className="px-3 py-2 rounded-xl text-xs font-medium text-amber-700 hover:bg-amber-50 border border-amber-200 cursor-pointer"
                   >
                     Disconnect Token
                   </button>
@@ -1008,7 +1012,7 @@ export const GitHubCodeExplorer: React.FC<GitHubCodeExplorerProps> = ({ onAskCha
                     {activeProposal.diff.split('\n').map((dLine, idx) => {
                       let lineClass = 'text-slate-300';
                       if (dLine.startsWith('+')) lineClass = 'text-emerald-400 bg-emerald-950/40';
-                      if (dLine.startsWith('-')) lineClass = 'text-rose-400 bg-rose-950/40';
+                      if (dLine.startsWith('-')) lineClass = 'text-amber-500 bg-amber-950/40';
                       if (dLine.startsWith('@@')) lineClass = 'text-blue-400';
                       return (
                         <div key={idx} className={`${lineClass} px-1 whitespace-pre-wrap`}>

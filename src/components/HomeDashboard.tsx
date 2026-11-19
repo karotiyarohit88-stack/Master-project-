@@ -31,6 +31,7 @@ import {
   Clock
 } from 'lucide-react';
 import { AppView, ServerHealth, TaskStatus } from '../types';
+import { SecretManagerPanel } from './SecretManagerPanel';
 
 interface HomeDashboardProps {
   onSelectView: (view: AppView) => void;
@@ -118,15 +119,15 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
       
       {/* 1. Header Banner & Identity */}
       <div className="bg-white border border-emerald-100 rounded-3xl p-4 sm:p-6 shadow-2xs mb-5">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5 min-w-0">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 min-w-0">
+          <div className="flex items-start sm:items-center gap-3.5 min-w-0 w-full lg:flex-1">
             <div className="w-12 h-12 rounded-2xl bg-white border border-emerald-200 p-0.5 flex items-center justify-center shadow-xs flex-shrink-0 relative overflow-hidden">
               <img src="/assets/aistudio/1791973196299_d0ac9fe0.png" alt="Master Project AI Agent Logo" className="w-full h-full object-contain rounded-xl" />
               <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-emerald-500 border-2 border-white rounded-full animate-pulse" />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-lg sm:text-xl md:text-2xl font-bold text-slate-900 tracking-tight">
+                <h1 className="text-lg sm:text-xl md:text-2xl font-bold text-slate-900 tracking-tight break-words leading-tight">
                   Master Project AI Agent
                 </h1>
                 <span className="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-900 font-bold border border-emerald-300">
@@ -140,14 +141,14 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
           </div>
 
           {/* Quick status pills */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200/80 text-xs font-mono text-slate-700">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping flex-shrink-0" />
-              <span>Backend: <strong>Online</strong></span>
+          <div className="flex items-center gap-2 flex-wrap w-full lg:w-auto lg:justify-end min-w-0">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200/80 text-xs font-mono text-slate-700 min-w-0">
+              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${serverHealth?.status === 'ok' ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+              <span>Backend: <strong>{serverHealth?.status === 'ok' ? 'Online' : 'Status unavailable'}</strong></span>
             </div>
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-mono text-emerald-800">
-              <Zap className="w-3.5 h-3.5 text-emerald-600 fill-current" />
-              <span>Gemini: <strong>3.8 Flash</strong></span>
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200/80 text-xs font-mono text-slate-700 min-w-0">
+              <Zap className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+              <span>AI: <strong className="truncate">{serverHealth?.model || connectionsData?.gemini?.model || 'Model status unavailable'}</strong></span>
             </div>
             <button
               type="button"
@@ -172,14 +173,14 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
             </p>
           </div>
 
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto min-w-0">
             <button
               type="button"
               onClick={() => {
                 onNewChat();
                 onSelectView('chat');
               }}
-              className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs sm:text-sm font-semibold shadow-xs transition-all cursor-pointer min-h-[40px]"
+              className="flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs sm:text-sm font-semibold shadow-xs transition-all cursor-pointer min-h-[40px]"
             >
               <Plus className="w-4 h-4" />
               <span>+ New AI Chat</span>
@@ -187,7 +188,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
             <button
               type="button"
               onClick={() => onSelectView('github')}
-              className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs sm:text-sm font-medium transition-all cursor-pointer min-h-[40px]"
+              className="flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs sm:text-sm font-medium transition-all cursor-pointer min-h-[40px]"
             >
               <GitBranch className="w-4 h-4 text-emerald-700" />
               <span>Explore Code</span>
@@ -216,9 +217,9 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
             <span className="text-[10px] text-slate-500 block">Core Backend</span>
             <div className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="font-bold text-slate-800">Node/Bun (Port 3000)</span>
+              <span className="font-bold text-slate-800">{serverHealth?.status === 'ok' ? 'Backend available' : 'Status unavailable'}</span>
             </div>
-            <p className="text-[10px] text-slate-400">Express + Vite Middleware</p>
+            <p className="text-[10px] text-slate-400">{serverHealth?.appName || 'Live server health not confirmed'}</p>
           </div>
 
           {/* Model Engine */}
@@ -226,7 +227,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
             <span className="text-[10px] text-slate-500 block">AI Model Engine</span>
             <div className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span className="font-bold text-slate-800">Gemini 3.8 Flash</span>
+              <span className="font-bold text-slate-800">{connectionsData?.gemini?.configured ? (connectionsData?.gemini?.model || serverHealth?.model || 'Configured') : 'Model status unavailable'}</span>
             </div>
             <p className="text-[10px] text-slate-400">Multi-Turn + Code Analysis</p>
           </div>
@@ -249,11 +250,11 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
             <div className="flex items-center gap-1.5">
               <span className={`w-2 h-2 rounded-full ${n8nConfigured ? 'bg-emerald-500' : 'bg-slate-400'}`} />
               <span className="font-bold text-slate-800">
-                {n8nConfigured ? 'Configured' : 'Setup Needed'}
+                {n8nConfigured ? 'Configured' : 'Local fallback'}
               </span>
             </div>
             <p className="text-[10px] text-slate-400">
-              {n8nConfigured ? 'Webhook Active' : 'Configure in Connections'}
+              {n8nConfigured ? 'Webhook configured' : 'No receiver configured; local drafts remain available'}
             </p>
           </div>
 
@@ -538,7 +539,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
 
           {/* Card 9: Task Status Tracker */}
           <div
-            onClick={() => onSelectView('chat')}
+            onClick={() => onSelectView('tasks')}
             className="group p-4 rounded-2xl bg-white border border-slate-200/90 hover:border-emerald-500/80 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between space-y-3"
           >
             <div className="space-y-2">
@@ -546,23 +547,40 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                 <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center justify-center group-hover:bg-emerald-600 group-hover:text-white transition-colors">
                   <Activity className="w-5 h-5" />
                 </div>
-                <span className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded-full font-bold border ${
-                  currentTaskStatus === 'idle' ? 'bg-slate-100 text-slate-600 border-slate-200' :
-                  currentTaskStatus === 'Completed' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
-                  'bg-amber-50 text-amber-800 border-amber-200 animate-pulse'
-                }`}>
-                  {currentTaskStatus}
+                <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full font-bold border bg-slate-100 text-slate-600 border-slate-200">
+                  Queue
                 </span>
               </div>
               <h4 className="font-bold text-slate-900 text-sm group-hover:text-emerald-700 transition-colors">
                 Task Status Tracker
               </h4>
               <p className="text-xs text-slate-500 leading-relaxed">
-                Real-time task execution progress, dry-run validation, and pipeline telemetry.
+                Tenant-scoped task records, approval decisions, and activity history. Worker execution remains separately gated.
               </p>
             </div>
             <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs font-semibold text-emerald-700">
               <span>View Task Tracker</span>
+              <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+            </div>
+          </div>
+
+          {/* Worker Agents: profiles only; task execution remains in the shared queue. */}
+          <div
+            onClick={() => onSelectView('agents')}
+            className="group p-4 rounded-2xl bg-white border border-slate-200/90 hover:border-emerald-500/80 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between space-y-3"
+          >
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center justify-center group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+                  <Bot className="w-5 h-5" />
+                </div>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 font-bold">Profiles</span>
+              </div>
+              <h4 className="font-bold text-slate-900 text-sm group-hover:text-emerald-700 transition-colors">Worker Agents</h4>
+              <p className="text-xs text-slate-500 leading-relaxed">View configured agent profiles and their declared capabilities. Background execution remains separately gated.</p>
+            </div>
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs font-semibold text-emerald-700">
+              <span>Open Agent Profiles</span>
               <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
             </div>
           </div>
@@ -652,6 +670,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
         </div>
       </div>
 
+      <SecretManagerPanel />
     </div>
   );
 };

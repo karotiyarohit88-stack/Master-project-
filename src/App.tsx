@@ -47,6 +47,10 @@ import { ConnectionsCenter } from './components/ConnectionsCenter';
 import { AutomationLogsCenter } from './components/AutomationLogsCenter';
 import { GitHubCodeExplorer } from './components/GitHubCodeExplorer';
 import { AnalyticsCenter } from './components/AnalyticsCenter';
+import { getCsrfHeaders } from './utils/csrf';
+import { DurableTaskQueuePanel } from './components/DurableTaskQueuePanel';
+import { WorkerAgentsCenter } from './components/WorkerAgentsCenter';
+import { AAKSHWorkspaceCenter } from './components/AAKSHWorkspaceCenter';
 import { FloatingChatWidget } from './components/FloatingChatWidget';
 
 const STORAGE_KEY = 'master_project_ai_agent_sessions_v1';
@@ -60,6 +64,11 @@ const DEFAULT_SETTINGS: AppSettings = {
   showStatusTracker: true,
   soundEffects: false,
   selectedLanguage: 'auto',
+  safetyControlsEnabled: false,
+  alwaysActiveAfterLogin: false,
+  voiceAssistantEnabled: false,
+  voiceLanguage: 'en-US',
+  voiceGender: 'female',
 };
 
 export default function App() {
@@ -110,6 +119,42 @@ export default function App() {
   const [serverHealth, setServerHealth] = useState<ServerHealth | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [visualViewportBounds, setVisualViewportBounds] = useState(() => ({
+    height: typeof window !== 'undefined'
+      ? (window.visualViewport?.height ?? window.innerHeight)
+      : 0,
+    offsetTop: typeof window !== 'undefined'
+      ? (window.visualViewport?.offsetTop ?? 0)
+      : 0
+  }));
+
+  // Keep the app frame inside the actually visible mobile viewport when the
+  // on-screen keyboard opens, closes, or pans the visual viewport.
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const updateViewportBounds = () => {
+      const height = Math.max(1, Math.round(viewport?.height ?? window.innerHeight));
+      const offsetTop = Math.max(0, Math.round(viewport?.offsetTop ?? 0));
+      setVisualViewportBounds((current) =>
+        current.height === height && current.offsetTop === offsetTop
+          ? current
+          : { height, offsetTop }
+      );
+    };
+
+    updateViewportBounds();
+    viewport?.addEventListener('resize', updateViewportBounds);
+    viewport?.addEventListener('scroll', updateViewportBounds);
+    window.addEventListener('resize', updateViewportBounds);
+    window.addEventListener('orientationchange', updateViewportBounds);
+
+    return () => {
+      viewport?.removeEventListener('resize', updateViewportBounds);
+      viewport?.removeEventListener('scroll', updateViewportBounds);
+      window.removeEventListener('resize', updateViewportBounds);
+      window.removeEventListener('orientationchange', updateViewportBounds);
+    };
+  }, []);
 
   // Load conversations on mount
   useEffect(() => {
@@ -147,6 +192,56 @@ export default function App() {
         console.warn('Backend health check note:', err);
       });
   }, []);
+
+  // AuthGate renders App only after /api/auth/me confirms an OTP-issued session.
+  // The server remains authoritative for the Safety & Security switch.
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/auth/me', { credentials: 'same-origin' })
+      .then((sessionResponse) => sessionResponse.ok
+        ? fetch('/api/autopilot/config', { credentials: 'same-origin' })
+        : null)
+      .then((response) => response?.ok ? response.json() : null)
+      .then((data) => {
+        if (cancelled || typeof data?.config?.safetyEnabled !== 'boolean') return;
+        setSettings((prev) => ({
+          ...prev,
+          safetyControlsEnabled: data.config.safetyEnabled,
+          ...(data.config.safetyEnabled ? {} : { voiceAssistantEnabled: false })
+        }));
+      })
+      .catch((error) => console.warn('AutoPilot safety status unavailable:', error));
+    return () => { cancelled = true; };
+  }, []);
+
+  // "Always Active after Login" is a local opt-in. AutoPilot can start only
+  // when this authenticated app session is valid and the server safety switch is ON.
+  useEffect(() => {
+    if (!settings.alwaysActiveAfterLogin || !settings.safetyControlsEnabled) return;
+    let cancelled = false;
+    fetch('/api/auth/me', { credentials: 'same-origin' })
+      .then(async (sessionResponse) => {
+        if (!sessionResponse.ok) return null;
+        const sessionData = await sessionResponse.json();
+        if (sessionData?.user?.role !== 'owner') return null;
+        const configResponse = await fetch('/api/autopilot/config', { credentials: 'same-origin' });
+        return configResponse.ok ? configResponse.json() : null;
+      })
+      .then(async (data) => {
+        if (cancelled || !data?.config?.safetyEnabled || data.config.isRunning) return;
+        const response = await fetch('/api/autopilot/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
+          credentials: 'same-origin',
+          body: JSON.stringify({ isRunning: true })
+        });
+        if (!cancelled && !response.ok) {
+          console.warn('AutoPilot post-login activation was rejected:', response.status);
+        }
+      })
+      .catch((error) => console.warn('AutoPilot post-login activation unavailable:', error));
+    return () => { cancelled = true; };
+  }, [settings.alwaysActiveAfterLogin, settings.safetyControlsEnabled]);
 
   // Save conversations to localStorage
   useEffect(() => {
@@ -259,7 +354,37 @@ I am your central AI assistant and command center. You can manage engineering ta
     setSettings(prev => ({ ...prev, ...newSettings }));
   };
 
+  const handleSafetyControlsToggle = async () => {
+    const nextEnabled = !settings.safetyControlsEnabled;
+    try {
+      const response = await fetch('/api/autopilot/safety', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
+        credentials: 'same-origin',
+        body: JSON.stringify({ safetyEnabled: nextEnabled })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.safetyEnabled !== nextEnabled) {
+        console.warn('Safety & Security switch was not accepted:', data.error || response.status);
+        return;
+      }
+      setSettings((prev) => ({
+        ...prev,
+        safetyControlsEnabled: nextEnabled,
+        ...(nextEnabled ? {} : { voiceAssistantEnabled: false })
+      }));
+    } catch (error) {
+      console.warn('Could not update Safety & Security:', error);
+    }
+  };
+
   const handleResetSettings = () => {
+    fetch('/api/autopilot/safety', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
+      credentials: 'same-origin',
+      body: JSON.stringify({ safetyEnabled: false })
+    }).catch((error) => console.warn('Could not reset server safety switch:', error));
     setSettings(DEFAULT_SETTINGS);
   };
 
@@ -277,7 +402,7 @@ I am your central AI assistant and command center. You can manage engineering ta
       try {
         const res = await fetch('/api/automation/trigger', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
           body: JSON.stringify({ triggerId: 'chat_action', topic: 'User Triggered Task' })
         });
         if (res.ok) {
@@ -349,12 +474,14 @@ I am your central AI assistant and command center. You can manage engineering ta
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({
-          prompt: trimmed || 'Image input provided for analysis',
+          prompt: trimmed || 'Please analyze the attached image.',
+          imageAttachment: imageAttachment || undefined,
           conversationHistory: currentMessages.map(m => ({
             role: m.role === 'assistant' ? 'model' : 'user',
-            content: m.content
+            // Do not resend embedded data URLs from earlier image messages as text history.
+            content: m.content.replace(/!\\[Uploaded Attachment\\]\\(data:[^)]+\\)/g, '[Earlier image attachment]')
           })),
           gitContext,
           targetLanguage: settings.selectedLanguage || 'auto'
@@ -538,7 +665,7 @@ I am your central AI assistant and command center. You can manage engineering ta
     try {
       const response = await fetch('/api/approve-action', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({
           actionDescription: riskDetails.actionDescription,
           actionId: messageId
@@ -610,7 +737,17 @@ I am your central AI assistant and command center. You can manage engineering ta
   };
 
   return (
-    <div className="flex flex-col h-[100dvh] w-full max-w-full bg-slate-50 text-slate-800 font-sans overflow-hidden antialiased selection:bg-emerald-500/20 selection:text-emerald-950">
+    <div
+      className="flex flex-col w-full max-w-full bg-slate-50 text-slate-800 font-sans overflow-hidden antialiased selection:bg-emerald-500/20 selection:text-emerald-950"
+      style={{
+        position: 'fixed',
+        top: `${visualViewportBounds.offsetTop}px`,
+        left: 0,
+        right: 0,
+        height: visualViewportBounds.height ? `${visualViewportBounds.height}px` : '100dvh',
+        minHeight: 0
+      }}
+    >
       {/* Top Header with Module Navigation */}
       <Header
         onOpenDrawer={() => setIsDrawerOpen(true)}
@@ -787,6 +924,8 @@ I am your central AI assistant and command center. You can manage engineering ta
                 selectedLanguage={settings.selectedLanguage || 'auto'}
                 onLanguageChange={handleLanguageChange}
                 onActionClick={handleChatActionClick}
+                voiceAssistantEnabled={Boolean(settings.voiceAssistantEnabled && settings.safetyControlsEnabled)}
+                onVoiceAssistantToggle={settings.safetyControlsEnabled ? () => handleUpdateSettings({ voiceAssistantEnabled: !settings.voiceAssistantEnabled }) : undefined}
               />
             </div>
           </main>
@@ -795,8 +934,29 @@ I am your central AI assistant and command center. You can manage engineering ta
         {/* VIEW 2: Analytics Center */}
         {activeView === 'analytics' && <AnalyticsCenter />}
 
+        {/* Durable tenant-scoped tasks use the shared Master Project task API. */}
+        {activeView === 'tasks' && (
+          <main className="flex-1 overflow-y-auto w-full max-w-5xl mx-auto p-3 sm:p-5 min-w-0">
+            <div className="mb-3">
+              <h2 className="text-lg font-bold text-slate-900">Tasks & Approvals</h2>
+              <p className="text-xs text-slate-500 mt-1">One tenant-scoped task queue for all workspaces. Approval records do not start a worker by themselves.</p>
+            </div>
+            <DurableTaskQueuePanel />
+          </main>
+        )}
+
+        {activeView === 'agents' && <WorkerAgentsCenter />}
+
+        {/* AAKSH capabilities use the canonical Master login, tenant DB and approvals. */}
+        {activeView === 'aaksh' && <AAKSHWorkspaceCenter onOpenTasks={() => setActiveView('tasks')} onOpenPublishing={() => setActiveView('publishing')} />}
+
         {/* VIEW 3: Auto Pilot & Trigger Center */}
-        {activeView === 'autopilot' && <AutoPilotCenter />}
+        {activeView === 'autopilot' && (
+          <AutoPilotCenter
+            voiceAssistantEnabled={Boolean(settings.voiceAssistantEnabled && settings.safetyControlsEnabled)}
+            safetyControlsEnabled={Boolean(settings.safetyControlsEnabled)}
+          />
+        )}
 
         {/* VIEW 4: AI Video Generator */}
         {activeView === 'video' && <VideoGeneratorCenter />}
@@ -838,6 +998,10 @@ I am your central AI assistant and command center. You can manage engineering ta
         settings={settings}
         selectedLanguage={settings.selectedLanguage || 'auto'}
         onLanguageChange={handleLanguageChange}
+        voiceAssistantEnabled={Boolean(settings.voiceAssistantEnabled)}
+        onVoiceAssistantToggle={() => handleUpdateSettings({ voiceAssistantEnabled: !settings.voiceAssistantEnabled })}
+        safetyControlsEnabled={Boolean(settings.safetyControlsEnabled)}
+        onSafetyControlsToggle={handleSafetyControlsToggle}
       />
 
       {/* Mobile-Friendly Bottom Navigation Bar */}

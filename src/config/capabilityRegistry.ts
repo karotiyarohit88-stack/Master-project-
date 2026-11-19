@@ -211,8 +211,8 @@ export const INITIAL_CAPABILITY_REGISTRY: SystemCapabilityRegistry = {
       name: 'Persistent Storage & Firestore/SQL',
       category: 'database',
       purpose: 'Relational & document database persistence for users, jobs, and logs',
-      status: 'Working — verified',
-      provider: 'Express Server In-Memory Store & Firebase Firestore Ready',
+      status: 'Needs configuration',
+      provider: 'In-memory server store only; durable database connection not verified',
       supportedActions: ['Write Audit Log', 'Save Connection Credentials', 'Query Execution History'],
       lastTested: new Date().toISOString()
     },
@@ -221,8 +221,8 @@ export const INITIAL_CAPABILITY_REGISTRY: SystemCapabilityRegistry = {
       name: 'User Authentication & OAuth Gate',
       category: 'auth',
       purpose: 'Multi-role authentication and human approval security authorization',
-      status: 'Working — verified',
-      provider: 'Firebase Auth & Human Approval Gate Token',
+      status: 'Needs configuration',
+      provider: 'Authentication implementation not present in inspected server routes',
       supportedActions: ['Google Sign In', 'Verify Operator Token', '2-Step Approval Enforcer'],
       lastTested: new Date().toISOString()
     }

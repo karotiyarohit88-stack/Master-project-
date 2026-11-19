@@ -7,10 +7,7 @@ import {
   ShieldAlert, 
   Workflow, 
   Film, 
-  CheckCircle2, 
-  Send, 
-  RefreshCw, 
-  Sparkles,
+  RefreshCw,
   Zap
 } from 'lucide-react';
 import { WorkerAgent } from '../types';
@@ -18,9 +15,6 @@ import { WorkerAgent } from '../types';
 export const WorkerAgentsCenter: React.FC = () => {
   const [agents, setAgents] = useState<WorkerAgent[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
-  const [missionText, setMissionText] = useState<string>('');
-  const [isDelegating, setIsDelegating] = useState<boolean>(false);
-  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const fetchAgents = async () => {
     try {
@@ -41,39 +35,6 @@ export const WorkerAgentsCenter: React.FC = () => {
     fetchAgents();
   }, []);
 
-  const handleDelegate = async () => {
-    if (!selectedAgentId || !missionText.trim()) return;
-    setIsDelegating(true);
-    setFeedback(null);
-
-    try {
-      const res = await fetch('/api/worker-agents/delegate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          agentId: selectedAgentId,
-          mission: missionText.trim()
-        })
-      });
-
-      const data = await res.json();
-      if (res.ok) {
-        setMissionText('');
-        setFeedback({
-          type: 'success',
-          text: `Mission delegated to ${data.agent.name}. Agent status updated to executing.`
-        });
-        fetchAgents();
-      } else {
-        setFeedback({ type: 'error', text: data.error || 'Failed to delegate mission.' });
-      }
-    } catch (e: any) {
-      setFeedback({ type: 'error', text: e?.message || 'Network disruption.' });
-    } finally {
-      setIsDelegating(false);
-      setTimeout(() => setFeedback(null), 4000);
-    }
-  };
 
   const getAgentIcon = (iconName: string) => {
     switch (iconName) {
@@ -98,9 +59,9 @@ export const WorkerAgentsCenter: React.FC = () => {
               <Users className="w-5 h-5" />
             </div>
             <div className="min-w-0">
-              <h2 className="text-base sm:text-lg font-bold text-slate-900 truncate">Worker Agents Delegation Hub</h2>
+              <h2 className="text-base sm:text-lg font-bold text-slate-900 truncate">Worker Agent Profiles & Task Queue</h2>
               <p className="text-xs text-slate-500 truncate">
-                Specialized autonomous sub-agents orchestrated by the Master Project AI Agent
+                Agent profiles are reference configurations; background task execution is not active yet
               </p>
             </div>
           </div>
@@ -117,14 +78,6 @@ export const WorkerAgentsCenter: React.FC = () => {
           </div>
         </div>
 
-        {feedback && (
-          <div className={`mt-3 p-2.5 rounded-xl text-xs flex items-center gap-2 ${
-            feedback.type === 'success' ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' : 'bg-rose-50 border border-rose-200 text-rose-800'
-          }`}>
-            <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-            <span className="truncate">{feedback.text}</span>
-          </div>
-        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 min-w-0">
@@ -132,7 +85,7 @@ export const WorkerAgentsCenter: React.FC = () => {
         <div className="lg:col-span-5 space-y-3 min-w-0">
           <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1.5 px-1">
             <Bot className="w-4 h-4 text-emerald-600" />
-            Active Sub-Agents ({agents.length})
+            Configured Agent Profiles ({agents.length})
           </h3>
 
           <div className="space-y-2">
@@ -160,11 +113,9 @@ export const WorkerAgentsCenter: React.FC = () => {
                       </div>
                     </div>
                     <span className={`text-[9px] uppercase font-mono px-2 py-0.5 rounded-full font-bold flex-shrink-0 ${
-                      agent.status === 'executing' ? 'bg-amber-100 text-amber-900 animate-pulse' :
-                      agent.status === 'idle' ? 'bg-slate-100 text-slate-600' :
-                      'bg-emerald-100 text-emerald-800'
+                      'bg-slate-100 text-slate-600'
                     }`}>
-                      {agent.status}
+                      Profile
                     </span>
                   </div>
                 </div>
@@ -173,7 +124,7 @@ export const WorkerAgentsCenter: React.FC = () => {
           </div>
         </div>
 
-        {/* Right: Agent Profile & Mission Delegation (7 cols) */}
+        {/* Right: Agent Profile (7 cols) */}
         <div className="lg:col-span-7 space-y-4 min-w-0">
           {selectedAgent ? (
             <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-2xs space-y-4 min-w-0">
@@ -183,7 +134,7 @@ export const WorkerAgentsCenter: React.FC = () => {
                   <p className="text-xs text-slate-500 truncate">{selectedAgent.role}</p>
                 </div>
                 <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold">
-                  {selectedAgent.status}
+                  Profile only
                 </span>
               </div>
 
@@ -203,45 +154,22 @@ export const WorkerAgentsCenter: React.FC = () => {
                 </div>
               </div>
 
-              {/* Active Mission */}
+              {/* Configured scope; not a live worker execution status. */}
               {selectedAgent.activeMission && (
                 <div className="p-3 rounded-xl bg-emerald-50/50 border border-emerald-200 space-y-1 text-xs">
                   <span className="font-semibold text-emerald-950 flex items-center gap-1.5 text-[11px] uppercase tracking-wider">
                     <Zap className="w-3.5 h-3.5 text-emerald-600" />
-                    Current Mission
+                    Configured Scope
                   </span>
                   <p className="text-slate-700">{selectedAgent.activeMission}</p>
                 </div>
               )}
 
-              {/* Delegate Mission Input */}
-              <div className="space-y-2 pt-2 border-t border-slate-100">
-                <label className="text-xs font-semibold text-slate-800 block">
-                  Delegate New Mission to {selectedAgent.name}
-                </label>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <input
-                    type="text"
-                    value={missionText}
-                    onChange={(e) => setMissionText(e.target.value)}
-                    placeholder={`e.g. Audit responsive breakpoints in mobile navigation...`}
-                    className="flex-1 text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:border-emerald-500 focus:outline-none min-w-0"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleDelegate}
-                    disabled={isDelegating || !missionText.trim()}
-                    className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50 flex-shrink-0"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                    <span>{isDelegating ? 'Assigning...' : 'Assign Mission'}</span>
-                  </button>
-                </div>
-              </div>
+
             </div>
           ) : (
             <div className="p-8 text-center text-slate-400 text-xs bg-white rounded-2xl border border-slate-200">
-              Select an agent to view details and assign missions.
+              No agent profile is available for this account. Create and review durable tasks in Tasks & Approvals.
             </div>
           )}
         </div>

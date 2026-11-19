@@ -58,11 +58,11 @@ export const TaskExecutionCard: React.FC<TaskExecutionCardProps> = ({
       case 'partially_completed':
         return { label: 'Partially Completed', style: 'bg-blue-100 text-blue-800 border-blue-300' };
       case 'not_connected':
-        return { label: 'Not Connected', style: 'bg-rose-100 text-rose-800 border-rose-300' };
+        return { label: 'Not Connected', style: 'bg-amber-100 text-amber-900 border-amber-300' };
       case 'not_tested':
         return { label: 'Not Tested', style: 'bg-slate-100 text-slate-700 border-slate-300' };
       case 'failed':
-        return { label: 'Failed', style: 'bg-rose-100 text-rose-800 border-rose-300' };
+        return { label: 'Failed', style: 'bg-amber-100 text-amber-900 border-amber-300' };
       default:
         return { label: taskCard.status.replace('_', ' '), style: 'bg-slate-100 text-slate-700 border-slate-300' };
     }

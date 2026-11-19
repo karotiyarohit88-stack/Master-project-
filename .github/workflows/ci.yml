@@ -1,0 +1,83 @@
+name: Master Project CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: master-project-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-check:
+    name: Install, Typecheck, Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.14.0"
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: TypeScript check
+        run: npm run lint
+
+      - name: Authentication unit tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+
+  postgres-integration:
+    name: PostgreSQL Migrations and Tenant Isolation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: master_project
+          POSTGRES_PASSWORD: ci_test_only_password
+          POSTGRES_DB: master_project_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U master_project -d master_project_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://master_project:ci_test_only_password@localhost:5432/master_project_ci
+      RUN_DB_MIGRATIONS: "true"
+      RUN_POSTGRES_INTEGRATION: "true"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.14.0"
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Apply all migrations and verify tenant isolation
+        run: npm run test:postgres

@@ -13,7 +13,8 @@ import {
   Cpu,
   Terminal,
   GitBranch,
-  BarChart3
+  BarChart3,
+  Layers
 } from 'lucide-react';
 import { ServerHealth, AppView } from '../types';
 
@@ -43,6 +44,7 @@ export const Header: React.FC<HeaderProps> = ({
     { id: 'chat', label: 'AI Chat', icon: Bot },
     { id: 'github', label: 'GitHub Explorer', icon: GitBranch },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+    { id: 'aaksh', label: 'AAKSH Workspace', icon: Layers },
     { id: 'autopilot', label: 'Auto Pilot', icon: Compass },
     { id: 'video', label: 'Video Gen', icon: Film },
     { id: 'voice', label: 'Voice Studio', icon: Mic },

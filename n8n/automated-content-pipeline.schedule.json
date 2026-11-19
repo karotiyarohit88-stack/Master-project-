@@ -1,0 +1,88 @@
+{
+  "name": "Master Project Political Satire Content Pipeline IST",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 9,
+              "triggerAtMinute": 0
+            },
+            {
+              "field": "days",
+              "triggerAtHour": 21,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "schedule-ist-0900-2100",
+      "name": "Daily 09:00 and 21:00 IST",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MASTER_PROJECT_API_URL + '/api/autopilot/content-pipeline/prepare' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Cookie",
+              "value": "={{ $env.MASTER_PROJECT_OWNER_SESSION_COOKIE }}"
+            },
+            {
+              "name": "X-CSRF-Token",
+              "value": "={{ $env.MASTER_PROJECT_CSRF_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={\"source\":\"n8n_schedule\",\"topic\":\"Political News Funny / Satire\"}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "prepare-content-package",
+      "name": "Prepare Approval-Gated Content Package",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Daily 09:00 and 21:00 IST": {
+      "main": [
+        [
+          {
+            "node": "Prepare Approval-Gated Content Package",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "timezone": "Asia/Kolkata",
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "versionId": "1"
+}

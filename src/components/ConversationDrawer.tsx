@@ -262,7 +262,7 @@ export const ConversationDrawer: React.FC<ConversationDrawerProps> = ({
                       e.stopPropagation();
                       onDeleteConversation(conv.id);
                     }}
-                    className="opacity-60 sm:opacity-40 sm:group-hover:opacity-100 p-2 min-w-[34px] min-h-[34px] rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer flex items-center justify-center flex-shrink-0"
+                    className="opacity-60 sm:opacity-40 sm:group-hover:opacity-100 p-2 min-w-[34px] min-h-[34px] rounded-lg text-slate-400 hover:text-amber-700 hover:bg-amber-50 transition-colors cursor-pointer flex items-center justify-center flex-shrink-0"
                     title="Delete conversation"
                     aria-label={`Delete conversation ${conv.title}`}
                   >

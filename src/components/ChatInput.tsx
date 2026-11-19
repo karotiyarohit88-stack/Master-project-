@@ -12,6 +12,8 @@ interface ChatInputProps {
   selectedLanguage?: string;
   onLanguageChange?: (lang: string) => void;
   onActionClick?: (actionType: 'help' | 'next_step' | 'run_task' | 'open_tools' | 'view_results') => void;
+  voiceAssistantEnabled?: boolean;
+  onVoiceAssistantToggle?: () => void;
 }
 
 export const ChatInput: React.FC<ChatInputProps> = ({
@@ -23,7 +25,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   sendOnEnter = true,
   selectedLanguage = 'auto',
   onLanguageChange,
-  onActionClick
+  onActionClick,
+  voiceAssistantEnabled = false,
+  onVoiceAssistantToggle
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -63,8 +67,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     }
   }, [setInput]);
 
+  useEffect(() => {
+    if (!voiceAssistantEnabled && isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+    }
+  }, [voiceAssistantEnabled, isListening]);
+
   const toggleMic = () => {
-    if (!recognitionRef.current) return;
+    if (!voiceAssistantEnabled || !recognitionRef.current) return;
     if (isListening) {
       recognitionRef.current.stop();
       setIsListening(false);
@@ -115,7 +126,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   return (
     <div className="w-full max-w-full min-w-0 space-y-2">
       {/* Quick Actions & Language Selector Toolbar */}
-      {(onActionClick || onLanguageChange) && (
+      {(onActionClick || onLanguageChange || onVoiceAssistantToggle) && (
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
           {/* Language Selector Dropdown */}
           {onLanguageChange && (
@@ -202,7 +213,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <button
                 type="button"
                 onClick={() => setImagePreview(null)}
-                className="absolute -top-1.5 -right-1.5 bg-slate-900 text-white rounded-full p-0.5 hover:bg-rose-600 transition-colors"
+                className="absolute -top-1.5 -right-1.5 bg-slate-900 text-white rounded-full p-0.5 hover:bg-amber-600 transition-colors"
                 title="Remove attachment"
               >
                 <XCircle className="w-3.5 h-3.5" />
@@ -240,12 +251,23 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 disabled={isLoading || disabled}
                 className={`p-2 transition-colors rounded-xl cursor-pointer flex-shrink-0 mb-0.5 ${
                   isListening 
-                    ? 'bg-rose-100 text-rose-600 animate-pulse' 
+                    ? 'bg-amber-100 text-amber-700 animate-pulse' 
                     : 'text-slate-500 hover:text-emerald-600 hover:bg-slate-50'
                 }`}
-                title={isListening ? 'Stop Listening' : 'Voice Input'}
+                title={!voiceAssistantEnabled ? 'Turn Voice Assistant ON first' : (isListening ? 'Stop Listening' : 'Voice Input')}
               >
                 {isListening ? <MicOff className="w-4.5 h-4.5" /> : <Mic className="w-4.5 h-4.5" />}
+              </button>
+            )}
+            {onVoiceAssistantToggle && (
+              <button
+                type="button"
+                onClick={onVoiceAssistantToggle}
+                aria-pressed={voiceAssistantEnabled}
+                title="Voice Assistant ON/OFF; microphone is never active in the background"
+                className={`px-2 py-1.5 rounded-lg border text-[10px] font-bold flex-shrink-0 mb-0.5 ${voiceAssistantEnabled ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-100 text-slate-600 border-slate-200'}`}
+              >
+                {voiceAssistantEnabled ? 'ON' : 'OFF'}
               </button>
             )}
 

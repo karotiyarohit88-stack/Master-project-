@@ -82,7 +82,7 @@ export const ApprovalGateCard: React.FC<ApprovalGateCardProps> = ({
               </h4>
               <span className={`text-[9px] sm:text-[10px] uppercase font-mono font-bold px-2 py-0.5 rounded-full border flex-shrink-0 ${
                 riskDetails.riskLevel === 'critical'
-                  ? 'bg-rose-100 text-rose-900 border-rose-300'
+                  ? 'bg-amber-100 text-amber-950 border-amber-300'
                   : 'bg-amber-100 text-amber-900 border-amber-300'
               }`}>
                 {riskDetails.riskLevel === 'critical' ? 'गंभीर जोखिम (Critical)' : 'जोखिमपूर्ण (Risky)'}
@@ -110,7 +110,7 @@ export const ApprovalGateCard: React.FC<ApprovalGateCardProps> = ({
         </div>
         <div className="flex flex-col xs:flex-row xs:items-baseline gap-1 xs:gap-2 min-w-0">
           <span className="font-semibold text-slate-500 xs:min-w-32 font-mono flex-shrink-0 text-[11px]">परिवर्तनीयता (Reversibility):</span>
-          <span className="text-rose-700 font-medium break-words min-w-0">{riskDetails.reversibility}</span>
+          <span className="text-amber-800 font-medium break-words min-w-0">{riskDetails.reversibility}</span>
         </div>
         <div className="flex flex-col xs:flex-row xs:items-baseline gap-1 xs:gap-2 min-w-0">
           <span className="font-semibold text-slate-500 xs:min-w-32 font-mono flex-shrink-0 text-[11px]">सुरक्षा नियम (Safety Rule):</span>
@@ -120,8 +120,8 @@ export const ApprovalGateCard: React.FC<ApprovalGateCardProps> = ({
 
       {/* Expired State Notice */}
       {isExpired && !isApproved && !isRejected && (
-        <div className="mb-3 p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-900 flex items-center gap-2">
-          <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+        <div className="mb-3 p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-950 flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 text-amber-700 flex-shrink-0" />
           <span>अनुमति का समय (60 सेकंड) समाप्त हो गया है। सुरक्षा कारणों से कृपया दोबारा समीक्षा शुरू करें।</span>
         </div>
       )}
@@ -162,11 +162,11 @@ export const ApprovalGateCard: React.FC<ApprovalGateCardProps> = ({
           )}
         </div>
       ) : isRejected ? (
-        <div className="flex items-center gap-2 p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-950 text-xs">
-          <XCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+        <div className="flex items-center gap-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 text-xs">
+          <XCircle className="w-4 h-4 text-amber-700 flex-shrink-0" />
           <div className="min-w-0">
             <p className="font-semibold truncate">कार्रवाई अस्वीकृत / रद्द कर दी गई (Operation Rejected)</p>
-            <p className="text-[10px] text-rose-800/80">कार्रवाई तुरंत रोक दी गई। सिस्टम या पर्यावरण में कोई बदलाव नहीं किया गया।</p>
+            <p className="text-[10px] text-amber-900/80">कार्रवाई तुरंत रोक दी गई। सिस्टम या पर्यावरण में कोई बदलाव नहीं किया गया।</p>
           </div>
         </div>
       ) : !isReviewing ? (
@@ -185,7 +185,7 @@ export const ApprovalGateCard: React.FC<ApprovalGateCardProps> = ({
             onClick={handleCancel}
             className="w-full sm:flex-1 flex items-center justify-center gap-1.5 px-3 py-2 sm:py-2.5 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-medium text-xs sm:text-sm transition-all cursor-pointer min-h-[38px]"
           >
-            <XCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+            <XCircle className="w-4 h-4 text-amber-700 flex-shrink-0" />
             <span className="truncate">रद्द करें (Cancel)</span>
           </button>
         </div>
@@ -197,7 +197,7 @@ export const ApprovalGateCard: React.FC<ApprovalGateCardProps> = ({
               <Clock className="w-3.5 h-3.5 text-amber-700" />
               <span>समीक्षा सत्र सक्रिय (सत्यापन विंडो):</span>
             </div>
-            <span className={`font-bold ${timeLeft <= 10 ? 'text-rose-600 animate-pulse' : 'text-amber-900'}`}>
+            <span className={`font-bold ${timeLeft <= 10 ? 'text-amber-700 animate-pulse' : 'text-amber-900'}`}>
               {timeLeft}s शेष
             </span>
           </div>
@@ -218,7 +218,7 @@ export const ApprovalGateCard: React.FC<ApprovalGateCardProps> = ({
               type="button"
               disabled={isProcessing}
               onClick={handleCancel}
-              className="w-full sm:flex-1 flex items-center justify-center gap-1.5 px-3 py-2 sm:py-2.5 rounded-xl bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 font-semibold text-xs sm:text-sm transition-all cursor-pointer min-h-[40px]"
+              className="w-full sm:flex-1 flex items-center justify-center gap-1.5 px-3 py-2 sm:py-2.5 rounded-xl bg-white hover:bg-amber-50 text-amber-800 border border-amber-300 font-semibold text-xs sm:text-sm transition-all cursor-pointer min-h-[40px]"
             >
               <XCircle className="w-4 h-4 flex-shrink-0" />
               <span className="truncate">रद्द करें (Cancel)</span>

@@ -1,0 +1,34 @@
+name: PostgreSQL Dependency Verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.14.0"
+          cache: npm
+
+      - name: Verify locked PostgreSQL runtime dependency
+        run: |
+          node -e "const p=require('./package.json'); if (!p.dependencies?.pg) throw new Error('pg must be a production dependency'); if (!p.devDependencies?.['@types/pg']) throw new Error('@types/pg must be a development dependency'); console.log('PostgreSQL runtime driver and TypeScript declarations are present.')"
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: TypeScript check
+        run: npm run lint
+
+      - name: Production build
+        run: npm run build

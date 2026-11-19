@@ -4,6 +4,8 @@ import {
   User, 
   Copy, 
   Check, 
+  Volume2,
+  VolumeX, 
   AlertCircle, 
   RefreshCw, 
   Info,
@@ -31,6 +33,33 @@ interface ChatMessageProps {
   onNavigateToView?: (view: AppView) => void;
 }
 
+const extractInlineImages = (content: string): { text: string; images: string[] } => {
+  const images: string[] = [];
+  const imageDataUrl = /data:image\/(?:png|jpe?g|webp|gif|avif);base64,[A-Za-z0-9+/=\r\n]+/gi;
+  const text = content.replace(imageDataUrl, (value) => {
+    const compact = value.replace(/\s/g, '');
+    const payload = compact.slice(compact.indexOf(',') + 1);
+    if (payload.length > 12 * 1024 * 1024 || payload.length < 16 || payload.length % 4 !== 0) return '[Image omitted: invalid or oversized image data]';
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(payload)) return '[Image omitted: invalid image data]';
+    images.push(compact);
+    return '';
+  });
+  let safeText = text.replace(/\n{3,}/g, '\n\n').trim();
+  if (images.length === 0) {
+    const candidate = safeText.trim();
+    const detectedMime = candidate.startsWith('iVBORw0KGgo') ? 'image/png'
+      : candidate.startsWith('/9j/') ? 'image/jpeg'
+      : candidate.startsWith('R0lGOD') ? 'image/gif'
+      : candidate.startsWith('UklGR') ? 'image/webp'
+      : null;
+    if (detectedMime && candidate.length >= 256 && candidate.length <= 12 * 1024 * 1024 && candidate.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(candidate)) {
+      images.push(`data:${detectedMime};base64,${candidate}`);
+      safeText = '';
+    }
+  }
+  return { text: safeText, images };
+};
+
 export const ChatMessage: React.FC<ChatMessageProps> = ({
   message,
   onApproveAction,
@@ -43,14 +72,36 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   onNavigateToView
 }) => {
   const [copied, setCopied] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const isUser = message.role === 'user';
+  const renderedContent = extractInlineImages(message.content);
 
   const copyContent = async () => {
-    const success = await copyToClipboard(message.content);
+    const success = await copyToClipboard(renderedContent.text);
     if (success) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
+  };
+
+  const toggleReadAloud = () => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    if (isSpeaking) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(renderedContent.text);
+    const language = settings?.selectedLanguage;
+    if (language && language !== 'auto') {
+      const languageMap: Record<string, string> = { hi: 'hi-IN', hinglish: 'hi-IN', en: 'en-IN', pa: 'pa-IN', ur: 'ur-PK', bn: 'bn-IN', ta: 'ta-IN', te: 'te-IN', mr: 'mr-IN', gu: 'gu-IN' };
+      utterance.lang = languageMap[language] || language;
+    }
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+    setIsSpeaking(true);
+    window.speechSynthesis.speak(utterance);
   };
 
   const getCategoryBadge = (cat?: string) => {
@@ -154,12 +205,16 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
           }`}
         >
           {isUser ? (
-            <p className={`whitespace-pre-wrap ${fontSizeClass} leading-relaxed break-words max-w-full overflow-hidden`}>
-              {message.content}
-            </p>
+            <>
+              <p className={`whitespace-pre-wrap ${fontSizeClass} leading-relaxed break-words max-w-full overflow-hidden`}>
+                {renderedContent.text}
+              </p>
+              {renderedContent.images.map((src, index) => <img key={index} src={src} alt={`Attached image ${index + 1}`} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="mt-2 block max-w-full w-auto max-h-72 rounded-xl border border-white/30 object-contain" />)}
+            </>
           ) : (
             <div className={`overflow-hidden max-w-full min-w-0 ${fontSizeClass}`}>
-              <MarkdownRenderer content={message.content} />
+              <MarkdownRenderer content={renderedContent.text} />
+              {renderedContent.images.map((src, index) => <figure key={index} className="mt-2 max-w-full"><img src={src} alt={`Generated image ${index + 1}`} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="block max-w-full max-h-80 rounded-xl border border-slate-200 object-contain" /><figcaption className="mt-1 text-[10px] text-slate-400">Image attachment</figcaption></figure>)}
             </div>
           )}
 
@@ -167,16 +222,28 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
           {!isUser && (
             <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
               <span className="font-mono text-[10px]">Master Project AI</span>
-              <button
-                type="button"
-                onClick={copyContent}
-                className="flex items-center gap-1 hover:text-emerald-700 transition-colors cursor-pointer p-1 -m-1 rounded"
-                title="Copy message text"
-                aria-label="Copy message text"
-              >
-                {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                <span className="text-[10px]">{copied ? 'Copied' : 'Copy'}</span>
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={toggleReadAloud}
+                  className="flex items-center gap-1 hover:text-emerald-700 transition-colors cursor-pointer p-1 -m-1 rounded"
+                  title={isSpeaking ? 'Stop reading reply' : 'Listen to reply'}
+                  aria-label={isSpeaking ? 'Stop reading reply' : 'Listen to reply'}
+                >
+                  {isSpeaking ? <VolumeX className="w-3.5 h-3.5 text-emerald-600" /> : <Volume2 className="w-3.5 h-3.5" />}
+                  <span className="text-[10px]">{isSpeaking ? 'Stop' : 'Listen'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={copyContent}
+                  className="flex items-center gap-1 hover:text-emerald-700 transition-colors cursor-pointer p-1 -m-1 rounded"
+                  title="Copy message text"
+                  aria-label="Copy message text"
+                >
+                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span className="text-[10px]">{copied ? 'Copied' : 'Copy'}</span>
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -229,19 +296,19 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
 
         {/* Error state with clear troubleshooting instructions */}
         {message.error && (
-          <div className="mt-2.5 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-950 space-y-2 max-w-full min-w-0 overflow-hidden">
+          <div className="mt-2.5 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 space-y-2 max-w-full min-w-0 overflow-hidden">
             <div className="flex items-center gap-1.5">
-              <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
-              <h5 className="font-bold text-xs sm:text-sm text-rose-900 truncate">Execution Notice</h5>
+              <AlertCircle className="w-4 h-4 text-amber-700 flex-shrink-0" />
+              <h5 className="font-bold text-xs sm:text-sm text-amber-950 truncate">Execution Notice</h5>
             </div>
-            <p className="text-xs text-rose-800 bg-white/80 p-2 rounded-lg font-mono border border-rose-200 break-all max-w-full overflow-hidden">
+            <p className="text-xs text-amber-900 bg-white/80 p-2 rounded-lg font-mono border border-amber-200 break-all max-w-full overflow-hidden">
               {message.error}
             </p>
 
             {message.troubleshooting && message.troubleshooting.length > 0 && (
               <div className="text-xs pt-1">
-                <span className="font-semibold text-rose-900 block mb-1">Troubleshooting Checklist:</span>
-                <ul className="list-disc pl-4 space-y-0.5 text-rose-800 text-[11px]">
+                <span className="font-semibold text-amber-950 block mb-1">Troubleshooting Checklist:</span>
+                <ul className="list-disc pl-4 space-y-0.5 text-amber-900 text-[11px]">
                   {message.troubleshooting.map((step: string, sIdx: number) => (
                     <li key={sIdx} className="leading-snug">{step}</li>
                   ))}
@@ -254,7 +321,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                 <button
                   type="button"
                   onClick={() => onRetry(message.content)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-medium transition-colors cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-medium transition-colors cursor-pointer"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
                   Retry Command

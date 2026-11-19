@@ -34,6 +34,7 @@ import {
   Check
 } from 'lucide-react';
 import { AllConnectionsStatus } from '../types';
+import { getCsrfHeaders } from '../utils/csrf';
 import { SystemCapabilityRegistry, CapabilityStatus } from '../config/capabilityRegistry';
 
 export const ConnectionsCenter: React.FC = () => {
@@ -45,6 +46,11 @@ export const ConnectionsCenter: React.FC = () => {
   const [testResult, setTestResult] = useState<{ provider: string; success: boolean; message: string } | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
   const [hindiNotification, setHindiNotification] = useState<string | null>(null);
+  const [adminTokenInput, setAdminTokenInput] = useState<string>('');
+  const adminHeaders = () => ({
+    'x-aaksh-admin-token': adminTokenInput.trim(),
+    ...getCsrfHeaders()
+  });
 
   // Form states for editable fields
   const [geminiKeyInput, setGeminiKeyInput] = useState<string>('');
@@ -135,7 +141,7 @@ export const ConnectionsCenter: React.FC = () => {
     try {
       const res = await fetch('/api/connections/save', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...adminHeaders() },
         body: JSON.stringify({ provider, config })
       });
       if (res.ok) {
@@ -159,7 +165,7 @@ export const ConnectionsCenter: React.FC = () => {
     try {
       const res = await fetch('/api/connections/test', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...adminHeaders() },
         body: JSON.stringify({ provider })
       });
       const data = await res.json();
@@ -186,7 +192,7 @@ export const ConnectionsCenter: React.FC = () => {
     try {
       const res = await fetch('/api/registry/test-connection', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...adminHeaders() },
         body: JSON.stringify({ id, type })
       });
       const data = await res.json();
@@ -214,7 +220,7 @@ export const ConnectionsCenter: React.FC = () => {
       case 'Planned':
         return 'bg-indigo-100 text-indigo-900 border-indigo-300 font-medium';
       case 'Error':
-        return 'bg-rose-100 text-rose-800 border-rose-300 font-bold';
+        return 'bg-amber-100 text-amber-900 border-amber-300 font-bold';
       case 'Unavailable':
       default:
         return 'bg-slate-100 text-slate-600 border-slate-300 font-medium';
@@ -265,6 +271,24 @@ export const ConnectionsCenter: React.FC = () => {
               <span className="hidden sm:inline text-xs font-medium">रीफ्रेश</span>
             </button>
           </div>
+        </div>
+
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
+          <label htmlFor="aaksh-admin-token" className="block text-xs font-semibold text-amber-950 mb-1">
+            Admin authorization token
+          </label>
+          <input
+            id="aaksh-admin-token"
+            type="password"
+            autoComplete="off"
+            value={adminTokenInput}
+            onChange={(event) => setAdminTokenInput(event.target.value)}
+            placeholder="Enter server AAKSH_ADMIN_TOKEN"
+            className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-amber-400"
+          />
+          <p className="mt-1 text-[11px] text-amber-900">
+            Required only for saving/testing connection settings. Kept in this page's memory and cleared when the page is closed. Configure the same secret on the server; never paste API provider keys here.
+          </p>
         </div>
 
         {/* Tab Navigation */}
@@ -322,12 +346,12 @@ export const ConnectionsCenter: React.FC = () => {
           <div className={`mt-3 p-3 rounded-xl border text-xs flex items-start gap-2 ${
             testResult.success
               ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
-              : 'bg-rose-50 border-rose-300 text-rose-900'
+              : 'bg-amber-50 border-amber-300 text-amber-950'
           }`}>
             {testResult.success ? (
               <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
             ) : (
-              <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />
+              <AlertTriangle className="w-4 h-4 text-amber-700 flex-shrink-0 mt-0.5" />
             )}
             <div className="min-w-0 flex-1">
               <span className="font-bold uppercase text-[10px] block mb-0.5">
