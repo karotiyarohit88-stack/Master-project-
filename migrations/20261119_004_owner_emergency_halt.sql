@@ -13,6 +13,14 @@ CREATE TABLE IF NOT EXISTS owner_emergency_halt (
   CONSTRAINT owner_emergency_halt_reason_length CHECK (length(reason) <= 500)
 );
 
+-- Existing Owner accounts receive a durable, initially inactive switch.
+-- Backfill before enabling FORCE RLS; application reads/writes remain RLS-scoped.
+INSERT INTO owner_emergency_halt (owner_id, halted, reason)
+SELECT id, FALSE, ''
+  FROM app_users
+ WHERE role = 'owner'
+ON CONFLICT (owner_id) DO NOTHING;
+
 ALTER TABLE owner_emergency_halt ENABLE ROW LEVEL SECURITY;
 ALTER TABLE owner_emergency_halt FORCE ROW LEVEL SECURITY;
 
@@ -22,22 +30,20 @@ CREATE POLICY owner_emergency_halt_owner_isolation
   USING (owner_id = NULLIF(current_setting('app.owner_id', true), '')::uuid)
   WITH CHECK (owner_id = NULLIF(current_setting('app.owner_id', true), '')::uuid);
 
--- Existing Owner accounts receive a durable, initially inactive switch.
-INSERT INTO owner_emergency_halt (owner_id, halted, reason)
-SELECT id, FALSE, ''
-  FROM app_users
- WHERE role = 'owner'
-ON CONFLICT (owner_id) DO NOTHING;
-
 CREATE OR REPLACE FUNCTION create_owner_emergency_halt_state()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
+DECLARE
+  previous_owner_id TEXT;
 BEGIN
   IF NEW.role = 'owner' THEN
+    previous_owner_id := current_setting('app.owner_id', true);
+    PERFORM set_config('app.owner_id', NEW.id::text, true);
     INSERT INTO owner_emergency_halt (owner_id, halted, reason)
     VALUES (NEW.id, FALSE, '')
     ON CONFLICT (owner_id) DO NOTHING;
+    PERFORM set_config('app.owner_id', COALESCE(previous_owner_id, ''), true);
   END IF;
   RETURN NEW;
 END;
