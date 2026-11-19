@@ -21,9 +21,8 @@ function isPositiveInteger(value, fallback) {
 }
 
 /**
- * Content Security Policy is initially report-only so existing Vite, OAuth,
- * image and media integrations are observed before enforcement. CSP_ENFORCE=true
- * switches the same policy to enforcement after deployment origins are reviewed.
+ * Content Security Policy is enforced by default. CSP_REPORT_ONLY=true is an
+ * explicit temporary rollout override while a deployment origin is investigated.
  * No unsafe-eval is permitted.
  */
 export function buildContentSecurityPolicy() {
@@ -46,7 +45,7 @@ export function buildContentSecurityPolicy() {
 }
 
 /**
- * Apply conservative response headers and a CSP that defaults to report-only.
+ * Apply conservative response headers and an enforcing CSP by default.
  */
 export function securityHeaders(req, res, next) {
   res.removeHeader('X-Powered-By');
@@ -56,9 +55,9 @@ export function securityHeaders(req, res, next) {
   res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
   res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=()');
 
-  const cspName = process.env.CSP_ENFORCE === 'true'
-    ? 'Content-Security-Policy'
-    : 'Content-Security-Policy-Report-Only';
+  const cspName = process.env.CSP_REPORT_ONLY === 'true'
+    ? 'Content-Security-Policy-Report-Only'
+    : 'Content-Security-Policy';
   res.setHeader(cspName, buildContentSecurityPolicy());
 
   // Render / production ingress terminates HTTPS before forwarding to Node.
