@@ -219,41 +219,59 @@ export async function resolveActiveSecretsForOwner(
   if (!pool || !configuredKey || !ownerId || !tenantId) return {};
   try {
     const key = getEncryptionKey(configuredKey);
-    const result = await withOwnerTenantTransaction(pool, ownerId, tenantId, client => client.query(
-      'SELECT id, provider, name, ciphertext, nonce, auth_tag FROM app_secrets WHERE owner_id = $1 AND tenant_id = $2 AND revoked_at IS NULL ORDER BY created_at ASC',
-      [ownerId, tenantId]
-    ));
-    const resolved: Record<string, string> = {};
-    for (const row of result.rows) {
-      try {
-        const plain = decryptSecret(
-          { ciphertext: row.ciphertext, nonce: row.nonce, authTag: row.auth_tag },
-          key,
-          ownerId + ':' + tenantId + ':' + row.id
-        );
-        if (row.provider) {
-          const provider = String(row.provider).trim().toLowerCase();
-          const canonical =
-            /gemini/.test(provider) ? 'gemini' :
-            /open.?ai/.test(provider) ? 'openai' :
-            /runway|video/.test(provider) ? 'video' :
-            /eleven.?labs/.test(provider) ? 'elevenlabs' :
-            /n8n/.test(provider) ? 'n8n' :
-            /publish|social/.test(provider) ? 'publishing' :
-            /bing|brave|tavily|search/.test(provider) ? 'search' : provider;
-          resolved[canonical] = plain;
-          resolved[provider] = plain;
+    return await withOwnerTenantTransaction(pool, ownerId, tenantId, async client => {
+      const result = await client.query(
+        'SELECT id, provider, name, ciphertext, nonce, auth_tag FROM app_secrets WHERE owner_id = $1 AND tenant_id = $2 AND revoked_at IS NULL ORDER BY created_at ASC',
+        [ownerId, tenantId]
+      );
+      const resolved: Record<string, string> = {};
+      for (const row of result.rows) {
+        try {
+          const newAad = ownerId + ':' + tenantId + ':' + row.id;
+          let plain: string;
+          try {
+            plain = decryptSecret(
+              { ciphertext: row.ciphertext, nonce: row.nonce, authTag: row.auth_tag },
+              key,
+              newAad
+            );
+          } catch {
+            // One-time compatibility migration for ciphertext created before tenant_id existed.
+            plain = decryptSecret(
+              { ciphertext: row.ciphertext, nonce: row.nonce, authTag: row.auth_tag },
+              key,
+              ownerId + ':' + row.id
+            );
+            const migrated = encryptSecret(plain, key, newAad);
+            await client.query(
+              'UPDATE app_secrets SET ciphertext = $4, nonce = $5, auth_tag = $6, updated_at = NOW() WHERE id = $1 AND owner_id = $2 AND tenant_id = $3 AND revoked_at IS NULL',
+              [row.id, ownerId, tenantId, migrated.ciphertext, migrated.nonce, migrated.authTag]
+            );
+          }
+          if (row.provider) {
+            const provider = String(row.provider).trim().toLowerCase();
+            const canonical =
+              /gemini/.test(provider) ? 'gemini' :
+              /open.?ai/.test(provider) ? 'openai' :
+              /runway|video/.test(provider) ? 'video' :
+              /eleven.?labs/.test(provider) ? 'elevenlabs' :
+              /n8n/.test(provider) ? 'n8n' :
+              /publish|social/.test(provider) ? 'publishing' :
+              /bing|brave|tavily|search/.test(provider) ? 'search' : provider;
+            resolved[canonical] = plain;
+            resolved[provider] = plain;
+          }
+          if (row.name) {
+            const name = String(row.name);
+            resolved[name] = plain;
+            resolved[name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_')] = plain;
+          }
+        } catch {
+          // Skip corrupted or mismatched key entries safely
         }
-        if (row.name) {
-          const name = String(row.name);
-          resolved[name] = plain;
-          resolved[name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_')] = plain;
-        }
-      } catch {
-        // Skip corrupted or mismatched key entries safely
       }
-    }
-    return resolved;
+      return resolved;
+    });
   } catch {
     return {};
   }
