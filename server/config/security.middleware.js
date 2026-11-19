@@ -21,8 +21,32 @@ function isPositiveInteger(value, fallback) {
 }
 
 /**
- * Apply baseline response headers without imposing a Content-Security-Policy.
- * CSP must be configured after auditing the app's Vite, media, and OAuth origins.
+ * Content Security Policy is initially report-only so existing Vite, OAuth,
+ * image and media integrations are observed before enforcement. CSP_ENFORCE=true
+ * switches the same policy to enforcement after deployment origins are reviewed.
+ * No unsafe-eval is permitted.
+ */
+export function buildContentSecurityPolicy() {
+  const directives = [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "form-action 'self' https://accounts.google.com",
+    "script-src 'self' 'unsafe-inline' https://accounts.google.com",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    "img-src 'self' data: blob: https://images.unsplash.com https://storage.googleapis.com https://lh3.googleusercontent.com",
+    "media-src 'self' data: blob: https://storage.googleapis.com",
+    "connect-src 'self' https://accounts.google.com https://oauth2.googleapis.com https://generativelanguage.googleapis.com https://api.openai.com https://api.runwayml.com https://api.elevenlabs.io ws: wss:",
+    "frame-src 'self' https://accounts.google.com https://www.youtube.com https://www.youtube-nocookie.com",
+    "worker-src 'self' blob:"
+  ];
+  return directives.join('; ');
+}
+
+/**
+ * Apply conservative response headers and a CSP that defaults to report-only.
  */
 export function securityHeaders(req, res, next) {
   res.removeHeader('X-Powered-By');
@@ -32,8 +56,12 @@ export function securityHeaders(req, res, next) {
   res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
   res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=()');
 
+  const cspName = process.env.CSP_ENFORCE === 'true'
+    ? 'Content-Security-Policy'
+    : 'Content-Security-Policy-Report-Only';
+  res.setHeader(cspName, buildContentSecurityPolicy());
+
   // Render / production ingress terminates HTTPS before forwarding to Node.
-  // HSTS is only emitted in production; browsers ignore it over plain HTTP.
   if (process.env.NODE_ENV === 'production') {
     res.setHeader('Strict-Transport-Security', 'max-age=31536000');
   }
