@@ -261,7 +261,8 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
     '20261118_004_agent_task_rejection.sql',
     '20261118_005_aaksh_social_tenant_scope.sql',
     '20261119_001_owner_audit_logs.sql',
-    '20261119_002_owner_operational_records.sql'
+    '20261119_002_owner_operational_records.sql',
+    '20261119_003_autopilot_record_types.sql'
   ];
   assert.equal(status.migrationTableExists, true);
   for (const migration of required) assert.ok(status.appliedMigrations.includes(migration), 'Missing migration ' + migration);
@@ -393,6 +394,33 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
     );
     assert.deepEqual(recordsA.rows.map((row: Row) => row.record_id), ['video-a']);
     assert.deepEqual(recordsB.rows.map((row: Row) => row.record_id), ['video-b']);
+
+    // Verify AutoPilot and Accounting record types are durable and tenant-isolated.
+    await client.query(
+      `INSERT INTO owner_operational_records (owner_id, tenant_id, record_type, record_id, payload)
+       VALUES
+       ($1, $2, 'autopilot_workflow', 'workflow-a', '{"id":"workflow-a","name":"Tenant A workflow"}'::jsonb),
+       ($1, $2, 'workflow_execution', 'execution-a', '{"id":"execution-a","status":"waiting_approval"}'::jsonb),
+       ($1, $2, 'verified_earning', 'earning-a', '{"id":"earning-a","status":"verified","taxableAmount":1000}'::jsonb),
+       ($1, $2, 'payout_request', 'payout-a', '{"id":"payout-a","status":"pending_owner_approval"}'::jsonb),
+       ($3, $4, 'autopilot_workflow', 'workflow-b', '{"id":"workflow-b","name":"Tenant B workflow"}'::jsonb),
+       ($3, $4, 'workflow_execution', 'execution-b', '{"id":"execution-b","status":"waiting_approval"}'::jsonb),
+       ($3, $4, 'verified_earning', 'earning-b', '{"id":"earning-b","status":"verified","taxableAmount":2000}'::jsonb),
+       ($3, $4, 'payout_request', 'payout-b', '{"id":"payout-b","status":"pending_owner_approval"}'::jsonb)`,
+      [userA.rows[0].id, tenantA.rows[0].id, userB.rows[0].id, tenantB.rows[0].id]
+    );
+    for (const recordType of ['autopilot_workflow', 'workflow_execution', 'verified_earning', 'payout_request']) {
+      const aRows = await client.query(
+        'SELECT record_id FROM owner_operational_records WHERE owner_id = $1 AND tenant_id = $2 AND record_type = $3 ORDER BY record_id',
+        [userA.rows[0].id, tenantA.rows[0].id, recordType]
+      );
+      const bRows = await client.query(
+        'SELECT record_id FROM owner_operational_records WHERE owner_id = $1 AND tenant_id = $2 AND record_type = $3 ORDER BY record_id',
+        [userB.rows[0].id, tenantB.rows[0].id, recordType]
+      );
+      assert.deepEqual(aRows.rows.map((row: Row) => row.record_id), [recordType === 'autopilot_workflow' ? 'workflow-a' : recordType === 'workflow_execution' ? 'execution-a' : recordType === 'verified_earning' ? 'earning-a' : 'payout-a']);
+      assert.deepEqual(bRows.rows.map((row: Row) => row.record_id), [recordType === 'autopilot_workflow' ? 'workflow-b' : recordType === 'workflow_execution' ? 'execution-b' : recordType === 'verified_earning' ? 'earning-b' : 'payout-b']);
+    }
     await client.query(
       `INSERT INTO app_tenant_memberships (tenant_id, user_id, membership_role)
        VALUES ($1, $2, 'owner'), ($3, $4, 'owner')`,
