@@ -197,7 +197,9 @@ test('two Owners save and resolve separate encrypted keys without runtime DDL', 
     async query(sql: string, values: any[] = []) {
       statements.push(sql);
       assert.equal(/^\s*(create|alter|drop)\b/i.test(sql), false, 'runtime secret calls must not perform DDL');
-      if (sql.trim().toLowerCase().startsWith('insert into app_secrets')) {
+      const normalized = sql.trim().toLowerCase();
+      if (['begin', 'commit', 'rollback'].includes(normalized) || normalized.startsWith('select set_config')) return { rows: [] };
+      if (normalized.startsWith('insert into app_secrets')) {
         rows.push({
           id: values[0], owner_id: values[1], tenant_id: values[2], name: values[3], provider: values[4],
           masked_preview: values[5], ciphertext: values[6], nonce: values[7], auth_tag: values[8],
@@ -230,8 +232,10 @@ test('secret revocation is restricted to the selected Owner and provider', async
   const pool = {
     async connect() { return { query: pool.query.bind(pool), release: () => undefined }; },
     async query(sql: string, values: any[] = []) {
-      capturedSql = sql;
-      capturedValues = values;
+      if (sql.trim().toLowerCase().startsWith('update app_secrets')) {
+        capturedSql = sql;
+        capturedValues = values;
+      }
       return { rows: [] };
     }
   };
