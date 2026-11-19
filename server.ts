@@ -1328,7 +1328,8 @@ app.get('/api/system-doctor', requireOwnerForSecrets, async (_req: Request, res:
     encryptionKeyConfigured,
     cspMode: process.env.CSP_ENFORCE === 'true' ? 'enforce' : 'report-only',
     globalProviderKeyFallbackDisabled: true,
-    ownerScopedSecretResolverAvailable: typeof resolveActiveSecretsForOwner === 'function'
+    ownerScopedSecretResolverAvailable: typeof resolveActiveSecretsForOwner === 'function',
+    emergencyHaltAvailable: appliedMigrations.includes('20261119_004_owner_emergency_halt.sql')
   });
   return res.status(report.status === 'critical' ? 503 : 200).json(report);
 });
