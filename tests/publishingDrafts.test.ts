@@ -27,6 +27,7 @@ function fakePool() {
   };
   const pool = {
     query: runQuery,
+    release: () => undefined,
     connect: async () => ({ query: runQuery, release: () => undefined })
   };
   return { pool, calls };
