@@ -53,3 +53,32 @@ export async function assertOwnerEmergencyHaltClear(ownerId: string, poolOverrid
   const state = await getOwnerEmergencyHaltState(ownerId, poolOverride);
   if (state.halted) throw new Error('Emergency halt is active. AI and agent execution are blocked.');
 }
+
+export function createOwnerEmergencyHaltMiddleware(poolOverride?: EmergencyHaltDbPool | null) {
+  return async (req: import('express').Request, res: import('express').Response, next: import('express').NextFunction) => {
+    if (req.path === '/emergency-halt' || req.path === '/health' || req.path === '/system-doctor' || req.path === '/database/status') return next();
+    const executionRoute = req.method === 'POST' && [
+      /^\/chat$/,
+      /^\/automation\/trigger$/,
+      /^\/worker-agents\/delegate$/,
+      /^\/video\/(generate-script|generate-voice|render)$/,
+      /^\/autopilot\/trigger\/manual$/,
+      /^\/autopilot\/webhook\//,
+      /^\/autopilot\/content-pipeline\/prepare$/,
+      /^\/autopilot\/workflows\/[^/]+\/run$/,
+      /^\/autopilot\/executions\/[^/]+\/retry$/,
+      /^\/publishing\/(prepare|publish)$/,
+      /^\/github\/commit$/,
+      /^\/project\/apply-proposal$/,
+      /^\/sheets\/sync$/
+    ].some(pattern => pattern.test(req.path));
+    if (!executionRoute) return next();
+    const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id || '';
+    try {
+      await assertOwnerEmergencyHaltClear(ownerId, poolOverride);
+      return next();
+    } catch {
+      return res.status(423).json({ error: 'Emergency halt is active or its durable state is unavailable. AI and agent execution are blocked.' });
+    }
+  };
+}
