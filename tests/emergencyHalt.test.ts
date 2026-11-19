@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import express from 'express';
 import {
   assertOwnerEmergencyHaltClear,
   getOwnerEmergencyHaltState,
   setOwnerEmergencyHaltState,
+  createOwnerEmergencyHaltMiddleware,
   type EmergencyHaltDbPool
 } from '../server/emergencyHalt.ts';
 
@@ -51,4 +53,40 @@ test('AI execution fails closed when halt is active or durable state is missing'
   await assert.rejects(() => assertOwnerEmergencyHaltClear(OWNER, active.pool), /Emergency halt is active/);
   const missing = fakePool(false, false);
   await assert.rejects(() => assertOwnerEmergencyHaltClear(OWNER, missing.pool), /state is missing/);
+});
+
+test('emergency halt middleware blocks agent execution and fails closed, while read-only status remains reachable', async () => {
+  async function call(halted: boolean, hasState: boolean, method: 'POST' | 'GET', route: string) {
+    const pool: EmergencyHaltDbPool = {
+      connect: async () => ({
+        query: async (sql: string) => {
+          if (sql.startsWith('SELECT owner_id')) {
+            return { rows: hasState ? [{ owner_id: OWNER, halted, reason: halted ? 'incident' : '', updated_by: OWNER, updated_at: new Date().toISOString() }] : [] };
+          }
+          return { rows: [] };
+        },
+        release: () => undefined
+      })
+    };
+    const app = express();
+    app.use('/api', (req, res, next) => {
+      res.locals.authSession = { id: OWNER };
+      next();
+    }, createOwnerEmergencyHaltMiddleware(pool));
+    app.post('/api/chat', (_req, res) => res.sendStatus(204));
+    app.get('/api/status', (_req, res) => res.sendStatus(204));
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>(resolve => server.once('listening', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Emergency halt middleware test server did not bind.');
+    try {
+      return await fetch('http://127.0.0.1:' + address.port + route, { method });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  }
+  assert.equal((await call(true, true, 'POST', '/api/chat')).status, 423);
+  assert.equal((await call(false, true, 'POST', '/api/chat')).status, 204);
+  assert.equal((await call(false, false, 'POST', '/api/chat')).status, 423);
+  assert.equal((await call(true, true, 'GET', '/api/status')).status, 204);
 });
