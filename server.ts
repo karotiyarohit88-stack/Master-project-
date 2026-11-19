@@ -1617,11 +1617,12 @@ app.post('/api/connections/save', requireOwnerForSecrets, authGuards.requireCsrf
   }
 
   const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id;
-  if (!ownerId) return res.status(401).json({ error: 'Authentication required.' });
+  const tenantId = (res.locals.tenantContext as { tenantId?: string } | undefined)?.tenantId;
+  if (!ownerId || !tenantId) return res.status(401).json({ error: 'Authenticated Owner tenant context is required.' });
 
   try {
     if (provider === 'gemini') {
-      if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, 'Gemini API Key', 'gemini', config.apiKey.trim());
+      if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, tenantId, 'Gemini API Key', 'gemini', config.apiKey.trim());
       if (config.model) serverStore.gemini.model = config.model;
     } else if (provider === 'n8n') {
       if (config.webhookUrl && config.webhookUrl !== '••••••') await saveSecretForOwner(ownerId, 'n8n Webhook URL', 'n8n_webhook', config.webhookUrl.trim());
@@ -3953,7 +3954,8 @@ app.post('/api/github/auth/token', requireOwnerForSecrets, authGuards.requireCsr
 
   const cleanToken = token.trim();
   const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id;
-  if (!ownerId) return res.status(401).json({ error: 'Authentication required.' });
+  const tenantId = (res.locals.tenantContext as { tenantId?: string } | undefined)?.tenantId;
+  if (!ownerId || !tenantId) return res.status(401).json({ error: 'Authenticated Owner tenant context is required.' });
   try {
     const testResp = await fetch('https://api.github.com/user', {
       headers: {
@@ -4013,9 +4015,10 @@ app.post('/api/github/auth/token', requireOwnerForSecrets, authGuards.requireCsr
 // POST /api/github/auth/disconnect: Disconnect token
 app.post('/api/github/auth/disconnect', requireOwnerForSecrets, authGuards.requireCsrf, async (req: Request, res: Response) => {
   const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id;
-  if (!ownerId) return res.status(401).json({ error: 'Authentication required.' });
+  const tenantId = (res.locals.tenantContext as { tenantId?: string } | undefined)?.tenantId;
+  if (!ownerId || !tenantId) return res.status(401).json({ error: 'Authenticated Owner tenant context is required.' });
   try {
-    await revokeSecretsForOwner(ownerId, 'github');
+    await revokeSecretsForOwner(ownerId, tenantId, 'github');
   } catch {
     return res.status(503).json({ error: 'GitHub credentials could not be revoked from secure storage.' });
   }
