@@ -263,7 +263,8 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
     '20261119_001_owner_audit_logs.sql',
     '20261119_002_owner_operational_records.sql',
     '20261119_003_autopilot_record_types.sql',
-    '20261119_004_owner_emergency_halt.sql'
+    '20261119_004_owner_emergency_halt.sql',
+    '20261119_005_owner_tenant_secrets.sql'
   ];
   assert.equal(status.migrationTableExists, true);
   for (const migration of required) assert.ok(status.appliedMigrations.includes(migration), 'Missing migration ' + migration);
@@ -437,6 +438,34 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
     );
     assert.equal(haltAAfterUpdate.rows[0].halted, true);
     assert.equal(haltAAfterUpdate.rows[0].reason, 'Tenant A incident');
+
+    const secretSecurity = await client.query(
+      `SELECT c.relrowsecurity, c.relforcerowsecurity
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'app_secrets'`
+    );
+    assert.equal(secretSecurity.rows.length, 1);
+    assert.equal(secretSecurity.rows[0].relrowsecurity, true);
+    assert.equal(secretSecurity.rows[0].relforcerowsecurity, true);
+    await client.query(
+      `INSERT INTO app_secrets
+        (id, owner_id, tenant_id, name, provider, masked_preview, ciphertext, nonce, auth_tag)
+       VALUES
+        ($1, $2, $3, 'Tenant A Search Key', 'search', 'abc...xyz', 'cipher-a', 'nonce-a', 'tag-a'),
+        ($4, $5, $6, 'Tenant B Search Key', 'search', 'def...uvw', 'cipher-b', 'nonce-b', 'tag-b')`,
+      [randomUUID(), userA.rows[0].id, tenantA.rows[0].id, randomUUID(), userB.rows[0].id, tenantB.rows[0].id]
+    );
+    const secretRowsA = await client.query(
+      'SELECT name FROM app_secrets WHERE owner_id = $1 AND tenant_id = $2 AND revoked_at IS NULL',
+      [userA.rows[0].id, tenantA.rows[0].id]
+    );
+    const secretRowsB = await client.query(
+      'SELECT name FROM app_secrets WHERE owner_id = $1 AND tenant_id = $2 AND revoked_at IS NULL',
+      [userB.rows[0].id, tenantB.rows[0].id]
+    );
+    assert.deepEqual(secretRowsA.rows.map((row: Row) => row.name), ['Tenant A Search Key']);
+    assert.deepEqual(secretRowsB.rows.map((row: Row) => row.name), ['Tenant B Search Key']);
 
     // Verify AutoPilot and Accounting record types are durable and tenant-isolated.
     await client.query(
