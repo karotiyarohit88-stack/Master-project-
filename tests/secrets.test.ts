@@ -102,6 +102,7 @@ test('AES-256-GCM encrypts and authenticates secret values; masking never return
   assert.notEqual(encrypted.ciphertext, secret);
   assert.equal(decryptSecret(encrypted, encryptionKey, 'owner-id:tenant-id:secret-id'), secret);
   assert.throws(() => decryptSecret(encrypted, encryptionKey, 'another-owner:tenant-id:secret-id'));
+  assert.throws(() => decryptSecret(encrypted, encryptionKey, 'owner-id:another-tenant:secret-id'));
   assert.equal(maskSecret(secret), 'sk-...1234');
   assert.notEqual(maskSecret(secret), secret);
   assert.equal(maskSecret('short'), '••••••••');
