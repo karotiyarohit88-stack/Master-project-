@@ -26,7 +26,7 @@ import { buildAutomatedContentPackage } from './src/utils/automatedContentPipeli
 import { buildMultiPlatformAnalytics, buildVerifiedEarningsSummary, evaluatePayoutGuard, type VerifiedEarningEntry } from './src/utils/phase9Accounting.ts';
 import { sanitizeUntrustedText, validateAgentConversationHistory, validateWorkspaceChangePath, wrapUntrustedContext } from './server/security/zeroTrust.ts';
 import { evaluateSystemDoctor } from './server/systemDoctor.ts';
-import { assertOwnerEmergencyHaltClear, getOwnerEmergencyHaltState, setOwnerEmergencyHaltState } from './server/emergencyHalt.ts';
+import { assertOwnerEmergencyHaltClear, getOwnerEmergencyHaltState, setOwnerEmergencyHaltState, createOwnerEmergencyHaltMiddleware } from './server/emergencyHalt.ts';
 
 const execAsync = promisify(exec);
 
@@ -196,32 +196,7 @@ app.use('/api', createRuntimeSecretsMiddleware(resolveActiveSecretsForOwner));
 
 // Durable emergency halt gates every AI/agent execution mutation. The Owner halt
 // endpoint and read-only diagnostics remain reachable so the Owner can recover.
-app.use('/api', async (req: Request, res: Response, next) => {
-  if (req.path === '/emergency-halt' || req.path === '/health' || req.path === '/system-doctor' || req.path === '/database/status') return next();
-  const executionRoute = req.method === 'POST' && [
-    /^\/chat$/,
-    /^\/automation\/trigger$/,
-    /^\/worker-agents\/delegate$/,
-    /^\/video\/(generate-script|generate-voice|render)$/,
-    /^\/autopilot\/trigger\/manual$/,
-    /^\/autopilot\/webhook\//,
-    /^\/autopilot\/content-pipeline\/prepare$/,
-    /^\/autopilot\/workflows\/[^/]+\/run$/,
-    /^\/autopilot\/executions\/[^/]+\/retry$/,
-    /^\/publishing\/(prepare|publish)$/,
-    /^\/github\/commit$/,
-    /^\/project\/apply-proposal$/,
-    /^\/sheets\/sync$/
-  ].some(pattern => pattern.test(req.path));
-  if (!executionRoute) return next();
-  const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id || '';
-  try {
-    await assertOwnerEmergencyHaltClear(ownerId);
-    return next();
-  } catch {
-    return res.status(423).json({ error: 'Emergency halt is active or its durable state is unavailable. AI and agent execution are blocked.' });
-  }
-});
+app.use('/api', createOwnerEmergencyHaltMiddleware());
 
 app.use('/api/publishing', unifiedWorkspaceRouters.publishing);
 
