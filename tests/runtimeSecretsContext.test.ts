@@ -11,7 +11,7 @@ test('runtime provider credentials are isolated by authenticated Owner and never
     res.locals.authSession = { id: req.header('x-owner-id') || '' };
     next();
   });
-  app.use(createRuntimeSecretsMiddleware(async (ownerId) => {
+  app.use(createRuntimeSecretsMiddleware(async (ownerId): Promise<Record<string, string>> => {
     if (ownerId === 'owner-a') return { openai: 'encrypted-owner-a-key' };
     if (ownerId === 'owner-b') return { openai: 'encrypted-owner-b-key' };
     return {};
