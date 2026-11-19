@@ -1,5 +1,5 @@
 /* Offline app shell only. Never cache API, auth, cookies, or user-specific responses. */
-const CACHE_NAME='master-project-shell-v2';
+const CACHE_NAME='master-project-shell-v3';
 const APP_SHELL='/';
 const OFFLINE_PAGE='/offline.html';
 const PRECACHE=[APP_SHELL,OFFLINE_PAGE,'/manifest.json','/icon-192.svg','/icon-512.svg'];
