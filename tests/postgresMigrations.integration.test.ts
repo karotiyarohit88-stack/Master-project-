@@ -258,7 +258,8 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
     '20261118_002_invitation_tenant_scope.sql',
     '20261118_003_agent_task_tenant_scope.sql',
     '20261118_004_agent_task_rejection.sql',
-    '20261118_005_aaksh_social_tenant_scope.sql'
+    '20261118_005_aaksh_social_tenant_scope.sql',
+    '20261119_001_owner_audit_logs.sql'
   ];
   assert.equal(status.migrationTableExists, true);
   for (const migration of required) assert.ok(status.appliedMigrations.includes(migration), 'Missing migration ' + migration);
@@ -287,6 +288,54 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
       `INSERT INTO app_tenants (display_name, owner_user_id) VALUES ('Tenant B', $1) RETURNING id`,
       [userB.rows[0].id]
     );
+
+    const auditSecurity = await client.query(
+      `SELECT c.relrowsecurity, c.relforcerowsecurity
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'owner_audit_logs'`
+    );
+    assert.equal(auditSecurity.rows.length, 1);
+    assert.equal(auditSecurity.rows[0].relrowsecurity, true);
+    assert.equal(auditSecurity.rows[0].relforcerowsecurity, true);
+
+    const auditForeignKey = await client.query(
+      `SELECT pg_get_constraintdef(oid) AS definition
+         FROM pg_constraint
+        WHERE conrelid = 'public.owner_audit_logs'::regclass
+          AND contype = 'f'`
+    );
+    assert.ok(auditForeignKey.rows.some((row: Row) => row.definition.includes('(tenant_id, owner_id)')));
+
+    await client.query(
+      "SELECT set_config('app.owner_id', $1, true), set_config('app.tenant_id', $2, true)",
+      [userA.rows[0].id, tenantA.rows[0].id]
+    );
+    await client.query(
+      `INSERT INTO owner_audit_logs (owner_id, tenant_id, category, action, status, details)
+       VALUES ($1, $2, 'security', 'Tenant A audit event', 'info', 'Tenant A only')`,
+      [userA.rows[0].id, tenantA.rows[0].id]
+    );
+    await client.query(
+      "SELECT set_config('app.owner_id', $1, true), set_config('app.tenant_id', $2, true)",
+      [userB.rows[0].id, tenantB.rows[0].id]
+    );
+    await client.query(
+      `INSERT INTO owner_audit_logs (owner_id, tenant_id, category, action, status, details)
+       VALUES ($1, $2, 'security', 'Tenant B audit event', 'info', 'Tenant B only')`,
+      [userB.rows[0].id, tenantB.rows[0].id]
+    );
+
+    const auditA = await client.query(
+      'SELECT action FROM owner_audit_logs WHERE owner_id = $1 AND tenant_id = $2',
+      [userA.rows[0].id, tenantA.rows[0].id]
+    );
+    const auditB = await client.query(
+      'SELECT action FROM owner_audit_logs WHERE owner_id = $1 AND tenant_id = $2',
+      [userB.rows[0].id, tenantB.rows[0].id]
+    );
+    assert.deepEqual(auditA.rows.map((row: Row) => row.action), ['Tenant A audit event']);
+    assert.deepEqual(auditB.rows.map((row: Row) => row.action), ['Tenant B audit event']);
     await client.query(
       `INSERT INTO app_tenant_memberships (tenant_id, user_id, membership_role)
        VALUES ($1, $2, 'owner'), ($3, $4, 'owner')`,
