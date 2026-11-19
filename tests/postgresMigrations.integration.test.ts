@@ -327,9 +327,17 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
       [userB.rows[0].id, tenantB.rows[0].id]
     );
 
+    await client.query(
+      "SELECT set_config('app.owner_id', $1, true), set_config('app.tenant_id', $2, true)",
+      [userA.rows[0].id, tenantA.rows[0].id]
+    );
     const auditA = await client.query(
       'SELECT action FROM owner_audit_logs WHERE owner_id = $1 AND tenant_id = $2',
       [userA.rows[0].id, tenantA.rows[0].id]
+    );
+    await client.query(
+      "SELECT set_config('app.owner_id', $1, true), set_config('app.tenant_id', $2, true)",
+      [userB.rows[0].id, tenantB.rows[0].id]
     );
     const auditB = await client.query(
       'SELECT action FROM owner_audit_logs WHERE owner_id = $1 AND tenant_id = $2',
