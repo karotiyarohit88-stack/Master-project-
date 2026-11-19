@@ -1626,27 +1626,27 @@ app.post('/api/connections/save', requireOwnerForSecrets, authGuards.requireCsrf
       if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, tenantId, 'Gemini API Key', 'gemini', config.apiKey.trim());
       if (config.model) serverStore.gemini.model = config.model;
     } else if (provider === 'n8n') {
-      if (config.webhookUrl && config.webhookUrl !== '••••••') await saveSecretForOwner(ownerId, 'n8n Webhook URL', 'n8n_webhook', config.webhookUrl.trim());
-      if (config.authToken && config.authToken !== '••••••') await saveSecretForOwner(ownerId, 'n8n API Key', 'n8n', config.authToken.trim());
+      if (config.webhookUrl && config.webhookUrl !== '••••••') await saveSecretForOwner(ownerId, tenantId, 'n8n Webhook URL', 'n8n_webhook', config.webhookUrl.trim());
+      if (config.authToken && config.authToken !== '••••••') await saveSecretForOwner(ownerId, tenantId, 'n8n API Key', 'n8n', config.authToken.trim());
     } else if (provider === 'video') {
       if (config.providerName) serverStore.video.providerName = config.providerName;
       if (config.endpoint) serverStore.video.endpoint = config.endpoint.trim();
-      if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, 'Video Provider API Key', 'video', config.apiKey.trim());
+      if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, tenantId, 'Video Provider API Key', 'video', config.apiKey.trim());
     } else if (provider === 'elevenlabs') {
-      if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, 'ElevenLabs API Key', 'elevenlabs', config.apiKey.trim());
+      if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, tenantId, 'ElevenLabs API Key', 'elevenlabs', config.apiKey.trim());
       if (config.selectedVoiceId) serverStore.elevenlabs.selectedVoiceId = config.selectedVoiceId;
     } else if (provider === 'publishing') {
-      if (config.webhookEndpoint && config.webhookEndpoint !== '••••••') await saveSecretForOwner(ownerId, 'Publishing Webhook URL', 'publishing_webhook', config.webhookEndpoint.trim());
-      if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, 'Publishing API Key', 'publishing', config.apiKey.trim());
+      if (config.webhookEndpoint && config.webhookEndpoint !== '••••••') await saveSecretForOwner(ownerId, tenantId, 'Publishing Webhook URL', 'publishing_webhook', config.webhookEndpoint.trim());
+      if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, tenantId, 'Publishing API Key', 'publishing', config.apiKey.trim());
       if (config.enabledPlatforms) serverStore.publishing.enabledPlatforms = { ...serverStore.publishing.enabledPlatforms, ...config.enabledPlatforms };
     } else if (provider === 'sheets') {
       if (config.spreadsheetId !== undefined) serverStore.sheets.spreadsheetId = config.spreadsheetId.trim();
       if (config.sheetName) serverStore.sheets.sheetName = config.sheetName.trim();
-      if (config.serviceAccountKey && config.serviceAccountKey !== '••••••') await saveSecretForOwner(ownerId, 'Google Sheets Service Account Key', 'sheets', config.serviceAccountKey.trim());
+      if (config.serviceAccountKey && config.serviceAccountKey !== '••••••') await saveSecretForOwner(ownerId, tenantId, 'Google Sheets Service Account Key', 'sheets', config.serviceAccountKey.trim());
       if (config.syncEnabled !== undefined) serverStore.sheets.syncEnabled = Boolean(config.syncEnabled);
     } else if (provider === 'github') {
       if (config.token && config.token !== '••••••') {
-        await saveSecretForOwner(ownerId, 'GitHub Personal Access Token', 'github', config.token.trim());
+        await saveSecretForOwner(ownerId, tenantId, 'GitHub Personal Access Token', 'github', config.token.trim());
         serverStore.github.authMethod = 'token';
         serverStore.github.status = 'connected';
       }
@@ -1654,15 +1654,15 @@ app.post('/api/connections/save', requireOwnerForSecrets, authGuards.requireCsrf
       if (config.repo) serverStore.github.repo = config.repo.trim();
       if (config.branch) serverStore.github.branch = config.branch.trim();
     } else if (provider === 'openai') {
-      if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, 'OpenAI API Key', 'openai', config.apiKey.trim());
+      if (config.apiKey && config.apiKey !== '••••••') await saveSecretForOwner(ownerId, tenantId, 'OpenAI API Key', 'openai', config.apiKey.trim());
       if (config.model) serverStore.openai.model = config.model;
     } else if (provider === 'workspace') {
       if (config.clientId) serverStore.workspace.clientId = config.clientId.trim();
-      if (config.clientSecret && config.clientSecret !== '••••••') await saveSecretForOwner(ownerId, 'Google Workspace Client Secret', 'workspace_client_secret', config.clientSecret.trim());
-      if (config.oauthToken && config.oauthToken !== '••••••') await saveSecretForOwner(ownerId, 'Google Workspace OAuth Token', 'workspace_oauth_token', config.oauthToken.trim());
+      if (config.clientSecret && config.clientSecret !== '••••••') await saveSecretForOwner(ownerId, tenantId, 'Google Workspace Client Secret', 'workspace_client_secret', config.clientSecret.trim());
+      if (config.oauthToken && config.oauthToken !== '••••••') await saveSecretForOwner(ownerId, tenantId, 'Google Workspace OAuth Token', 'workspace_oauth_token', config.oauthToken.trim());
     } else if (provider === 'database') {
-      if (config.url && config.url !== '••••••') await saveSecretForOwner(ownerId, 'Database URL', 'database_url', config.url.trim());
-      if (config.firebaseConfig && config.firebaseConfig !== '••••••') await saveSecretForOwner(ownerId, 'Firebase Configuration', 'firebase_config', config.firebaseConfig.trim());
+      if (config.url && config.url !== '••••••') await saveSecretForOwner(ownerId, tenantId, 'Database URL', 'database_url', config.url.trim());
+      if (config.firebaseConfig && config.firebaseConfig !== '••••••') await saveSecretForOwner(ownerId, tenantId, 'Firebase Configuration', 'firebase_config', config.firebaseConfig.trim());
     }
 
     recordAudit({
@@ -3978,7 +3978,7 @@ app.post('/api/github/auth/token', requireOwnerForSecrets, authGuards.requireCsr
     const remaining = parseInt(testResp.headers.get('x-ratelimit-remaining') || '5000', 10);
     const limit = parseInt(testResp.headers.get('x-ratelimit-limit') || '5000', 10);
 
-    await saveSecretForOwner(ownerId, 'GitHub Personal Access Token', 'github', cleanToken);
+    await saveSecretForOwner(ownerId, tenantId, 'GitHub Personal Access Token', 'github', cleanToken);
     serverStore.github.userLogin = userData.login || 'User';
     serverStore.github.avatarUrl = userData.avatar_url || '';
     serverStore.github.scopes = scopes;
