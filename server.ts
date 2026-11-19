@@ -20,6 +20,7 @@ import { createRuntimeSecretsMiddleware, getRuntimeSecret } from './server/runti
 import { requireOwnerForSecrets } from './server/requireOwnerSecrets.ts';
 import { createOwnerAuditMiddleware, queueOwnerAuditLog, listOwnerAuditLogs, countOwnerAuditLogs, type OwnerAuditEntry } from './server/ownerAudit.ts';
 import { countOwnerOperationalRecords, listOwnerOperationalRecords, upsertOwnerOperationalRecord } from './server/ownerOperationalRecords.ts';
+import { createPublishingDraftForOwner, listOwnerPublishingDrafts, countOwnerPublishingDrafts } from './server/publishingDrafts.ts';
 import { createAutoPilotSafetyGuard } from './src/utils/autoPilotSafetyGuard.ts';
 import { buildAutomatedContentPackage } from './src/utils/automatedContentPipeline.ts';
 import { buildMultiPlatformAnalytics, buildVerifiedEarningsSummary, evaluatePayoutGuard, type VerifiedEarningEntry } from './src/utils/phase9Accounting.ts';
@@ -837,21 +838,6 @@ interface PublishingPost {
   error?: string;
 }
 
-const publishingQueue: PublishingPost[] = [
-  {
-    id: 'pub_post_001',
-    topic: 'How Neural Networks Process Code',
-    platform: 'youtube',
-    caption: 'Discover how transformers tokenize, embed, and execute software algorithms under the hood. 🚀 What architecture are you running today?',
-    hashtags: ['#AI', '#SoftwareEngineering', '#MachineLearning', '#TechTrends', '#Coding'],
-    videoJobId: 'vid_demo_001',
-    videoUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-    thumbnailUrl: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=80',
-    status: 'waiting_approval',
-    createdAt: new Date(Date.now() - 3400000).toISOString()
-  }
-];
-
 // Financial records are read-only in this phase: only verified invoice/earning integrations may append.
 const verifiedEarningLedger: VerifiedEarningEntry[] = [];
 interface PayoutRequest { id: string; amount: number; currency: 'INR'; purpose: string; status: 'pending_owner_approval' | 'blocked_native_service_unverified'; createdAt: string; ownerApprovedAt?: string; }
@@ -867,18 +853,6 @@ interface SheetsRecord {
   approvalStatus: string;
   timestamp: string;
 }
-
-const sheetsSyncRecords: SheetsRecord[] = [
-  {
-    id: 'sheet_rec_01',
-    taskId: 'task_ap_initial_01',
-    topic: 'Automated Daily Engineering Briefing',
-    workflowStatus: 'Completed',
-    outputUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-    approvalStatus: 'Staged in Approval Gate',
-    timestamp: new Date().toISOString()
-  }
-];
 
 // Code Change Proposals Store
 interface CodeProposal {
@@ -1363,6 +1337,8 @@ app.get('/api/analytics', async (req: Request, res: Response) => {
   const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
   const totalAuditLogs = await countOwnerAuditLogs(tenant.ownerId, tenant.tenantId);
   const videoJobsCount = await countOwnerOperationalRecords(tenant.ownerId, tenant.tenantId, 'video_job');
+  const publishingPostsCount = await countOwnerPublishingDrafts(tenant.ownerId, tenant.tenantId);
+  const sheetsSyncRecordsCount = await countOwnerOperationalRecords(tenant.ownerId, tenant.tenantId, 'sheets_sync_record');
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
@@ -1371,9 +1347,9 @@ app.get('/api/analytics', async (req: Request, res: Response) => {
       videoJobsCount,
       autoPilotTasksCount: autoPilotTasks.length,
       workflowsCount: autoPilotWorkflows.length,
-      publishingPostsCount: publishingQueue.length,
+      publishingPostsCount,
       workerAgentsCount: workerAgents.length,
-      sheetsSyncRecordsCount: sheetsSyncRecords.length,
+      sheetsSyncRecordsCount,
       proposalsCount: changeProposals.length
     },
     activeTools: {
@@ -1389,8 +1365,10 @@ app.get('/api/analytics', async (req: Request, res: Response) => {
 });
 
 // GET /api/analytics/multi-platform: counts from actual in-memory records only.
-app.get('/api/analytics/multi-platform', (req: Request, res: Response) => {
-  res.json(buildMultiPlatformAnalytics(publishingQueue, autoPilotTasks, workflowExecutions));
+app.get('/api/analytics/multi-platform', async (req: Request, res: Response) => {
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const publishingPosts = await listOwnerPublishingDrafts(tenant.ownerId, tenant.tenantId);
+  res.json({ ...buildMultiPlatformAnalytics(publishingPosts, [], []), dataCompleteness: 'publishing_only_pending_autopilot_migration' });
 });
 
 // GET /api/accounting/summary: verified ledger only; no demo balances or inferred earnings.
@@ -1463,6 +1441,8 @@ app.post('/api/automation/trigger', (req: Request, res: Response) => {
 
 // GET /api/connections: Return status with masked secrets
 app.get('/api/connections', async (req: Request, res: Response) => {
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const sheetsRecords = await listOwnerOperationalRecords<SheetsRecord>(tenant.ownerId, tenant.tenantId, 'sheets_sync_record');
   const hasGemini = Boolean(getOwnerSecret('gemini'));
   const databaseCheck = await checkPostgresConnection();
   let migrationCheck = { migrationTableExists: false, appliedMigrations: [] as string[] };
@@ -1519,8 +1499,8 @@ app.get('/api/connections', async (req: Request, res: Response) => {
       syncEnabled: serverStore.sheets.syncEnabled,
       hasServiceAccountOrKey: Boolean(getOwnerSecret('sheets')),
       status: serverStore.sheets.spreadsheetId ? 'connected' : 'unconfigured',
-      recordsCount: sheetsSyncRecords.length,
-      lastSynced: sheetsSyncRecords[0]?.timestamp
+      recordsCount: sheetsRecords.length,
+      lastSynced: sheetsRecords[0]?.timestamp
     },
     workspace: {
       configured: Boolean(serverStore.workspace.clientId || getOwnerSecret('workspace_oauth_token')),
@@ -2235,9 +2215,7 @@ Please review the proposed parameters below. You may either **Approve with Verif
         logs: newApTask.logs
       };
     } else if (lowerPrompt.includes('publish') || lowerPrompt.includes('post')) {
-      const pubId = 'pub_chat_' + Date.now();
       const newDraft: PublishingPost = {
-        id: pubId,
         topic: prompt.replace(/^(publish|create\s+draft|post)\s+(about|on)?/i, '').trim() || 'Autonomous Systems',
         platform: 'youtube',
         caption: `🚀 ${prompt}\n\nAutomated dispatch from Master Project AI Agent. Verified human approval enforced.\n\n#AI #Engineering #TechTrends`,
@@ -2245,7 +2223,9 @@ Please review the proposed parameters below. You may either **Approve with Verif
         status: 'waiting_approval',
         createdAt: new Date().toISOString()
       };
-      publishingQueue.unshift(newDraft);
+      const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+      const createdDraft = await createPublishingDraftForOwner(tenant.ownerId, tenant.tenantId, newDraft);
+      const pubId = createdDraft.id;
 
       generatedTaskCard = {
         taskId: pubId,
@@ -2913,6 +2893,7 @@ app.post('/api/autopilot/config', (req: Request, res: Response) => {
 // POST /api/autopilot/trigger/manual: Manual trigger
 app.post('/api/autopilot/trigger/manual', (req: Request, res: Response) => {
   const { topicOverride } = req.body;
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
   const currentTopic = topicOverride?.trim() || serverStore.autopilot.topic;
 
   // Deduplication check: prevent running identical topic task if one is currently queued/running
@@ -2975,18 +2956,14 @@ app.post('/api/autopilot/trigger/manual', (req: Request, res: Response) => {
       t.logs.push(`[${new Date().toLocaleTimeString()}] Task completed. Awaiting Human Approval in Publishing Queue`);
       t.outputArtifactUrl = 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
 
-      // Stage in publishing queue
-      publishingQueue.unshift({
-        id: 'pub_ap_' + Date.now(),
+      void createPublishingDraftForOwner(tenant.ownerId, tenant.tenantId, {
         topic: t.topic,
         platform: 'youtube',
         caption: `Automated Auto Pilot Dispatch: ${t.topic}\n\n#Architecture #AI #MasterAgent`,
         hashtags: ['#Engineering', '#AutonomousAI', '#DevOps'],
         videoUrl: t.outputArtifactUrl,
-        thumbnailUrl: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=80',
-        status: 'waiting_approval',
-        createdAt: new Date().toISOString()
-      });
+        thumbnailUrl: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=80'
+      }).catch(() => console.error('AutoPilot publishing draft could not be persisted.'));
     }
   }, 3000);
 
@@ -3216,12 +3193,34 @@ app.post('/api/autopilot/content-pipeline/prepare', authGuards.requireCsrf, asyn
   const contentPackage = buildAutomatedContentPackage({ now, id: 'content_' + date.replace(/-/g, '') + '_' + slot.replace(':', ''), topic: typeof req.body?.topic === 'string' ? req.body.topic : undefined });
   processedContentSlots.add(slotKey);
   automatedContentRuns.unshift(contentPackage);
-  const shortId = 'pub_' + contentPackage.id + '_short';
-  const longId = 'pub_' + contentPackage.id + '_long';
-  publishingQueue.unshift(
-    { id: longId, topic: 'Political News Funny / Satire — 15-minute 3D cartoon', platform: 'youtube', caption: contentPackage.formats.long.scriptPrompt, hashtags: ['#PoliticalSatire','#3DCartoon','#FactCheck'], videoJobId: contentPackage.id, dailyContent: true, videoAssetVerified: false, status: 'waiting_approval', createdAt: now.toISOString(), auditReport: 'Draft prompts only. Human approval required before paid generation or publication.' },
-    { id: shortId, topic: 'Political News Funny / Satire — YouTube Short', platform: 'youtube', caption: contentPackage.formats.short.scriptPrompt, hashtags: ['#PoliticalSatire','#YouTubeShorts','#FactCheck'], videoJobId: contentPackage.id, dailyContent: true, videoAssetVerified: false, status: 'waiting_approval', createdAt: now.toISOString(), auditReport: 'Draft prompts only. Human approval required before paid generation or publication.' }
-  );
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  let shortId = '';
+  let longId = '';
+  try {
+    const longDraft = await createPublishingDraftForOwner(tenant.ownerId, tenant.tenantId, {
+      topic: 'Political News Funny / Satire — 15-minute 3D cartoon',
+      platform: 'youtube',
+      caption: contentPackage.formats.long.scriptPrompt,
+      hashtags: ['#PoliticalSatire','#3DCartoon','#FactCheck'],
+      videoJobId: contentPackage.id,
+      dailyContent: true,
+      auditReport: 'Draft prompts only. Human approval required before paid generation or publication.'
+    });
+    const shortDraft = await createPublishingDraftForOwner(tenant.ownerId, tenant.tenantId, {
+      topic: 'Political News Funny / Satire — YouTube Short',
+      platform: 'youtube',
+      caption: contentPackage.formats.short.scriptPrompt,
+      hashtags: ['#PoliticalSatire','#YouTubeShorts','#FactCheck'],
+      videoJobId: contentPackage.id,
+      dailyContent: true,
+      auditReport: 'Draft prompts only. Human approval required before paid generation or publication.'
+    });
+    shortId = shortDraft.id;
+    longId = longDraft.id;
+  } catch {
+    return res.status(503).json({ error: 'Publishing drafts could not be saved to the Owner-scoped approval queue.' });
+  }
+  processedContentSlots.add(slotKey);
   let n8nDelivery: {status:'delivered'|'not_configured'|'failed';message:string} = {status:'not_configured',message:'n8n receiver is not configured. Draft package remains available for review.'};
   if (getOwnerSecret('n8n_webhook')) {
     try {
@@ -3482,9 +3481,9 @@ app.post('/api/autopilot/workflows/:id/run', async (req: Request, res: Response)
   let stagedDraftId: string | undefined = undefined;
 
   if (requiresApproval) {
-    stagedDraftId = 'pub_wf_' + Date.now();
+    const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
     const draftPost: PublishingPost = {
-      id: stagedDraftId,
+      id: 'pending',
       topic: wf.topic,
       platform: (wf.targetPlatform.replace('_shorts', '').replace('_reels', '') as any) || 'youtube',
       caption: `🚀 ${wf.topic}\n\nAutomated briefing from "${wf.name}".\n\n#AI #TechNews #Automation`,
@@ -3492,7 +3491,12 @@ app.post('/api/autopilot/workflows/:id/run', async (req: Request, res: Response)
       status: 'waiting_approval',
       createdAt: now.toISOString()
     };
-    publishingQueue.unshift(draftPost);
+    try {
+      const createdDraft = await createPublishingDraftForOwner(tenant.ownerId, tenant.tenantId, draftPost);
+      stagedDraftId = createdDraft.id;
+    } catch {
+      return res.status(503).json({ error: 'Workflow publishing draft could not be saved to the Owner-scoped approval queue.' });
+    }
     logs.push(`[${new Date().toLocaleTimeString()}] Draft post created [${stagedDraftId}]. Staged in Human Approval Gate.`);
   }
 
@@ -3653,7 +3657,7 @@ app.post('/api/publishing/publish', (_req: Request, res: Response) => {
 // -----------------------------------------------------------------------------
 
 // POST /api/sheets/sync: Append tasks telemetry
-app.post('/api/sheets/sync', (req: Request, res: Response) => {
+app.post('/api/sheets/sync', async (req: Request, res: Response) => {
   const { taskId, topic, workflowStatus, outputUrl, approvalStatus } = req.body;
 
   const record: SheetsRecord = {
@@ -3666,7 +3670,9 @@ app.post('/api/sheets/sync', (req: Request, res: Response) => {
     timestamp: new Date().toISOString()
   };
 
-  sheetsSyncRecords.unshift(record);
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  await upsertOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'sheets_sync_record', record);
+  const records = await listOwnerOperationalRecords<SheetsRecord>(tenant.ownerId, tenant.tenantId, 'sheets_sync_record');
 
   recordAudit({
     category: 'autopilot',
@@ -3678,18 +3684,20 @@ app.post('/api/sheets/sync', (req: Request, res: Response) => {
   res.json({
     success: true,
     record,
-    totalRecords: sheetsSyncRecords.length,
+    totalRecords: records.length,
     sheetName: serverStore.sheets.sheetName
   });
 });
 
 // GET /api/sheets/records: Get synced records
-app.get('/api/sheets/records', (req: Request, res: Response) => {
+app.get('/api/sheets/records', async (req: Request, res: Response) => {
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const records = await listOwnerOperationalRecords<SheetsRecord>(tenant.ownerId, tenant.tenantId, 'sheets_sync_record');
   res.json({
     configured: Boolean(serverStore.sheets.spreadsheetId),
     spreadsheetIdMasked: maskSecret(serverStore.sheets.spreadsheetId),
     sheetName: serverStore.sheets.sheetName,
-    records: sheetsSyncRecords
+    records
   });
 });
 
