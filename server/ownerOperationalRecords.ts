@@ -19,7 +19,10 @@ export type OwnerOperationalRecordType =
   | 'change_proposal'
   | 'worker_agent'
   | 'payout_request'
-  | 'verified_earning';
+  | 'verified_earning'
+  | 'autopilot_config'
+  | 'content_run'
+  | 'content_slot';
 
 function resolvePool(override?: OwnerOperationalDbPool | null): OwnerOperationalDbPool | null {
   return override === undefined ? getPostgresPool() as unknown as OwnerOperationalDbPool | null : override;
