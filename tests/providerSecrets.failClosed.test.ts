@@ -30,7 +30,7 @@ test('Owner secret resolver has no fallback argument and every call is single-ar
   assert.match(serverSource, /function getOwnerSecret\(provider: string\): string/);
   assert.doesNotMatch(serverSource, /function getOwnerSecret\([^)]*fallback/);
   assert.doesNotMatch(serverSource, /getOwnerSecret\('[^']+'\s*,/);
-  assert.match(serverSource, /function getGenAI\(\): GoogleGenAI \| null \{\s*const key = getOwnerSecret\('gemini'\);/);
+  assert.match(serverSource, /async function getGenAI\(ownerId: string\): Promise<GoogleGenAI \| null> \{\s*await assertOwnerEmergencyHaltClear\(ownerId\);\s*const key = getOwnerSecret\('gemini'\);/);
 });
 
 test('missing Owner-scoped AI/provider credentials fail closed instead of returning simulated success', () => {
