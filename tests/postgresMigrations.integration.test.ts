@@ -375,9 +375,17 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
        VALUES ($1, $2, 'video_job', 'video-b', '{"id":"video-b","status":"queued"}'::jsonb)`,
       [userB.rows[0].id, tenantB.rows[0].id]
     );
+    await client.query(
+      "SELECT set_config('app.owner_id', $1, true), set_config('app.tenant_id', $2, true)",
+      [userA.rows[0].id, tenantA.rows[0].id]
+    );
     const recordsA = await client.query(
       'SELECT record_id FROM owner_operational_records WHERE owner_id = $1 AND tenant_id = $2 AND record_type = $3',
       [userA.rows[0].id, tenantA.rows[0].id, 'video_job']
+    );
+    await client.query(
+      "SELECT set_config('app.owner_id', $1, true), set_config('app.tenant_id', $2, true)",
+      [userB.rows[0].id, tenantB.rows[0].id]
     );
     const recordsB = await client.query(
       'SELECT record_id FROM owner_operational_records WHERE owner_id = $1 AND tenant_id = $2 AND record_type = $3',
