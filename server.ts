@@ -17,6 +17,7 @@ import { createUnifiedWorkspaceRouter } from './unifiedWorkspaces.ts';
 import { createSecretsRouter, resolveActiveSecretsForOwner, revokeSecretsForOwner, saveSecretForOwner } from './secrets.ts';
 import createSecurityMiddleware, { createRateLimitMiddleware } from './server/config/security.middleware.js';
 import { createRuntimeSecretsMiddleware, getRuntimeSecret } from './server/runtime-secrets-context.ts';
+import { requireOwnerForSecrets } from './server/requireOwnerSecrets.ts';
 import { createAutoPilotSafetyGuard } from './src/utils/autoPilotSafetyGuard.ts';
 import { buildAutomatedContentPackage } from './src/utils/automatedContentPipeline.ts';
 import { buildMultiPlatformAnalytics, buildVerifiedEarningsSummary, evaluatePayoutGuard, type VerifiedEarningEntry } from './src/utils/phase9Accounting.ts';
@@ -178,17 +179,7 @@ app.use('/api', createAutoPilotSafetyGuard(() => serverStore.autopilot.safetyEna
 app.use('/api', createRuntimeSecretsMiddleware(resolveActiveSecretsForOwner));
 app.use('/api/publishing', authGuards.requireTenantMembership, unifiedWorkspaceRouters.publishing);
 
-const requireTenantAdminForSecrets: express.RequestHandler = (_req, res, next) => {
-  const role = (res.locals.tenantContext as { role?: string } | undefined)?.role;
-  if (role !== 'owner' && role !== 'admin') {
-    return res.status(403).json({ error: 'Workspace Owner/Admin membership is required to manage this account’s secrets.' });
-  }
-  return next();
-};
-app.use('/api/secrets', authGuards.requireTenantMembership, requireTenantAdminForSecrets, (req, res, next) => {
-  if (req.method === 'GET') return next();
-  return authGuards.requireCsrf(req, res, next);
-}, createSecretsRouter());
+app.use('/api/secrets', authGuards.requireTenantMembership, requireOwnerForSecrets, (req, res, next) => {
 
 // Owner-only guard for credential/configuration mutation routes.
 // Configure AAKSH_ADMIN_TOKEN as a server-side secret (minimum 32 characters).
