@@ -262,7 +262,8 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
     '20261118_005_aaksh_social_tenant_scope.sql',
     '20261119_001_owner_audit_logs.sql',
     '20261119_002_owner_operational_records.sql',
-    '20261119_003_autopilot_record_types.sql'
+    '20261119_003_autopilot_record_types.sql',
+    '20261119_004_owner_emergency_halt.sql'
   ];
   assert.equal(status.migrationTableExists, true);
   for (const migration of required) assert.ok(status.appliedMigrations.includes(migration), 'Missing migration ' + migration);
@@ -394,6 +395,48 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
     );
     assert.deepEqual(recordsA.rows.map((row: Row) => row.record_id), ['video-a']);
     assert.deepEqual(recordsB.rows.map((row: Row) => row.record_id), ['video-b']);
+
+    const haltSecurity = await client.query(
+      `SELECT c.relrowsecurity, c.relforcerowsecurity
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'owner_emergency_halt'`
+    );
+    assert.equal(haltSecurity.rows.length, 1);
+    assert.equal(haltSecurity.rows[0].relrowsecurity, true);
+    assert.equal(haltSecurity.rows[0].relforcerowsecurity, true);
+
+    // Owner bootstrap trigger creates durable independent halt rows for each Owner.
+    await client.query(
+      "SELECT set_config('app.owner_id', $1, true)",
+      [userA.rows[0].id]
+    );
+    const haltRowsA = await client.query('SELECT owner_id, halted FROM owner_emergency_halt');
+    assert.equal(haltRowsA.rows.length, 1);
+    assert.equal(haltRowsA.rows[0].owner_id, userA.rows[0].id);
+    assert.equal(haltRowsA.rows[0].halted, false);
+    await client.query(
+      'UPDATE owner_emergency_halt SET halted = TRUE, reason = $2 WHERE owner_id = $1',
+      [userA.rows[0].id, 'Tenant A incident']
+    );
+    await client.query(
+      "SELECT set_config('app.owner_id', $1, true)",
+      [userB.rows[0].id]
+    );
+    const haltRowsB = await client.query('SELECT owner_id, halted FROM owner_emergency_halt');
+    assert.equal(haltRowsB.rows.length, 1);
+    assert.equal(haltRowsB.rows[0].owner_id, userB.rows[0].id);
+    assert.equal(haltRowsB.rows[0].halted, false);
+    await client.query(
+      "SELECT set_config('app.owner_id', $1, true)",
+      [userA.rows[0].id]
+    );
+    const haltAAfterUpdate = await client.query(
+      'SELECT halted, reason FROM owner_emergency_halt WHERE owner_id = $1',
+      [userA.rows[0].id]
+    );
+    assert.equal(haltAAfterUpdate.rows[0].halted, true);
+    assert.equal(haltAAfterUpdate.rows[0].reason, 'Tenant A incident');
 
     // Verify AutoPilot and Accounting record types are durable and tenant-isolated.
     await client.query(
