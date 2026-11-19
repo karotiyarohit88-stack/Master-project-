@@ -18,6 +18,7 @@ import {
 } from '../database.ts';
 
 const enabled = process.env.RUN_POSTGRES_INTEGRATION === 'true';
+type Row = Record<string, any>;
 
 
 function readCookie(setCookie: string, name: string): string {
