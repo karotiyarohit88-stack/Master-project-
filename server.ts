@@ -1313,6 +1313,8 @@ app.get('/api/analytics', async (req: Request, res: Response) => {
   const sheetsSyncRecordsCount = await countOwnerOperationalRecords(tenant.ownerId, tenant.tenantId, 'sheets_sync_record');
   const autoPilotTasksCount = await countOwnerOperationalRecords(tenant.ownerId, tenant.tenantId, 'autopilot_task');
   const workflowsCount = await countOwnerOperationalRecords(tenant.ownerId, tenant.tenantId, 'autopilot_workflow');
+  const workerAgentsCount = await countOwnerOperationalRecords(tenant.ownerId, tenant.tenantId, 'worker_agent');
+  const proposalsCount = await countOwnerOperationalRecords(tenant.ownerId, tenant.tenantId, 'change_proposal');
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
@@ -1322,9 +1324,9 @@ app.get('/api/analytics', async (req: Request, res: Response) => {
       autoPilotTasksCount,
       workflowsCount,
       publishingPostsCount,
-      workerAgentsCount: workerAgents.length,
+      workerAgentsCount,
       sheetsSyncRecordsCount,
-      proposalsCount: changeProposals.length
+      proposalsCount
     },
     activeTools: {
       gemini: Boolean(getOwnerSecret('gemini')) ? 'Connected' : 'Missing Key',
