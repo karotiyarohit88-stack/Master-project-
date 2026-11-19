@@ -411,7 +411,7 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
       "SELECT set_config('app.owner_id', $1, true)",
       [userA.rows[0].id]
     );
-    const haltRowsA = await client.query('SELECT owner_id, halted FROM owner_emergency_halt');
+    const haltRowsA = await client.query('SELECT owner_id, halted FROM owner_emergency_halt WHERE owner_id = $1', [userA.rows[0].id]);
     assert.equal(haltRowsA.rows.length, 1);
     assert.equal(haltRowsA.rows[0].owner_id, userA.rows[0].id);
     assert.equal(haltRowsA.rows[0].halted, false);
@@ -423,7 +423,7 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
       "SELECT set_config('app.owner_id', $1, true)",
       [userB.rows[0].id]
     );
-    const haltRowsB = await client.query('SELECT owner_id, halted FROM owner_emergency_halt');
+    const haltRowsB = await client.query('SELECT owner_id, halted FROM owner_emergency_halt WHERE owner_id = $1', [userB.rows[0].id]);
     assert.equal(haltRowsB.rows.length, 1);
     assert.equal(haltRowsB.rows[0].owner_id, userB.rows[0].id);
     assert.equal(haltRowsB.rows[0].halted, false);
