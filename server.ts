@@ -1307,11 +1307,19 @@ app.get('/api/system-doctor', requireOwnerForSecrets, async (_req: Request, res:
     ? Buffer.from(rawEncryptionKey, 'hex').length === 32
     : Buffer.from(rawEncryptionKey, 'base64').length === 32;
   const requiredMigrations = [
+    '20261114_001_agent_task_queue.sql',
+    '20261114_002_application_auth.sql',
+    '20261116_003_email_otp_challenges.sql',
     '20261117_001_app_secrets.sql',
     '20261118_001_tenant_identity.sql',
+    '20261118_002_invitation_tenant_scope.sql',
+    '20261118_003_agent_task_tenant_scope.sql',
+    '20261118_004_agent_task_rejection.sql',
+    '20261118_005_aaksh_social_tenant_scope.sql',
     '20261119_001_owner_audit_logs.sql',
     '20261119_002_owner_operational_records.sql',
-    '20261119_003_autopilot_record_types.sql'
+    '20261119_003_autopilot_record_types.sql',
+    '20261119_004_owner_emergency_halt.sql'
   ];
   const report = evaluateSystemDoctor({
     databaseConnected: database.connected,
