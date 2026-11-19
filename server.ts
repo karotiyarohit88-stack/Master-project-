@@ -2216,6 +2216,7 @@ Please review the proposed parameters below. You may either **Approve with Verif
       };
     } else if (lowerPrompt.includes('publish') || lowerPrompt.includes('post')) {
       const newDraft: PublishingPost = {
+        id: 'pending',
         topic: prompt.replace(/^(publish|create\s+draft|post)\s+(about|on)?/i, '').trim() || 'Autonomous Systems',
         platform: 'youtube',
         caption: `🚀 ${prompt}\n\nAutomated dispatch from Master Project AI Agent. Verified human approval enforced.\n\n#AI #Engineering #TechTrends`,
