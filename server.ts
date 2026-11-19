@@ -1301,7 +1301,7 @@ app.get('/api/system-doctor', requireOwnerForSecrets, async (_req: Request, res:
     appliedMigrations,
     requiredMigrations,
     encryptionKeyConfigured,
-    cspMode: process.env.CSP_ENFORCE === 'true' ? 'enforce' : 'report-only',
+    cspMode: process.env.CSP_REPORT_ONLY === 'true' ? 'report-only' : 'enforce',
     globalProviderKeyFallbackDisabled: true,
     ownerScopedSecretResolverAvailable: typeof resolveActiveSecretsForOwner === 'function',
     emergencyHaltAvailable: appliedMigrations.includes('20261119_004_owner_emergency_halt.sql')
