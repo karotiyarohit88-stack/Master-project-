@@ -55,11 +55,11 @@ class MemoryAuthDb {
     if (q.startsWith('update app_sessions set revoked_at')) {
       const s = this.sessions.find(x => x.id === values[0]); if (s) s.revoked_at = new Date().toISOString(); return { rows: [] };
     }
-    if (q.startsWith('select t.id as tenant_id, m.membership_role from app_tenant_memberships')) {
+    if (q.startsWith('select t.id as tenant_id, t.owner_user_id as owner_id, m.membership_role from app_tenant_memberships')) {
       const rows = this.memberships.filter(m => m.user_id === values[0] && m.status === 'active')
         .map(m => ({ membership: m, tenant: this.tenants.find(t => t.id === m.tenant_id && t.status === 'active') }))
         .filter(x => x.tenant)
-        .map(x => ({ tenant_id: x.tenant!.id, membership_role: x.membership.membership_role }));
+        .map(x => ({ tenant_id: x.tenant!.id, owner_id: x.tenant!.owner_user_id, membership_role: x.membership.membership_role }));
       return { rows: rows.slice(0, 2) };
     }
     if (q.startsWith('select id, task_type, original_prompt, payload, status') && q.includes('from agent_tasks')) {
@@ -306,6 +306,7 @@ test('tenant membership guard resolves exactly one active workspace from the aut
     assert.equal(allowed.status, 200);
     const result = await allowed.json() as Row;
     assert.equal(result.tenant.tenantId, db.tenants[0].id);
+    assert.equal(result.tenant.ownerId, db.users[0].id);
     assert.equal(result.tenant.role, 'owner');
     db.memberships[0].status = 'suspended';
     assert.equal((await fetch(target, { headers: { cookie: cookies } })).status, 403);
