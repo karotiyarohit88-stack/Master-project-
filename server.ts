@@ -18,6 +18,7 @@ import { createSecretsRouter, resolveActiveSecretsForOwner, revokeSecretsForOwne
 import createSecurityMiddleware, { createRateLimitMiddleware } from './server/config/security.middleware.js';
 import { createRuntimeSecretsMiddleware, getRuntimeSecret } from './server/runtime-secrets-context.ts';
 import { requireOwnerForSecrets } from './server/requireOwnerSecrets.ts';
+import { createOwnerAuditMiddleware, queueOwnerAuditLog, listOwnerAuditLogs, countOwnerAuditLogs, type OwnerAuditEntry } from './server/ownerAudit.ts';
 import { createAutoPilotSafetyGuard } from './src/utils/autoPilotSafetyGuard.ts';
 import { buildAutomatedContentPackage } from './src/utils/automatedContentPipeline.ts';
 import { buildMultiPlatformAnalytics, buildVerifiedEarningsSummary, evaluatePayoutGuard, type VerifiedEarningEntry } from './src/utils/phase9Accounting.ts';
@@ -68,6 +69,16 @@ app.use('/api', (req, res, next) => {
 // The auth router is mounted above this middleware and applies its own route-specific
 // CSRF checks; all remaining /api mutation routes are browser-session protected.
 app.use('/api', createCsrfMutationGuard(authGuards.requireCsrf));
+
+// Every authenticated API is bound to exactly one active tenant from the session.
+// Public health and auth endpoints are handled separately.
+app.use('/api', (req, res, next) => {
+  const publicHealth = req.path === '/health';
+  const authEndpoint = req.path === '/auth' || req.path.startsWith('/auth/');
+  if (publicHealth || authEndpoint) return next();
+  return authGuards.requireTenantMembership(req, res, next);
+});
+app.use('/api', createOwnerAuditMiddleware());
 
 // Owner role is required for configuration, credential, approval, and publishing
 // mutations. Ordinary authenticated members retain access to non-admin workflows.
@@ -120,12 +131,14 @@ const sharedOperationalStateRoutes = [
 ];
 app.use('/api', (req, res, next) => {
   if (!sharedOperationalStateRoutes.some((pattern) => pattern.test(req.path))) return next();
+  const tenantRole = (res.locals.tenantContext as { role?: string } | undefined)?.role;
+  if (tenantRole !== 'owner') return res.status(403).json({ error: 'Tenant Owner access is required.' });
   return requireOwner(req, res, next);
 });
 
 // Durable task APIs resolve tenant identity only from the authenticated session.
 // They remain unavailable until PostgreSQL and the tenant/task migrations exist.
-app.use('/api/tasks', authGuards.requireTenantMembership, createAgentTaskRouter());
+app.use('/api/tasks', createAgentTaskRouter());
 
 const unifiedWorkspaceRouters = createUnifiedWorkspaceRouter({
   dispatchPublishing: async ({ task }) => {
@@ -165,8 +178,8 @@ const unifiedWorkspaceRouters = createUnifiedWorkspaceRouter({
     return { externalPostId: result.externalPostId.trim() };
   }
 });
-app.use('/api/aaksh', authGuards.requireTenantMembership, unifiedWorkspaceRouters.aaksh);
-app.use('/api/aaksh/social', authGuards.requireTenantMembership, unifiedWorkspaceRouters.social);
+app.use('/api/aaksh', unifiedWorkspaceRouters.aaksh);
+app.use('/api/aaksh/social', unifiedWorkspaceRouters.social);
 
 
 // AutoPilot mutations stay locked until the authenticated Owner explicitly
@@ -177,9 +190,9 @@ app.use('/api', createAutoPilotSafetyGuard(() => serverStore.autopilot.safetyEna
 
 // Decrypted owner credentials remain request-scoped; never write them into serverStore.
 app.use('/api', createRuntimeSecretsMiddleware(resolveActiveSecretsForOwner));
-app.use('/api/publishing', authGuards.requireTenantMembership, unifiedWorkspaceRouters.publishing);
+app.use('/api/publishing', unifiedWorkspaceRouters.publishing);
 
-app.use('/api/secrets', authGuards.requireTenantMembership, requireOwnerForSecrets, (req, res, next) => {
+app.use('/api/secrets', requireOwnerForSecrets, (req, res, next) => {
   if (req.method === 'GET') return next();
   return authGuards.requireCsrf(req, res, next);
 }, createSecretsRouter());
@@ -524,38 +537,9 @@ const capabilityRegistryStore = {
   ]
 };
 
-// In-Memory System State Stores
-interface AuditLog {
-  id: string;
-  timestamp: string;
-  category: 'security' | 'approval' | 'webhook' | 'autopilot' | 'publishing' | 'video' | 'chat' | 'github';
-  action: string;
-  status: 'success' | 'warning' | 'error' | 'blocked' | 'info';
-  details: string;
-  executionHash?: string;
-  ip?: string;
-}
-
-const auditLogs: AuditLog[] = [
-  {
-    id: 'log_boot_' + Date.now(),
-    timestamp: new Date().toISOString(),
-    category: 'security',
-    action: 'System Boot & Hardened Sandbox Initialized',
-    status: 'info',
-    details: 'Master Project AI Agent started. Human approval gate enforced for destructive actions.',
-    executionHash: 'hash_boot_001'
-  }
-];
-
-function recordAudit(log: Omit<AuditLog, 'id' | 'timestamp'>) {
-  const entry: AuditLog = {
-    id: 'log_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-    timestamp: new Date().toISOString(),
-    ...log
-  };
-  auditLogs.unshift(entry);
-  if (auditLogs.length > 250) auditLogs.pop();
+// Audit entries are queued in request scope and committed to PostgreSQL before the response ends.
+function recordAudit(log: OwnerAuditEntry) {
+  queueOwnerAuditLog(log);
 }
 
 // Video Generation Jobs Queue
@@ -1399,12 +1383,14 @@ app.post('/api/database/migrate', requireAdminToken, async (req: Request, res: R
 });
 
 // GET /api/analytics: System analytics & performance metrics
-app.get('/api/analytics', (req: Request, res: Response) => {
+app.get('/api/analytics', async (req: Request, res: Response) => {
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const totalAuditLogs = await countOwnerAuditLogs(tenant.ownerId, tenant.tenantId);
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     metrics: {
-      totalAuditLogs: auditLogs.length,
+      totalAuditLogs,
       videoJobsCount: videoJobs.length,
       autoPilotTasksCount: autoPilotTasks.length,
       workflowsCount: autoPilotWorkflows.length,
@@ -3791,12 +3777,16 @@ app.get('/api/sheets/records', (req: Request, res: Response) => {
 // -----------------------------------------------------------------------------
 // AUDIT & AUTOMATION LOGS
 // -----------------------------------------------------------------------------
-app.get('/api/audit/logs', (req: Request, res: Response) => {
-  res.json({ logs: auditLogs });
+app.get('/api/audit/logs', async (req: Request, res: Response) => {
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const logs = await listOwnerAuditLogs(tenant.ownerId, tenant.tenantId);
+  res.json({ logs });
 });
 
-app.get('/api/audit-logs', (req: Request, res: Response) => {
-  res.json({ logs: auditLogs });
+app.get('/api/audit-logs', async (req: Request, res: Response) => {
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const logs = await listOwnerAuditLogs(tenant.ownerId, tenant.tenantId);
+  res.json({ logs });
 });
 
 // -----------------------------------------------------------------------------
