@@ -1337,37 +1337,47 @@ app.get('/api/analytics', async (req: Request, res: Response) => {
   });
 });
 
-// GET /api/analytics/multi-platform: counts from actual in-memory records only.
-app.get('/api/analytics/multi-platform', async (req: Request, res: Response) => {
+// Analytics and Accounting are calculated only from durable Owner/Tenant-scoped PostgreSQL records.
+app.get('/api/analytics/multi-platform', async (_req: Request, res: Response) => {
   const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
-  const publishingPosts = await listOwnerPublishingDrafts(tenant.ownerId, tenant.tenantId);
-  res.json({ ...buildMultiPlatformAnalytics(publishingPosts, [], []), dataCompleteness: 'publishing_only_pending_autopilot_migration' });
+  const [publishingPosts, tasks, executions] = await Promise.all([
+    listOwnerPublishingDrafts(tenant.ownerId, tenant.tenantId),
+    listOwnerOperationalRecords<any>(tenant.ownerId, tenant.tenantId, 'autopilot_task'),
+    listOwnerOperationalRecords<any>(tenant.ownerId, tenant.tenantId, 'workflow_execution')
+  ]);
+  return res.json({ ...buildMultiPlatformAnalytics(publishingPosts, tasks, executions), source: 'owner_tenant_postgresql_records', dataCompleteness: 'persisted_records_only' });
 });
 
-// GET /api/accounting/summary: verified ledger only; no demo balances or inferred earnings.
-app.get('/api/accounting/summary', (req: Request, res: Response) => {
-  res.json({ ...buildVerifiedEarningsSummary(verifiedEarningLedger), gstNote: 'GST is calculated only from verified INR ledger entries. No verified entries means no reported earnings.' });
+app.get('/api/accounting/summary', async (_req: Request, res: Response) => {
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const entries = await listOwnerOperationalRecords<VerifiedEarningEntry>(tenant.ownerId, tenant.tenantId, 'verified_earning');
+  return res.json({ ...buildVerifiedEarningsSummary(entries), source: 'owner_tenant_postgresql_verified_ledger', gstNote: 'GST is calculated only from verified INR ledger entries. No verified entries means no reported earnings.' });
 });
-app.get('/api/accounting/payout-requests', (req: Request, res: Response) => {
-  res.json({ requests: payoutRequests, executionMode: 'manual_owner_approval_only', autoPayoutAvailable: false, autoPayoutReason: 'Requires Native Android Service Verification' });
+app.get('/api/accounting/payout-requests', async (_req: Request, res: Response) => {
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const requests = await listOwnerOperationalRecords<PayoutRequest>(tenant.ownerId, tenant.tenantId, 'payout_request');
+  return res.json({ requests, executionMode: 'manual_owner_approval_only', autoPayoutAvailable: false, autoPayoutReason: 'Requires Native Android Service Verification' });
 });
-app.post('/api/accounting/payout-requests', authGuards.requireCsrf, (req: Request, res: Response) => {
+app.post('/api/accounting/payout-requests', authGuards.requireCsrf, async (req: Request, res: Response) => {
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
   const amount = Number(req.body?.amount);
   const purpose = typeof req.body?.purpose === 'string' ? req.body.purpose.trim().slice(0, 240) : '';
   if (!Number.isFinite(amount) || amount <= 0 || amount > 100000000 || !purpose) return res.status(400).json({ error: 'A valid positive INR amount and purpose are required.' });
   const request: PayoutRequest = { id: 'payout_' + crypto.randomBytes(8).toString('hex'), amount, currency: 'INR', purpose, status: 'pending_owner_approval', createdAt: new Date().toISOString() };
-  payoutRequests.unshift(request);
+  await upsertOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'payout_request', request);
   recordAudit({ category: 'approval', action: 'Payout Request Created', status: 'warning', details: 'Payout request ' + request.id + ' staged for mandatory Owner approval. No transfer was initiated.' });
   return res.status(202).json({ success: true, request, message: 'Request staged. No money has been transferred.' });
 });
-app.post('/api/accounting/payout-requests/:id/approve', authGuards.requireCsrf, (req: Request, res: Response) => {
-  const request = payoutRequests.find(item => item.id === req.params.id);
+app.post('/api/accounting/payout-requests/:id/approve', authGuards.requireCsrf, async (req: Request, res: Response) => {
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const request = await getOwnerOperationalRecord<PayoutRequest>(tenant.ownerId, tenant.tenantId, 'payout_request', req.params.id);
   if (!request) return res.status(404).json({ error: 'Payout request not found.' });
   if (request.status !== 'pending_owner_approval') return res.status(409).json({ error: 'Payout request is not pending approval.' });
   if (req.body?.ownerConfirmation !== true) return res.status(400).json({ error: 'Explicit Owner confirmation is required.' });
   request.ownerApprovedAt = new Date().toISOString();
   const guard = evaluatePayoutGuard({ ownerApproved: true, accessibilityServiceVerified: false });
   request.status = 'blocked_native_service_unverified';
+  await upsertOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'payout_request', request);
   recordAudit({ category: 'approval', action: 'Owner Approved Payout Request But Transfer Blocked', status: 'blocked', details: 'Owner approval recorded for ' + request.id + '; transfer remains blocked: ' + guard.reason });
   return res.status(423).json({ success: false, request, error: guard.reason, transferExecuted: false });
 });
