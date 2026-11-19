@@ -260,7 +260,8 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
     '20261118_003_agent_task_tenant_scope.sql',
     '20261118_004_agent_task_rejection.sql',
     '20261118_005_aaksh_social_tenant_scope.sql',
-    '20261119_001_owner_audit_logs.sql'
+    '20261119_001_owner_audit_logs.sql',
+    '20261119_002_owner_operational_records.sql'
   ];
   assert.equal(status.migrationTableExists, true);
   for (const migration of required) assert.ok(status.appliedMigrations.includes(migration), 'Missing migration ' + migration);
@@ -345,6 +346,45 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
     );
     assert.deepEqual(auditA.rows.map((row: Row) => row.action), ['Tenant A audit event']);
     assert.deepEqual(auditB.rows.map((row: Row) => row.action), ['Tenant B audit event']);
+
+    const operationalSecurity = await client.query(
+      `SELECT c.relrowsecurity, c.relforcerowsecurity
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'owner_operational_records'`
+    );
+    assert.equal(operationalSecurity.rows.length, 1);
+    assert.equal(operationalSecurity.rows[0].relrowsecurity, true);
+    assert.equal(operationalSecurity.rows[0].relforcerowsecurity, true);
+
+    await client.query(
+      "SELECT set_config('app.owner_id', $1, true), set_config('app.tenant_id', $2, true)",
+      [userA.rows[0].id, tenantA.rows[0].id]
+    );
+    await client.query(
+      `INSERT INTO owner_operational_records (owner_id, tenant_id, record_type, record_id, payload)
+       VALUES ($1, $2, 'video_job', 'video-a', '{"id":"video-a","status":"queued"}'::jsonb)`,
+      [userA.rows[0].id, tenantA.rows[0].id]
+    );
+    await client.query(
+      "SELECT set_config('app.owner_id', $1, true), set_config('app.tenant_id', $2, true)",
+      [userB.rows[0].id, tenantB.rows[0].id]
+    );
+    await client.query(
+      `INSERT INTO owner_operational_records (owner_id, tenant_id, record_type, record_id, payload)
+       VALUES ($1, $2, 'video_job', 'video-b', '{"id":"video-b","status":"queued"}'::jsonb)`,
+      [userB.rows[0].id, tenantB.rows[0].id]
+    );
+    const recordsA = await client.query(
+      'SELECT record_id FROM owner_operational_records WHERE owner_id = $1 AND tenant_id = $2 AND record_type = $3',
+      [userA.rows[0].id, tenantA.rows[0].id, 'video_job']
+    );
+    const recordsB = await client.query(
+      'SELECT record_id FROM owner_operational_records WHERE owner_id = $1 AND tenant_id = $2 AND record_type = $3',
+      [userB.rows[0].id, tenantB.rows[0].id, 'video_job']
+    );
+    assert.deepEqual(recordsA.rows.map((row: Row) => row.record_id), ['video-a']);
+    assert.deepEqual(recordsB.rows.map((row: Row) => row.record_id), ['video-b']);
     await client.query(
       `INSERT INTO app_tenant_memberships (tenant_id, user_id, membership_role)
        VALUES ($1, $2, 'owner'), ($3, $4, 'owner')`,
