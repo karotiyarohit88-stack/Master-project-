@@ -5,7 +5,6 @@ import {
   createPublishingDraftForOwner,
   listOwnerPublishingDrafts
 } from '../server/publishingDrafts.ts';
-import type { OwnerOperationalDbClient } from '../server/ownerOperationalRecords.ts';
 
 function fakePool() {
   const calls: Array<{ sql: string; values: unknown[] }> = [];
