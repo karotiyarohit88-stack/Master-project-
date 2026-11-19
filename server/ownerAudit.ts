@@ -12,11 +12,11 @@ export type OwnerAuditEntry = {
 };
 
 type AuditQueryResult = { rows: any[] };
-type AuditDbClient = {
+export type OwnerAuditDbClient = {
   query: (sql: string, values?: unknown[]) => Promise<AuditQueryResult>;
   release: () => void;
 };
-type AuditDbPool = { connect: () => Promise<AuditDbClient> };
+export type OwnerAuditDbPool = { connect: () => Promise<OwnerAuditDbClient> };
 
 type AuditContext = {
   ownerId: string;
@@ -26,8 +26,8 @@ type AuditContext = {
 
 const auditContextStorage = new AsyncLocalStorage<AuditContext>();
 
-function getPool(): AuditDbPool | null {
-  return getPostgresPool() as unknown as AuditDbPool | null;
+function getPool(override?: OwnerAuditDbPool | null): OwnerAuditDbPool | null {
+  return override === undefined ? getPostgresPool() as unknown as OwnerAuditDbPool | null : override;
 }
 
 export function queueOwnerAuditLog(entry: OwnerAuditEntry): void {
@@ -37,10 +37,10 @@ export function queueOwnerAuditLog(entry: OwnerAuditEntry): void {
 }
 
 async function withOwnerTransaction<T>(
-  pool: AuditDbPool,
+  pool: OwnerAuditDbPool,
   ownerId: string,
   tenantId: string,
-  run: (client: AuditDbClient) => Promise<T>
+  run: (client: OwnerAuditDbClient) => Promise<T>
 ): Promise<T> {
   const client = await pool.connect();
   try {
@@ -60,9 +60,9 @@ async function withOwnerTransaction<T>(
   }
 }
 
-async function persistAuditEntries(context: AuditContext, entries: OwnerAuditEntry[]): Promise<void> {
+async function persistAuditEntries(context: AuditContext, entries: OwnerAuditEntry[], poolOverride?: OwnerAuditDbPool | null): Promise<void> {
   if (!entries.length) return;
-  const pool = getPool();
+  const pool = getPool(poolOverride);
   if (!pool) throw new Error('Audit database is unavailable.');
 
   await withOwnerTransaction(pool, context.ownerId, context.tenantId, async (client) => {
@@ -90,7 +90,7 @@ function replaceFailedResponse(res: Response, end: (...args: any[]) => unknown):
  * Establishes Owner/tenant audit context for each authenticated request.
  * Queued audit entries are committed before the HTTP response is completed.
  */
-export function createOwnerAuditMiddleware(): RequestHandler {
+export function createOwnerAuditMiddleware(options: { pool?: OwnerAuditDbPool | null } = {}): RequestHandler {
   return (req, res, next) => {
     const session = res.locals.authSession as { id?: string } | undefined;
     const tenant = res.locals.tenantContext as { ownerId?: string; tenantId?: string } | undefined;
@@ -118,7 +118,7 @@ export function createOwnerAuditMiddleware(): RequestHandler {
         const flush = async () => {
           while (context.entries.length) {
             const batch = context.entries.splice(0, context.entries.length);
-            await persistAuditEntries(context, batch);
+            await persistAuditEntries(context, batch, options.pool);
           }
         };
 
@@ -138,10 +138,11 @@ export function createOwnerAuditMiddleware(): RequestHandler {
 export async function listOwnerAuditLogs(
   ownerId: string,
   tenantId: string,
-  limit = 250
+  limit = 250,
+  poolOverride?: OwnerAuditDbPool | null
 ): Promise<any[]> {
   if (!ownerId || !tenantId) throw new Error('Owner and tenant identity are required.');
-  const pool = getPool();
+  const pool = getPool(poolOverride);
   if (!pool) throw new Error('Audit database is unavailable.');
 
   return withOwnerTransaction(pool, ownerId, tenantId, async (client) => {
@@ -158,9 +159,9 @@ export async function listOwnerAuditLogs(
   });
 }
 
-export async function countOwnerAuditLogs(ownerId: string, tenantId: string): Promise<number> {
+export async function countOwnerAuditLogs(ownerId: string, tenantId: string, poolOverride?: OwnerAuditDbPool | null): Promise<number> {
   if (!ownerId || !tenantId) throw new Error('Owner and tenant identity are required.');
-  const pool = getPool();
+  const pool = getPool(poolOverride);
   if (!pool) throw new Error('Audit database is unavailable.');
 
   return withOwnerTransaction(pool, ownerId, tenantId, async (client) => {
