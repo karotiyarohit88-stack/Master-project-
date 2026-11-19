@@ -172,3 +172,12 @@ export async function countOwnerAuditLogs(ownerId: string, tenantId: string, poo
     return Number(result.rows[0]?.count || 0);
   });
 }
+
+export async function writeOwnerAuditLog(
+  ownerId: string,
+  tenantId: string,
+  entry: OwnerAuditEntry
+): Promise<void> {
+  if (!ownerId || !tenantId) throw new Error('Owner and tenant identity are required.');
+  await persistAuditEntries({ ownerId, tenantId, entries: [] }, [entry]);
+}
