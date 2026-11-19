@@ -264,7 +264,8 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
     '20261119_002_owner_operational_records.sql',
     '20261119_003_autopilot_record_types.sql',
     '20261119_004_owner_emergency_halt.sql',
-    '20261119_005_owner_tenant_secrets.sql'
+    '20261119_005_owner_tenant_secrets.sql',
+    '20261119_006_tenant_knowledge_documents.sql'
   ];
   assert.equal(status.migrationTableExists, true);
   for (const migration of required) assert.ok(status.appliedMigrations.includes(migration), 'Missing migration ' + migration);
@@ -466,6 +467,35 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
     );
     assert.deepEqual(secretRowsA.rows.map((row: Row) => row.name), ['Tenant A Search Key']);
     assert.deepEqual(secretRowsB.rows.map((row: Row) => row.name), ['Tenant B Search Key']);
+
+    const knowledgeSecurity = await client.query(
+      `SELECT c.relrowsecurity, c.relforcerowsecurity
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'tenant_knowledge_documents'`
+    );
+    assert.equal(knowledgeSecurity.rows.length, 1);
+    assert.equal(knowledgeSecurity.rows[0].relrowsecurity, true);
+    assert.equal(knowledgeSecurity.rows[0].relforcerowsecurity, true);
+    await client.query(
+      `INSERT INTO tenant_knowledge_documents (owner_id, tenant_id, title, source, content)
+       VALUES
+        ($1, $2, 'Tenant A RAG document', 'owner_upload', 'Tenant A private vectorless knowledge corpus'),
+        ($3, $4, 'Tenant B RAG document', 'owner_upload', 'Tenant B confidential billing corpus')`,
+      [userA.rows[0].id, tenantA.rows[0].id, userB.rows[0].id, tenantB.rows[0].id]
+    );
+    const ragA = await client.query(
+      `SELECT title FROM tenant_knowledge_documents
+        WHERE owner_id = $1 AND tenant_id = $2
+          AND search_vector @@ plainto_tsquery('simple', $3)`,
+      [userA.rows[0].id, tenantA.rows[0].id, 'private knowledge']
+    );
+    const ragB = await client.query(
+      'SELECT title FROM tenant_knowledge_documents WHERE owner_id = $1 AND tenant_id = $2',
+      [userB.rows[0].id, tenantB.rows[0].id]
+    );
+    assert.deepEqual(ragA.rows.map((row: Row) => row.title), ['Tenant A RAG document']);
+    assert.deepEqual(ragB.rows.map((row: Row) => row.title), ['Tenant B RAG document']);
 
     // Verify AutoPilot and Accounting record types are durable and tenant-isolated.
     await client.query(
