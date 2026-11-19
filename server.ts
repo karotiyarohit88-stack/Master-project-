@@ -26,6 +26,7 @@ import { buildAutomatedContentPackage } from './src/utils/automatedContentPipeli
 import { buildMultiPlatformAnalytics, buildVerifiedEarningsSummary, evaluatePayoutGuard, type VerifiedEarningEntry } from './src/utils/phase9Accounting.ts';
 import { sanitizeUntrustedText, validateAgentConversationHistory, validateWorkspaceChangePath, wrapUntrustedContext } from './server/security/zeroTrust.ts';
 import { evaluateSystemDoctor } from './server/systemDoctor.ts';
+import { assertOwnerEmergencyHaltClear, getOwnerEmergencyHaltState, setOwnerEmergencyHaltState } from './server/emergencyHalt.ts';
 
 const execAsync = promisify(exec);
 
@@ -192,6 +193,36 @@ app.use('/api', createAutoPilotSafetyGuard(() => serverStore.autopilot.safetyEna
 
 // Decrypted owner credentials remain request-scoped; never write them into serverStore.
 app.use('/api', createRuntimeSecretsMiddleware(resolveActiveSecretsForOwner));
+
+// Durable emergency halt gates every AI/agent execution mutation. The Owner halt
+// endpoint and read-only diagnostics remain reachable so the Owner can recover.
+app.use('/api', async (req: Request, res: Response, next) => {
+  if (req.path === '/emergency-halt' || req.path === '/health' || req.path === '/system-doctor' || req.path === '/database/status') return next();
+  const executionRoute = req.method === 'POST' && [
+    /^\/chat$/,
+    /^\/automation\/trigger$/,
+    /^\/worker-agents\/delegate$/,
+    /^\/video\/(generate-script|generate-voice|render)$/,
+    /^\/autopilot\/trigger\/manual$/,
+    /^\/autopilot\/webhook\//,
+    /^\/autopilot\/content-pipeline\/prepare$/,
+    /^\/autopilot\/workflows\/[^/]+\/run$/,
+    /^\/autopilot\/executions\/[^/]+\/retry$/,
+    /^\/publishing\/(prepare|publish)$/,
+    /^\/github\/commit$/,
+    /^\/project\/apply-proposal$/,
+    /^\/sheets\/sync$/
+  ].some(pattern => pattern.test(req.path));
+  if (!executionRoute) return next();
+  const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id || '';
+  try {
+    await assertOwnerEmergencyHaltClear(ownerId);
+    return next();
+  } catch {
+    return res.status(423).json({ error: 'Emergency halt is active or its durable state is unavailable. AI and agent execution are blocked.' });
+  }
+});
+
 app.use('/api/publishing', unifiedWorkspaceRouters.publishing);
 
 app.use('/api/secrets', requireOwnerForSecrets, (req, res, next) => {
@@ -949,8 +980,9 @@ function checkRateLimit(ip: string): boolean {
   return true;
 }
 
-// Gemini Client initialization
-function getGenAI(): GoogleGenAI | null {
+// Gemini Client initialization: durable emergency halt is checked immediately before every client/provider call.
+async function getGenAI(ownerId: string): Promise<GoogleGenAI | null> {
+  await assertOwnerEmergencyHaltClear(ownerId);
   const key = getOwnerSecret('gemini');
   if (!key) return null;
   return new GoogleGenAI({
@@ -1291,6 +1323,36 @@ app.get('/api/system-doctor', requireOwnerForSecrets, async (_req: Request, res:
     ownerScopedSecretResolverAvailable: typeof resolveActiveSecretsForOwner === 'function'
   });
   return res.status(report.status === 'critical' ? 503 : 200).json(report);
+});
+
+// Owner-only durable emergency halt controls.
+app.get('/api/emergency-halt', requireOwnerForSecrets, async (_req: Request, res: Response) => {
+  const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id || '';
+  try {
+    const state = await getOwnerEmergencyHaltState(ownerId);
+    return res.json({ success: true, state });
+  } catch {
+    return res.status(503).json({ success: false, error: 'Durable emergency halt state is unavailable. AI execution remains blocked.' });
+  }
+});
+app.post('/api/emergency-halt', requireOwnerForSecrets, authGuards.requireCsrf, async (req: Request, res: Response) => {
+  const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id || '';
+  if (req.body?.confirm !== true || typeof req.body?.halted !== 'boolean') {
+    return res.status(400).json({ error: 'Explicit Owner confirmation and a boolean halted value are required.' });
+  }
+  const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 500) : '';
+  try {
+    const state = await setOwnerEmergencyHaltState(ownerId, ownerId, req.body.halted, reason || (req.body.halted ? '' : 'Owner resumed system'));
+    recordAudit({
+      category: 'security',
+      action: state.halted ? 'Emergency Halt Activated' : 'Emergency Halt Released',
+      status: state.halted ? 'blocked' : 'warning',
+      details: state.halted ? 'Owner activated durable emergency halt: ' + state.reason : 'Owner explicitly released durable emergency halt.'
+    });
+    return res.json({ success: true, state, message: state.halted ? 'Emergency halt is active. AI and agent execution are blocked.' : 'Emergency halt released by Owner.' });
+  } catch {
+    return res.status(503).json({ success: false, error: 'Emergency halt state could not be saved. Execution remains fail-closed.' });
+  }
 });
 
 // GET /api/database/status: read-only, live PostgreSQL connectivity and migration state.
@@ -1642,7 +1704,10 @@ app.post('/api/connections/test', requireOwnerForSecrets, async (req: Request, r
   const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
 
   if (provider === 'gemini') {
-    const client = getGenAI();
+    const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id || '';
+    let client: GoogleGenAI | null;
+    try { client = await getGenAI(ownerId); }
+    catch { return res.status(423).json({ success: false, status: 'blocked', message: 'Emergency halt is active or its durable state is unavailable. Gemini call blocked.' }); }
     if (!client) {
       return res.json({
         success: false,
@@ -2391,7 +2456,10 @@ ${isConsequential ? '#### 3. Safety Authorization:\nThis operation is consequent
   }
 
   // Standard Q&A and Conversational execution via Gemini
-  const client = getGenAI();
+  const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id || '';
+  let client: GoogleGenAI | null;
+  try { client = await getGenAI(ownerId); }
+  catch { return res.status(423).json({ error: 'Emergency halt is active or its durable state is unavailable. AI execution is blocked.' }); }
   if (!client) {
     return res.status(403).json({ error: 'Owner-scoped Gemini API key is not configured.' });
   }
@@ -2696,7 +2764,10 @@ app.post('/api/video/generate-script', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Topic is required to generate script.' });
   }
 
-  const client = getGenAI();
+  const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id || '';
+  let client: GoogleGenAI | null;
+  try { client = await getGenAI(ownerId); }
+  catch { return res.status(423).json({ error: 'Emergency halt is active or its durable state is unavailable. Video script generation is blocked.' }); }
 
   if (!client) {
     return res.status(403).json({ error: 'Owner-scoped Gemini API key is not configured.' });
