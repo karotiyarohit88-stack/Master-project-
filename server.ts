@@ -180,6 +180,9 @@ app.use('/api', createRuntimeSecretsMiddleware(resolveActiveSecretsForOwner));
 app.use('/api/publishing', authGuards.requireTenantMembership, unifiedWorkspaceRouters.publishing);
 
 app.use('/api/secrets', authGuards.requireTenantMembership, requireOwnerForSecrets, (req, res, next) => {
+  if (req.method === 'GET') return next();
+  return authGuards.requireCsrf(req, res, next);
+}, createSecretsRouter());
 
 // Owner-only guard for credential/configuration mutation routes.
 // Configure AAKSH_ADMIN_TOKEN as a server-side secret (minimum 32 characters).
