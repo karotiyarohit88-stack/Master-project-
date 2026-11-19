@@ -9,9 +9,7 @@ import {
 function fakePool() {
   const calls: Array<{ sql: string; values: unknown[] }> = [];
   let nextId = 0;
-  const pool = {
-    connect: async () => ({
-      query: async (sql: string, values: unknown[] = []) => {
+  const runQuery = async (sql: string, values: unknown[] = []) => {
         calls.push({ sql: sql.replace(/\\s+/g, ' ').trim(), values });
         if (sql.includes('INSERT INTO agent_tasks')) {
           nextId += 1;
@@ -26,9 +24,10 @@ function fakePool() {
         }
         if (sql.includes('COUNT(*)')) return { rows: [{ count: '1' }] };
         return { rows: [] };
-      },
-      release: () => undefined
-    })
+  };
+  const pool = {
+    query: runQuery,
+    connect: async () => ({ query: runQuery, release: () => undefined })
   };
   return { pool, calls };
 }
@@ -37,7 +36,7 @@ test('publishing drafts are inserted into the tenant approval queue with Owner i
   const { pool, calls } = fakePool();
   const created = await createPublishingDraftForOwner('owner-a', 'tenant-a', {
     topic: 'Draft A', platform: 'youtube', caption: 'Caption A', hashtags: ['#AI']
-  });
+  }, pool);
   assert.deepEqual(created, { id: 'task-1', status: 'waiting_approval' });
   const insert = calls.find(call => call.sql.startsWith('INSERT INTO agent_tasks'));
   assert.ok(insert);
@@ -49,8 +48,8 @@ test('publishing drafts are inserted into the tenant approval queue with Owner i
 
 test('publishing draft reads and counts are Owner+tenant scoped', async () => {
   const { pool, calls } = fakePool();
-  const rows = await listOwnerPublishingDrafts('owner-a', 'tenant-a');
-  const count = await countOwnerPublishingDrafts('owner-a', 'tenant-a');
+  const rows = await listOwnerPublishingDrafts('owner-a', 'tenant-a', pool);
+  const count = await countOwnerPublishingDrafts('owner-a', 'tenant-a', pool);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].topic, 'Draft A');
   assert.equal(count, 1);
