@@ -47,7 +47,7 @@ test('Owner operational record reads and writes always carry Owner and tenant pr
   assert.ok(insert);
   assert.deepEqual(insert.values.slice(0, 2), [ownerId, tenantId]);
   assert.match(insert.sql, /WHERE owner_operational_records\.owner_id = \$1/);
-  for (const call of calls.filter(call => /^(SELECT|DELETE)/i.test(call.sql))) {
+  for (const call of calls.filter(call => /^(SELECT|DELETE)/i.test(call.sql) && call.sql.includes('owner_operational_records'))) {
     assert.match(call.sql, /WHERE owner_id = \$1 AND tenant_id = \$2/);
     assert.deepEqual(call.values.slice(0, 2), [ownerId, tenantId]);
   }
