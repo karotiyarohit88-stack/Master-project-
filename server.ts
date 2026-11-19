@@ -1312,6 +1312,7 @@ app.get('/api/analytics', async (req: Request, res: Response) => {
   const publishingPostsCount = await countOwnerPublishingDrafts(tenant.ownerId, tenant.tenantId);
   const sheetsSyncRecordsCount = await countOwnerOperationalRecords(tenant.ownerId, tenant.tenantId, 'sheets_sync_record');
   const autoPilotTasksCount = await countOwnerOperationalRecords(tenant.ownerId, tenant.tenantId, 'autopilot_task');
+  const workflowsCount = await countOwnerOperationalRecords(tenant.ownerId, tenant.tenantId, 'autopilot_workflow');
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
@@ -1319,7 +1320,7 @@ app.get('/api/analytics', async (req: Request, res: Response) => {
       totalAuditLogs,
       videoJobsCount,
       autoPilotTasksCount,
-      workflowsCount: autoPilotWorkflows.length,
+      workflowsCount,
       publishingPostsCount,
       workerAgentsCount: workerAgents.length,
       sheetsSyncRecordsCount,
