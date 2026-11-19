@@ -59,6 +59,7 @@ export function createOwnerEmergencyHaltMiddleware(poolOverride?: EmergencyHaltD
     if (req.path === '/emergency-halt' || req.path === '/health' || req.path === '/system-doctor' || req.path === '/database/status') return next();
     const executionRoute = req.method === 'POST' && [
       /^\/chat$/,
+      /^\/research$/,
       /^\/automation\/trigger$/,
       /^\/worker-agents\/delegate$/,
       /^\/video\/(generate-script|generate-voice|render)$/,
