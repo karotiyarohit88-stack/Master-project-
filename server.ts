@@ -19,6 +19,7 @@ import createSecurityMiddleware, { createRateLimitMiddleware } from './server/co
 import { createRuntimeSecretsMiddleware, getRuntimeSecret } from './server/runtime-secrets-context.ts';
 import { requireOwnerForSecrets } from './server/requireOwnerSecrets.ts';
 import { createOwnerAuditMiddleware, queueOwnerAuditLog, listOwnerAuditLogs, countOwnerAuditLogs, type OwnerAuditEntry } from './server/ownerAudit.ts';
+import { countOwnerOperationalRecords, listOwnerOperationalRecords, upsertOwnerOperationalRecord } from './server/ownerOperationalRecords.ts';
 import { createAutoPilotSafetyGuard } from './src/utils/autoPilotSafetyGuard.ts';
 import { buildAutomatedContentPackage } from './src/utils/automatedContentPipeline.ts';
 import { buildMultiPlatformAnalytics, buildVerifiedEarningsSummary, evaluatePayoutGuard, type VerifiedEarningEntry } from './src/utils/phase9Accounting.ts';
@@ -569,31 +570,6 @@ interface VideoJob {
     durationEstimateSec: number;
   }[];
 }
-
-const videoJobs: VideoJob[] = [
-  {
-    id: 'vid_demo_001',
-    topic: 'How Neural Networks Process Code',
-    script: 'Every line of code you write is transformed into tokens, vectorized into high-dimensional space, and interpreted through self-attention layers.',
-    language: 'English',
-    duration: 30,
-    aspectRatio: '9:16',
-    voiceId: '21m00Tcm4TlvDq8ikWAM',
-    voiceProvider: 'prototype',
-    status: 'completed',
-    progress: 100,
-    videoUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-    thumbnailUrl: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=80',
-    createdAt: new Date(Date.now() - 3600000).toISOString(),
-    completedAt: new Date(Date.now() - 3550000).toISOString(),
-    providerName: 'Prototype Adapter',
-    scenes: [
-      { sceneNumber: 1, visualCue: 'Macro shot of glowing circuit grid lines', narration: 'Every line of code begins as an abstract instruction.', durationEstimateSec: 8 },
-      { sceneNumber: 2, visualCue: '3D multi-head attention matrix visualization', narration: 'Neural attention heads weigh context and semantic relationships.', durationEstimateSec: 12 },
-      { sceneNumber: 3, visualCue: 'Output stream generating compiled binary', narration: 'Execution completes with verified precision.', durationEstimateSec: 10 }
-    ]
-  }
-];
 
 // AutoPilot Task Queue
 interface AutoPilotTask {
@@ -1386,12 +1362,13 @@ app.post('/api/database/migrate', requireAdminToken, async (req: Request, res: R
 app.get('/api/analytics', async (req: Request, res: Response) => {
   const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
   const totalAuditLogs = await countOwnerAuditLogs(tenant.ownerId, tenant.tenantId);
+  const videoJobsCount = await countOwnerOperationalRecords(tenant.ownerId, tenant.tenantId, 'video_job');
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     metrics: {
       totalAuditLogs,
-      videoJobsCount: videoJobs.length,
+      videoJobsCount,
       autoPilotTasksCount: autoPilotTasks.length,
       workflowsCount: autoPilotWorkflows.length,
       publishingPostsCount: publishingQueue.length,
@@ -2215,17 +2192,8 @@ Please review the proposed parameters below. You may either **Approve with Verif
           { sceneNumber: 2, visualCue: 'Technical schema breakdown', narration: 'Deep dive into decoupled pipelines.', durationEstimateSec: 20 }
         ]
       };
-      videoJobs.unshift(newJob);
-
-      setTimeout(() => {
-        const target = videoJobs.find(j => j.id === vidJobId);
-        if (target) {
-          target.status = 'completed';
-          target.progress = 100;
-          target.videoUrl = 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
-          target.completedAt = new Date().toISOString();
-        }
-      }, 4000);
+      const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+      await upsertOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'video_job', newJob);
 
       generatedTaskCard = {
         taskId: vidJobId,
@@ -2233,7 +2201,7 @@ Please review the proposed parameters below. You may either **Approve with Verif
         title: newJob.topic,
         status: 'queued',
         progress: 15,
-        outputUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+        outputUrl: undefined,
         logs: [`[${new Date().toLocaleTimeString()}] Task enqueued via conversational command.`]
       };
     } else if (lowerPrompt.includes('auto pilot') || lowerPrompt.includes('autopilot')) {
@@ -2803,13 +2771,14 @@ app.post('/api/video/generate-voice', async (req: Request, res: Response) => {
 });
 
 // POST /api/video/render: Submit script and assets to configured Video Provider Adapter
-app.post('/api/video/render', (req: Request, res: Response) => {
+app.post('/api/video/render', async (req: Request, res: Response) => {
   const { topic, script, language = 'English', duration = 30, aspectRatio = '9:16', voiceId = 'Rachel', scenes = [] } = req.body;
 
   if (!topic || !script) {
     return res.status(400).json({ error: 'Topic and script are required to render video.' });
   }
 
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
   const jobId = 'vid_job_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
   const provider = serverStore.video.providerName;
 
@@ -2831,7 +2800,7 @@ app.post('/api/video/render', (req: Request, res: Response) => {
       error: `Video generation paused: [${provider}] API key is not configured in Connection Settings.`,
       scenes
     };
-    videoJobs.unshift(unconfiguredJob);
+    await upsertOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'video_job', unconfiguredJob);
 
     recordAudit({
       category: 'video',
@@ -2864,7 +2833,7 @@ app.post('/api/video/render', (req: Request, res: Response) => {
     scenes
   };
 
-  videoJobs.unshift(newJob);
+  await upsertOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'video_job', newJob);
 
   recordAudit({
     category: 'video',
@@ -2873,69 +2842,19 @@ app.post('/api/video/render', (req: Request, res: Response) => {
     details: `Topic: "${topic}", Provider: ${provider}, Duration: ${duration}s, Format: ${aspectRatio}.`
   });
 
-  // Background progress simulator for prototype adapter
-  setTimeout(() => {
-    const target = videoJobs.find(j => j.id === jobId);
-    if (target && target.status === 'queued') {
-      target.status = 'processing';
-      target.progress = 45;
-    }
-  }, 1500);
-
-  setTimeout(() => {
-    const target = videoJobs.find(j => j.id === jobId);
-    if (target && target.status === 'processing') {
-      target.status = 'completed';
-      target.progress = 100;
-      target.completedAt = new Date().toISOString();
-      target.videoUrl = 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
-      target.thumbnailUrl = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=80';
-
-      // Automatically add draft to Publishing Queue
-      const pubId = 'pub_' + Date.now();
-      publishingQueue.unshift({
-        id: pubId,
-        topic: target.topic,
-        platform: 'youtube',
-        caption: `🚀 ${target.topic}: Explore modern software architecture and verified autonomous systems.\n\n#AI #Coding #TechTrends`,
-        hashtags: ['#AI', '#SoftwareEngineering', '#Automation'],
-        videoJobId: target.id,
-        videoUrl: target.videoUrl,
-        thumbnailUrl: target.thumbnailUrl,
-        status: 'waiting_approval',
-        createdAt: new Date().toISOString()
-      });
-
-      // Synchronize with Sheets memory record
-      sheetsSyncRecords.unshift({
-        id: 'sheet_rec_' + Date.now(),
-        taskId: target.id,
-        topic: target.topic,
-        workflowStatus: 'Completed',
-        outputUrl: target.videoUrl,
-        approvalStatus: 'Staged in Approval Gate',
-        timestamp: new Date().toISOString()
-      });
-
-      recordAudit({
-        category: 'video',
-        action: `Video Render Completed [${jobId}]`,
-        status: 'success',
-        details: `Render completed via ${provider}. Draft post automatically staged in Publishing Queue for human review.`
-      });
-    }
-  }, 4500);
-
+  // Durable job state is retained; completion requires a verified worker/provider result.
   res.json({
     success: true,
     job: newJob,
-    message: `Video generation task enqueued with provider adapter [${provider}].`
+    message: 'Video job saved in the Owner-scoped queue. Rendering remains pending until a verified worker/provider confirms execution.'
   });
 });
 
 // GET /api/video/jobs: List video jobs
-app.get('/api/video/jobs', (req: Request, res: Response) => {
-  res.json({ jobs: videoJobs });
+app.get('/api/video/jobs', async (req: Request, res: Response) => {
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const jobs = await listOwnerOperationalRecords<VideoJob>(tenant.ownerId, tenant.tenantId, 'video_job');
+  res.json({ jobs });
 });
 
 // -----------------------------------------------------------------------------
