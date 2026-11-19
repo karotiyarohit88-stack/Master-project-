@@ -18,7 +18,11 @@ test('provider credentials are never loaded from process-wide environment variab
     'GH_TOKEN',
     'GOOGLE_SHEETS_KEY',
     'GOOGLE_CLIENT_SECRET',
-    'GOOGLE_OAUTH_TOKEN'
+    'GOOGLE_OAUTH_TOKEN',
+    'SEARCH_API_KEY',
+    'BING_SEARCH_API_KEY',
+    'BRAVE_SEARCH_API_KEY',
+    'TAVILY_API_KEY'
   ];
 
   for (const name of forbiddenEnvironmentSecrets) {
