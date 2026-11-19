@@ -19,7 +19,7 @@ import createSecurityMiddleware, { createRateLimitMiddleware } from './server/co
 import { createRuntimeSecretsMiddleware, getRuntimeSecret } from './server/runtime-secrets-context.ts';
 import { requireOwnerForSecrets } from './server/requireOwnerSecrets.ts';
 import { createOwnerAuditMiddleware, queueOwnerAuditLog, listOwnerAuditLogs, countOwnerAuditLogs, type OwnerAuditEntry } from './server/ownerAudit.ts';
-import { countOwnerOperationalRecords, listOwnerOperationalRecords, upsertOwnerOperationalRecord } from './server/ownerOperationalRecords.ts';
+import { countOwnerOperationalRecords, listOwnerOperationalRecords, getOwnerOperationalRecord, upsertOwnerOperationalRecord } from './server/ownerOperationalRecords.ts';
 import { createPublishingDraftForOwner, listOwnerPublishingDrafts, countOwnerPublishingDrafts } from './server/publishingDrafts.ts';
 import { createAutoPilotSafetyGuard } from './src/utils/autoPilotSafetyGuard.ts';
 import { buildAutomatedContentPackage } from './src/utils/automatedContentPipeline.ts';
@@ -589,32 +589,6 @@ interface AutoPilotTask {
   error?: string;
   outputArtifactUrl?: string;
 }
-
-const autoPilotTasks: AutoPilotTask[] = [
-  {
-    id: 'task_ap_initial_01',
-    topic: 'Automated Daily Engineering Briefing',
-    frequency: 'every_6_hours',
-    platform: 'youtube_shorts',
-    language: 'English',
-    workflow: 'script_voice_video_approve',
-    status: 'completed',
-    progress: 100,
-    logs: [
-      `[${new Date(Date.now() - 7200000).toLocaleTimeString()}] Trigger received (Scheduled)`,
-      `[${new Date(Date.now() - 7180000).toLocaleTimeString()}] Script draft generated via Gemini`,
-      `[${new Date(Date.now() - 7140000).toLocaleTimeString()}] Voiceover synthesized`,
-      `[${new Date(Date.now() - 7100000).toLocaleTimeString()}] Video frames rendered via adapter`,
-      `[${new Date(Date.now() - 7000000).toLocaleTimeString()}] Staged in Publishing Approval Gate`
-    ],
-    retries: 0,
-    triggerSource: 'schedule',
-    createdAt: new Date(Date.now() - 7200000).toISOString(),
-    updatedAt: new Date(Date.now() - 7000000).toISOString(),
-    completedAt: new Date(Date.now() - 7000000).toISOString(),
-    outputArtifactUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4'
-  }
-];
 
 // Workflow Builder & Execution Records
 export type WorkflowTriggerType = 'schedule' | 'webhook' | 'git_event' | 'manual';
@@ -1337,13 +1311,14 @@ app.get('/api/analytics', async (req: Request, res: Response) => {
   const videoJobsCount = await countOwnerOperationalRecords(tenant.ownerId, tenant.tenantId, 'video_job');
   const publishingPostsCount = await countOwnerPublishingDrafts(tenant.ownerId, tenant.tenantId);
   const sheetsSyncRecordsCount = await countOwnerOperationalRecords(tenant.ownerId, tenant.tenantId, 'sheets_sync_record');
+  const autoPilotTasksCount = await countOwnerOperationalRecords(tenant.ownerId, tenant.tenantId, 'autopilot_task');
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     metrics: {
       totalAuditLogs,
       videoJobsCount,
-      autoPilotTasksCount: autoPilotTasks.length,
+      autoPilotTasksCount,
       workflowsCount: autoPilotWorkflows.length,
       publishingPostsCount,
       workerAgentsCount: workerAgents.length,
@@ -1398,7 +1373,7 @@ app.post('/api/accounting/payout-requests/:id/approve', authGuards.requireCsrf, 
 });
 
 // POST /api/automation/trigger: Explicit trigger entry point for workflows
-app.post('/api/automation/trigger', (req: Request, res: Response) => {
+app.post('/api/automation/trigger', async (req: Request, res: Response) => {
   const { triggerId, topic, workflow, platform } = req.body;
   const newTaskId = 'task_auto_' + Date.now();
   const newTask: AutoPilotTask = {
@@ -1408,8 +1383,8 @@ app.post('/api/automation/trigger', (req: Request, res: Response) => {
     platform: platform || serverStore.autopilot.platform,
     language: 'English',
     workflow: workflow || serverStore.autopilot.workflow,
-    status: 'running',
-    progress: 25,
+    status: 'queued',
+    progress: 0,
     logs: [
       `[${new Date().toLocaleTimeString()}] Automation trigger endpoint hit (${triggerId || 'manual'})`,
       `[${new Date().toLocaleTimeString()}] Pipeline started under zero-trust safety rules`
@@ -1420,7 +1395,8 @@ app.post('/api/automation/trigger', (req: Request, res: Response) => {
     updatedAt: new Date().toISOString()
   };
 
-  autoPilotTasks.unshift(newTask);
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  await upsertOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'autopilot_task', newTask);
 
   recordAudit({
     category: 'autopilot',
@@ -2183,6 +2159,9 @@ Please review the proposed parameters below. You may either **Approve with Verif
         logs: [`[${new Date().toLocaleTimeString()}] Task enqueued via conversational command.`]
       };
     } else if (lowerPrompt.includes('auto pilot') || lowerPrompt.includes('autopilot')) {
+      const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string; role: string };
+      const accountRole = (res.locals.authSession as { role?: string } | undefined)?.role;
+      if (accountRole !== 'owner' || tenant.role !== 'owner') return res.status(403).json({ error: 'Only the Owner can trigger AutoPilot from chat.' });
       const apTaskId = 'task_chat_ap_' + Date.now();
       const newApTask: AutoPilotTask = {
         id: apTaskId,
@@ -2202,7 +2181,7 @@ Please review the proposed parameters below. You may either **Approve with Verif
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
-      autoPilotTasks.unshift(newApTask);
+      await upsertOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'autopilot_task', newApTask);
 
       generatedTaskCard = {
         taskId: apTaskId,
@@ -2890,14 +2869,15 @@ app.post('/api/autopilot/config', (req: Request, res: Response) => {
 });
 
 // POST /api/autopilot/trigger/manual: Manual trigger
-app.post('/api/autopilot/trigger/manual', (req: Request, res: Response) => {
+app.post('/api/autopilot/trigger/manual', async (req: Request, res: Response) => {
   const { topicOverride } = req.body;
   const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
   const currentTopic = topicOverride?.trim() || serverStore.autopilot.topic;
 
   // Deduplication check: prevent running identical topic task if one is currently queued/running
-  const duplicate = autoPilotTasks.find(t => 
-    t.topic.toLowerCase() === currentTopic.toLowerCase() && 
+  const existingTasks = await listOwnerOperationalRecords<AutoPilotTask>(tenant.ownerId, tenant.tenantId, 'autopilot_task');
+  const duplicate = existingTasks.find(t =>
+    t.topic.toLowerCase() === currentTopic.toLowerCase() &&
     (t.status === 'running' || t.status === 'queued')
   );
 
@@ -2928,7 +2908,7 @@ app.post('/api/autopilot/trigger/manual', (req: Request, res: Response) => {
     updatedAt: new Date().toISOString()
   };
 
-  autoPilotTasks.unshift(newTask);
+  await upsertOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'autopilot_task', newTask);
 
   recordAudit({
     category: 'autopilot',
@@ -2937,40 +2917,13 @@ app.post('/api/autopilot/trigger/manual', (req: Request, res: Response) => {
     details: `Started manual task for topic "${currentTopic}".`
   });
 
-  // Progress simulation
-  setTimeout(() => {
-    const t = autoPilotTasks.find(item => item.id === taskId);
-    if (t && t.status === 'running') {
-      t.progress = 65;
-      t.logs.push(`[${new Date().toLocaleTimeString()}] Assets synthesized, staging in publishing queue`);
-    }
-  }, 1200);
-
-  setTimeout(() => {
-    const t = autoPilotTasks.find(item => item.id === taskId);
-    if (t && t.status === 'running') {
-      t.status = 'completed';
-      t.progress = 100;
-      t.completedAt = new Date().toISOString();
-      t.logs.push(`[${new Date().toLocaleTimeString()}] Task completed. Awaiting Human Approval in Publishing Queue`);
-      t.outputArtifactUrl = 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
-
-      void createPublishingDraftForOwner(tenant.ownerId, tenant.tenantId, {
-        topic: t.topic,
-        platform: 'youtube',
-        caption: `Automated Auto Pilot Dispatch: ${t.topic}\n\n#Architecture #AI #MasterAgent`,
-        hashtags: ['#Engineering', '#AutonomousAI', '#DevOps'],
-        videoUrl: t.outputArtifactUrl,
-        thumbnailUrl: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=80'
-      }).catch(() => console.error('AutoPilot publishing draft could not be persisted.'));
-    }
-  }, 3000);
+  // Task remains queued until a verified worker claims and updates it.
 
   res.json({ success: true, task: newTask });
 });
 
 // POST /api/autopilot/webhook/:triggerId: Authenticated Webhook Trigger
-app.post('/api/autopilot/webhook/:triggerId', (req: Request, res: Response) => {
+app.post('/api/autopilot/webhook/:triggerId', requireOwnerForSecrets, async (req: Request, res: Response) => {
   const { triggerId } = req.params;
   const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
 
@@ -3019,9 +2972,10 @@ app.post('/api/autopilot/webhook/:triggerId', (req: Request, res: Response) => {
 
   // 4. Extract parameters & Deduplicate
   const { topic = serverStore.autopilot.topic, platform = serverStore.autopilot.platform } = req.body;
-
-  const duplicate = autoPilotTasks.find(t => 
-    t.topic.toLowerCase() === topic.toLowerCase() && 
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const existingTasks = await listOwnerOperationalRecords<AutoPilotTask>(tenant.ownerId, tenant.tenantId, 'autopilot_task');
+  const duplicate = existingTasks.find(t =>
+    t.topic.toLowerCase() === topic.toLowerCase() &&
     (t.status === 'running' || t.status === 'queued')
   );
 
@@ -3039,8 +2993,8 @@ app.post('/api/autopilot/webhook/:triggerId', (req: Request, res: Response) => {
     platform,
     language: serverStore.autopilot.language,
     workflow: serverStore.autopilot.workflow,
-    status: 'running',
-    progress: 30,
+    status: 'queued',
+    progress: 0,
     logs: [
       `[${new Date().toLocaleTimeString()}] Authenticated webhook triggered from IP: ${clientIp}`,
       `[${new Date().toLocaleTimeString()}] Verified secret token via SHA-256 validation`,
@@ -3052,7 +3006,7 @@ app.post('/api/autopilot/webhook/:triggerId', (req: Request, res: Response) => {
     updatedAt: new Date().toISOString()
   };
 
-  autoPilotTasks.unshift(newTask);
+  await upsertOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'autopilot_task', newTask);
 
   recordAudit({
     category: 'webhook',
@@ -3062,56 +3016,55 @@ app.post('/api/autopilot/webhook/:triggerId', (req: Request, res: Response) => {
     ip: clientIp
   });
 
-  setTimeout(() => {
-    const t = autoPilotTasks.find(item => item.id === taskId);
-    if (t && t.status === 'running') {
-      t.status = 'completed';
-      t.progress = 100;
-      t.completedAt = new Date().toISOString();
-      t.logs.push(`[${new Date().toLocaleTimeString()}] Pipeline completed. Staged in Publishing Approval Gate`);
-      t.outputArtifactUrl = 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
-    }
-  }, 2500);
+  // The authenticated task remains queued until a verified worker claims it.
 
   res.json({
     success: true,
     message: 'Webhook received and authenticated successfully.',
     taskId,
-    status: 'running'
+    status: 'queued'
   });
 });
 
 // GET /api/autopilot/queue: Get active queue
-app.get('/api/autopilot/queue', (req: Request, res: Response) => {
-  res.json({ tasks: autoPilotTasks });
+app.get('/api/autopilot/queue', async (req: Request, res: Response) => {
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const tasks = await listOwnerOperationalRecords<AutoPilotTask>(tenant.ownerId, tenant.tenantId, 'autopilot_task');
+  res.json({ tasks });
 });
 
 // Controls: Pause, Resume, Stop
-app.post('/api/autopilot/queue/:id/pause', (req: Request, res: Response) => {
-  const task = autoPilotTasks.find(t => t.id === req.params.id);
+app.post('/api/autopilot/queue/:id/pause', async (req: Request, res: Response) => {
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const task = await getOwnerOperationalRecord<AutoPilotTask>(tenant.ownerId, tenant.tenantId, 'autopilot_task', req.params.id);
   if (!task) return res.status(404).json({ error: 'Task not found' });
   task.status = 'paused';
   task.logs.push(`[${new Date().toLocaleTimeString()}] Task paused by operator`);
   recordAudit({ category: 'autopilot', action: `Task Paused [${task.id}]`, status: 'info', details: `Task "${task.topic}" paused.` });
+  await upsertOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'autopilot_task', task);
   res.json({ success: true, task });
 });
 
-app.post('/api/autopilot/queue/:id/resume', (req: Request, res: Response) => {
-  const task = autoPilotTasks.find(t => t.id === req.params.id);
+app.post('/api/autopilot/queue/:id/resume', async (req: Request, res: Response) => {
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const task = await getOwnerOperationalRecord<AutoPilotTask>(tenant.ownerId, tenant.tenantId, 'autopilot_task', req.params.id);
   if (!task) return res.status(404).json({ error: 'Task not found' });
   task.status = 'running';
   task.logs.push(`[${new Date().toLocaleTimeString()}] Task resumed by operator`);
   recordAudit({ category: 'autopilot', action: `Task Resumed [${task.id}]`, status: 'info', details: `Task "${task.topic}" resumed.` });
+  await upsertOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'autopilot_task', task);
   res.json({ success: true, task });
 });
 
-app.post('/api/autopilot/queue/:id/stop', (req: Request, res: Response) => {
-  const task = autoPilotTasks.find(t => t.id === req.params.id);
+app.post('/api/autopilot/queue/:id/stop', async (req: Request, res: Response) => {
+  const tenant = res.locals.tenantContext as { ownerId: string; tenantId: string };
+  const task = await getOwnerOperationalRecord<AutoPilotTask>(tenant.ownerId, tenant.tenantId, 'autopilot_task', req.params.id);
   if (!task) return res.status(404).json({ error: 'Task not found' });
   task.status = 'failed';
   task.error = 'Manually terminated by operator';
   task.logs.push(`[${new Date().toLocaleTimeString()}] Task stopped by operator`);
   recordAudit({ category: 'autopilot', action: `Task Terminated [${task.id}]`, status: 'warning', details: `Task "${task.topic}" terminated.` });
+  await upsertOwnerOperationalRecord(tenant.ownerId, tenant.tenantId, 'autopilot_task', task);
   res.json({ success: true, task });
 });
 
