@@ -21,8 +21,8 @@ export type PublishingDraftInput = {
   auditReport?: string;
 };
 
-function poolOrThrow(): DbPool {
-  const pool = getPostgresPool() as unknown as DbPool | null;
+function poolOrThrow(override?: DbPool | null): DbPool {
+  const pool = override === undefined ? getPostgresPool() as unknown as DbPool | null : override;
   if (!pool) throw new Error('Publishing task database is unavailable.');
   return pool;
 }
@@ -30,14 +30,15 @@ function poolOrThrow(): DbPool {
 export async function createPublishingDraftForOwner(
   ownerId: string,
   tenantId: string,
-  draft: PublishingDraftInput
+  draft: PublishingDraftInput,
+  poolOverride?: DbPool | null
 ): Promise<{ id: string; status: string }> {
   if (!ownerId || !tenantId) throw new Error('Owner and tenant identity are required.');
   if (!draft.topic.trim() || !draft.caption.trim() || !draft.platform.trim()) {
     throw new Error('Publishing draft topic, platform, and caption are required.');
   }
 
-  const pool = poolOrThrow();
+  const pool = poolOrThrow(poolOverride);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -83,9 +84,9 @@ export async function createPublishingDraftForOwner(
   }
 }
 
-export async function listOwnerPublishingDrafts(ownerId: string, tenantId: string): Promise<any[]> {
+export async function listOwnerPublishingDrafts(ownerId: string, tenantId: string, poolOverride?: DbPool | null): Promise<any[]> {
   if (!ownerId || !tenantId) throw new Error('Owner and tenant identity are required.');
-  const pool = poolOrThrow();
+  const pool = poolOrThrow(poolOverride);
   const result = await pool.query(
     `SELECT id, owner_id, original_prompt, payload, status, requires_approval,
             approved_at, result, created_at, updated_at, completed_at
@@ -116,9 +117,9 @@ export async function listOwnerPublishingDrafts(ownerId: string, tenantId: strin
   }));
 }
 
-export async function countOwnerPublishingDrafts(ownerId: string, tenantId: string): Promise<number> {
+export async function countOwnerPublishingDrafts(ownerId: string, tenantId: string, poolOverride?: DbPool | null): Promise<number> {
   if (!ownerId || !tenantId) throw new Error('Owner and tenant identity are required.');
-  const pool = poolOrThrow();
+  const pool = poolOrThrow(poolOverride);
   const result = await pool.query(
     `SELECT COUNT(*)::text AS count
        FROM agent_tasks
