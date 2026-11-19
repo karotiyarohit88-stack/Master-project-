@@ -2170,8 +2170,8 @@ Please review the proposed parameters below. You may either **Approve with Verif
         platform: serverStore.autopilot.platform,
         language: serverStore.autopilot.language,
         workflow: serverStore.autopilot.workflow,
-        status: 'running',
-        progress: 35,
+        status: 'queued',
+        progress: 0,
         logs: [
           `[${new Date().toLocaleTimeString()}] Dispatched via chat command`,
           `[${new Date().toLocaleTimeString()}] Orchestrating pipeline stages`
@@ -2187,8 +2187,8 @@ Please review the proposed parameters below. You may either **Approve with Verif
         taskId: apTaskId,
         type: 'autopilot',
         title: newApTask.topic,
-        status: 'running',
-        progress: 35,
+        status: 'queued',
+        progress: 0,
         logs: newApTask.logs
       };
     } else if (lowerPrompt.includes('publish') || lowerPrompt.includes('post')) {
@@ -2895,8 +2895,8 @@ app.post('/api/autopilot/trigger/manual', async (req: Request, res: Response) =>
     platform: serverStore.autopilot.platform,
     language: serverStore.autopilot.language,
     workflow: serverStore.autopilot.workflow,
-    status: 'running',
-    progress: 25,
+    status: 'queued',
+    progress: 0,
     logs: [
       `[${new Date().toLocaleTimeString()}] Manual trigger fired by operator`,
       `[${new Date().toLocaleTimeString()}] Auto Pilot orchestrator started (Workflow: ${serverStore.autopilot.workflow})`,
