@@ -1298,7 +1298,8 @@ app.get('/api/system-doctor', requireOwnerForSecrets, async (_req: Request, res:
     '20261119_002_owner_operational_records.sql',
     '20261119_003_autopilot_record_types.sql',
     '20261119_004_owner_emergency_halt.sql',
-    '20261119_005_owner_tenant_secrets.sql'
+    '20261119_005_owner_tenant_secrets.sql',
+    '20261119_006_tenant_knowledge_documents.sql'
   ];
   const report = evaluateSystemDoctor({
     databaseConnected: database.connected,
