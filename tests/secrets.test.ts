@@ -227,6 +227,7 @@ test('secret revocation is restricted to the selected Owner and provider', async
   let capturedSql = '';
   let capturedValues: any[] = [];
   const pool = {
+    async connect() { return { query: pool.query.bind(pool), release: () => undefined }; },
     async query(sql: string, values: any[] = []) {
       capturedSql = sql;
       capturedValues = values;
