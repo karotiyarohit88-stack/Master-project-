@@ -157,3 +157,17 @@ export async function listOwnerAuditLogs(
     return result.rows;
   });
 }
+
+export async function countOwnerAuditLogs(ownerId: string, tenantId: string): Promise<number> {
+  if (!ownerId || !tenantId) throw new Error('Owner and tenant identity are required.');
+  const pool = getPool();
+  if (!pool) throw new Error('Audit database is unavailable.');
+
+  return withOwnerTransaction(pool, ownerId, tenantId, async (client) => {
+    const result = await client.query(
+      'SELECT COUNT(*)::text AS count FROM owner_audit_logs WHERE owner_id = $1 AND tenant_id = $2',
+      [ownerId, tenantId]
+    );
+    return Number(result.rows[0]?.count || 0);
+  });
+}
