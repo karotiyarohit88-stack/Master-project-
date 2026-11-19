@@ -11,33 +11,33 @@ function responseMock() {
   };
 }
 
-test('CSP is sent in report-only mode by default and blocks eval in policy text', () => {
-  const previous = process.env.CSP_ENFORCE;
-  delete process.env.CSP_ENFORCE;
+test('CSP is enforced by default and blocks eval in policy text', () => {
+  const previous = process.env.CSP_REPORT_ONLY;
+  delete process.env.CSP_REPORT_ONLY;
   const res = responseMock();
   let nextCalled = false;
   securityHeaders({} as any, res as any, () => { nextCalled = true; });
   assert.equal(nextCalled, true);
-  const policy = res.headers.get('content-security-policy-report-only') || '';
+  const policy = res.headers.get('content-security-policy') || '';
   assert.ok(policy.length > 0);
-  assert.equal(res.headers.has('content-security-policy'), false);
+  assert.equal(res.headers.has('content-security-policy-report-only'), false);
   assert.match(policy, /default-src 'self'/);
   assert.match(policy, /object-src 'none'/);
   assert.match(policy, /frame-ancestors 'none'/);
   assert.doesNotMatch(policy, /unsafe-eval/);
-  if (previous === undefined) delete process.env.CSP_ENFORCE;
-  else process.env.CSP_ENFORCE = previous;
+  if (previous === undefined) delete process.env.CSP_REPORT_ONLY;
+  else process.env.CSP_REPORT_ONLY = previous;
 });
 
-test('CSP can be switched to enforcement only by explicit server configuration', () => {
-  const previous = process.env.CSP_ENFORCE;
-  process.env.CSP_ENFORCE = 'true';
+test('CSP can be switched to report-only mode only by explicit server configuration', () => {
+  const previous = process.env.CSP_REPORT_ONLY;
+  process.env.CSP_REPORT_ONLY = 'true';
   const res = responseMock();
   securityHeaders({} as any, res as any, () => undefined);
-  assert.ok(res.headers.get('content-security-policy'));
-  assert.equal(res.headers.has('content-security-policy-report-only'), false);
-  if (previous === undefined) delete process.env.CSP_ENFORCE;
-  else process.env.CSP_ENFORCE = previous;
+  assert.ok(res.headers.get('content-security-policy-report-only'));
+  assert.equal(res.headers.has('content-security-policy'), false);
+  if (previous === undefined) delete process.env.CSP_REPORT_ONLY;
+  else process.env.CSP_REPORT_ONLY = previous;
 });
 
 test('CSP policy includes only required resource classes and denies plugins', () => {
