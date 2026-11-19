@@ -9,7 +9,7 @@ import dotenv from 'dotenv';
 import crypto from 'crypto';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, FunctionCallingConfigMode } from '@google/genai';
 import { applyPendingPostgresMigrations, checkPostgresConnection, getPostgresMigrationStatus } from './database.ts';
 import { createAuthGuards, createAuthRouter, createCsrfMutationGuard } from './auth.ts';
 import { createAgentTaskRouter } from './taskQueue.ts';
@@ -2845,7 +2845,7 @@ app.post('/api/research', requireOwnerForSecrets, createRateLimitMiddleware({ wi
       config: {
         systemInstruction,
         tools: [toolDeclaration],
-        toolConfig: { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: ['search_web'] } },
+        toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.ANY, allowedFunctionNames: ['search_web'] } },
         temperature: 0.2
       }
     });
