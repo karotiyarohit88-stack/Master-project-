@@ -30,6 +30,11 @@ export const UniversalVoiceGuide: React.FC = () => {
   const [spokenText, setSpokenText] = useState('');
   const [targets, setTargets] = useState<HTMLElement[]>([]);
   const [pageText, setPageText] = useState('');
+  const [guideLoading, setGuideLoading] = useState(false);
+  const [guideSummary, setGuideSummary] = useState('');
+  const [guideSteps, setGuideSteps] = useState<Array<{ title: string; instruction: string; targetLabel: string }>>([]);
+  const [guideNextAction, setGuideNextAction] = useState('');
+  const [guideError, setGuideError] = useState('');
   const recognitionRef = useRef<Recognition | null>(null);
   const voiceModeRef = useRef(false);
   const copy = COPY[language];
