@@ -9,6 +9,8 @@ const dueSchedule = {
   tenant_id: '22222222-2222-4222-8222-222222222222',
   owner_id: '33333333-3333-4333-8333-333333333333',
   title: 'Daily status',
+  task_type: 'read_only',
+  payload: { action: 'read_project_status' },
   original_prompt: 'Read project status',
   recurrence_type: 'daily',
   timezone: 'Asia/Kolkata',
@@ -55,12 +57,24 @@ test('scheduler dispatches due schedule as an automatically approved fixed read-
   assert.equal(count, 1);
   const insert = calls.find(call => call.sql.includes('INSERT INTO agent_tasks'));
   assert.ok(insert);
-  assert.match(insert!.sql, /'read_only'/);
-  assert.match(insert!.sql, /'queued',FALSE/);
+  assert.match(insert!.sql, /CASE WHEN \$4='research' THEN 'waiting_approval' ELSE 'queued' END/);
+  assert.equal(insert!.values?.[3], 'read_only');
+  assert.deepEqual(JSON.parse(String(insert!.values?.[5])), { action: 'read_project_status' });
   assert.deepEqual(insert!.values?.slice(0, 2), [dueSchedule.tenant_id, dueSchedule.owner_id]);
   assert.ok(calls.some(call => call.sql.includes("set_config('app.worker_mode','true',true)")));
   assert.ok(calls.some(call => call.sql.includes('UPDATE agent_schedules SET last_run_at')));
   assert.ok(calls.some(call => call.sql === 'COMMIT'));
+});
+
+test('scheduled research waits for a separate approval before provider calls', async () => {
+  const researchSchedule = { ...dueSchedule, task_type: 'research', payload: { action: 'research' } };
+  const { calls, pool } = fakePool([researchSchedule]);
+  assert.equal(await dispatchDueSchedules({ pool: pool as any }), 1);
+  const insert = calls.find(call => call.sql.includes('INSERT INTO agent_tasks'));
+  assert.ok(insert);
+  assert.equal(insert!.values?.[3], 'research');
+  assert.deepEqual(JSON.parse(String(insert!.values?.[5])), { action: 'research' });
+  assert.match(insert!.sql, /\\(\\$4='research'\\)/);
 });
 
 test('scheduler does not create work when there are no due schedules', async () => {
