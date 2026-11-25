@@ -11,7 +11,7 @@ export function stripVoiceActionPrefix(value: string): string {
 export function isHighImpactVoiceAction(candidate: VoiceControlCandidate): boolean {
   const label = normalizeVoiceText(candidate.label);
   const highImpact = /\b(delete|remove|publish|post|send|pay|purchase|invite|approve|merge|deploy|logout|sign out|transfer|refund|cancel subscription)\b|हटाएं|भेजें|प्रकाशित|मंजूर|भुगतान/u.test(label);
-  return Boolean(candidate.isSubmit || highImpact);
+  return Boolean(candidate.kind === 'button' || candidate.isSubmit || highImpact);
 }
 
 export function findVoiceControl<T extends VoiceControlCandidate>(command: string, candidates: T[]): T | undefined {
