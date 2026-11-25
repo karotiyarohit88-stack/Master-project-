@@ -36,7 +36,8 @@ export const CameraMediaStudio: React.FC<Props> = ({ onAnalyze }) => {
     }
   };
 
-  useEffect(() => () => { streamRef.current?.getTracks().forEach(track => track.stop()); if (recordedUrl) URL.revokeObjectURL(recordedUrl); }, [recordedUrl]);
+  useEffect(() => () => { streamRef.current?.getTracks().forEach(track => track.stop()); }, []);
+  useEffect(() => () => { if (recordedUrl) URL.revokeObjectURL(recordedUrl); }, [recordedUrl]);
 
   const capture = () => {
     const video = videoRef.current;
