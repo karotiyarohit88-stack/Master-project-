@@ -14,7 +14,8 @@ import {
   Terminal,
   GitBranch,
   BarChart3,
-  Layers
+  Layers,
+  Camera
 } from 'lucide-react';
 import { ServerHealth, AppView } from '../types';
 
@@ -51,6 +52,7 @@ export const Header: React.FC<HeaderProps> = ({
     { id: 'publishing', label: 'Publishing', icon: Share2 },
     { id: 'connections', label: 'Connections', icon: Cpu },
     { id: 'logs', label: 'Audit Logs', icon: Terminal },
+    { id: 'camera', label: 'Camera Studio', icon: Camera },
   ];
 
   return (
