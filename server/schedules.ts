@@ -51,6 +51,7 @@ export function createSchedulesRouter(options: { pool?: DbPool | null } = {}) {
     const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
     const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
     const recurrence = req.body?.recurrenceType;
+    if (req.body?.taskType !== undefined && !['read_only', 'research'].includes(req.body.taskType)) return error(res, 400, 'taskType must be read_only or research.');
     const taskType = req.body?.taskType === 'research' ? 'research' : 'read_only';
     const taskPayload = taskType === 'research' ? { action: 'research' } : { action: 'read_project_status' };
     const timezone = req.body?.timezone || 'Asia/Kolkata';
