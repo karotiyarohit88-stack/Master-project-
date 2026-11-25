@@ -70,7 +70,7 @@ export function createSchedulesRouter(options: { pool?: DbPool | null } = {}) {
            CASE WHEN $5='interval' THEN NOW() + ($8::text || ' minutes')::interval
            ELSE
              CASE WHEN ((date_trunc('day', NOW() AT TIME ZONE $6)::date + $7::time) AT TIME ZONE $6) > NOW()
-               THEN ((date_trunc('day', NOW() AT TIME ZONE $6) + $7::time) AT TIME ZONE $6)
+               THEN ((date_trunc('day', NOW() AT TIME ZONE $6)::date + $7::time) AT TIME ZONE $6)
                ELSE ((date_trunc('day', NOW() AT TIME ZONE $6)::date + 1 + $7::time) AT TIME ZONE $6)
              END
            END)
@@ -168,7 +168,7 @@ export async function dispatchDueSchedules(options: { pool?: DbPool | null; limi
             THEN NOW() + (interval_minutes::text || ' minutes')::interval
             ELSE
               CASE WHEN ((date_trunc('day', NOW() AT TIME ZONE timezone)::date + daily_time) AT TIME ZONE timezone) > NOW()
-                THEN ((date_trunc('day', NOW() AT TIME ZONE timezone) + daily_time) AT TIME ZONE timezone)
+                THEN ((date_trunc('day', NOW() AT TIME ZONE timezone)::date + daily_time) AT TIME ZONE timezone)
                 ELSE ((date_trunc('day', NOW() AT TIME ZONE timezone)::date + 1 + daily_time) AT TIME ZONE timezone)
               END
           END
