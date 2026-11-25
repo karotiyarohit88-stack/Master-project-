@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { getCsrfHeaders } from '../utils/csrf';
 import { LockKeyhole, LogIn, UserPlus, ShieldCheck, LogOut, Copy, Users, LoaderCircle, AlertCircle } from 'lucide-react';
+import { UniversalVoiceGuide } from './UniversalVoiceGuide';
 
 type AuthUser = { id: string; email: string; displayName: string; role: 'owner' | 'admin' | 'member' };
 type AuthMode = 'login' | 'bootstrap' | 'invite';
@@ -210,7 +211,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
   };
 
   if (checking) {
-    return <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-600"><LoaderCircle className="w-5 h-5 animate-spin mr-2" /> Checking secure session…</div>;
+    return <><div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-600"><LoaderCircle className="w-5 h-5 animate-spin mr-2" /> Checking secure session…</div><UniversalVoiceGuide /></>;
   }
 
   if (!user) {
@@ -270,12 +271,14 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
           )}
         </section>
       </main>
+      <UniversalVoiceGuide />
     );
   }
 
   return (
     <>
       {children}
+      <UniversalVoiceGuide />
       <aside className="fixed z-[60] top-2 right-2 sm:top-4 sm:right-4 flex items-center gap-2">
         <div className="hidden sm:block rounded-xl border border-slate-200 bg-white/95 shadow-md px-3 py-2 text-right"><p className="text-xs font-semibold text-slate-800">{user.displayName}</p><p className="text-[10px] text-slate-500">{user.role} · {user.email}</p></div>
         {user.role === 'owner' && <details className="relative"><summary className="list-none cursor-pointer rounded-xl border border-emerald-200 bg-white shadow-md p-2.5 text-emerald-700" aria-label="Invite team members"><Users className="w-5 h-5" /></summary><div className="absolute right-0 mt-2 w-[min(90vw,340px)] rounded-2xl border border-slate-200 bg-white shadow-xl p-4"><h3 className="font-bold text-slate-900 mb-1">Invite team member</h3><p className="text-xs text-slate-500 mb-3">Create a one-time invitation link. The token is shown only once.</p><form onSubmit={createInvitation} className="space-y-2"><input required type="email" placeholder="member@example.com" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} className="w-full rounded-xl border border-slate-300 p-2.5 text-sm" /><select value={inviteRole} onChange={e => setInviteRole(e.target.value as 'member' | 'admin')} className="w-full rounded-xl border border-slate-300 p-2.5 text-sm"><option value="member">Member</option><option value="admin">Admin</option></select><button disabled={busy} className="w-full rounded-xl bg-emerald-600 text-white py-2.5 text-sm font-semibold disabled:opacity-60">{busy ? 'Creating…' : 'Generate invitation link'}</button></form>{generatedLink && <div className="mt-3"><textarea readOnly value={generatedLink} className="w-full h-20 rounded-lg border border-slate-200 p-2 text-xs break-all" /><button type="button" onClick={copyInvite} className="mt-2 w-full flex items-center justify-center gap-2 rounded-lg bg-emerald-50 text-emerald-800 py-2 text-xs font-semibold"><Copy className="w-3.5 h-3.5" />Copy invitation link</button></div>}{error && <p role="alert" className="text-xs text-amber-700 mt-2">{error}</p>}{notice && <p role="status" className="text-xs text-emerald-700 mt-2">{notice}</p>}</div></details>}
