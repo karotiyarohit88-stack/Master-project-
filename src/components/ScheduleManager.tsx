@@ -19,6 +19,7 @@ export const ScheduleManager: React.FC = () => {
   const [title, setTitle] = useState('');
   const [prompt, setPrompt] = useState('Read the current project status and save the result.');
   const [recurrenceType, setRecurrenceType] = useState<'daily' | 'interval'>('daily');
+  const [taskType, setTaskType] = useState<'read_only' | 'research'>('read_only');
   const [dailyTime, setDailyTime] = useState('09:00');
   const [intervalMinutes, setIntervalMinutes] = useState(360);
   const [busy, setBusy] = useState(false);
@@ -34,7 +35,7 @@ export const ScheduleManager: React.FC = () => {
     if (!title.trim() || !prompt.trim()) { setMessage('Enter a schedule name and task instruction.'); return; }
     setBusy(true); setMessage('');
     try {
-      const response = await fetch('/api/schedules', { method: 'POST', headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() }, body: JSON.stringify({ title, prompt, recurrenceType, dailyTime, intervalMinutes, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata' }) });
+      const response = await fetch('/api/schedules', { method: 'POST', headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() }, body: JSON.stringify({ title, prompt, taskType, recurrenceType, dailyTime, intervalMinutes, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata' }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Schedule could not be created.');
       setTitle(''); await load(); setMessage('Schedule saved. The dedicated background worker must be enabled to dispatch it.');
@@ -59,7 +60,7 @@ export const ScheduleManager: React.FC = () => {
   return <section className="rounded-2xl border border-[#14183E]/15 bg-white p-4 sm:p-5 mb-4 shadow-sm">
     <div className="flex items-center gap-2 mb-2"><CalendarClock className="w-5 h-5 text-[#14183E]"/><h3 className="font-bold text-sm text-slate-900">{copy.title}</h3></div>
     <p className="text-xs text-slate-500 mb-3">{copy.description}</p>
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">\n      <label className="text-xs font-semibold">Task type<select value={taskType} onChange={e=>setTaskType(e.target.value as 'read_only'|'research')} className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm"><option value="read_only">Project status (automatic)</option><option value="research">Web research (approval each run)</option></select></label>
       <label className="text-xs font-semibold">{copy.name}<input value={title} onChange={e=>setTitle(e.target.value)} maxLength={160} className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm font-normal" placeholder="Daily project report"/></label>
       <label className="text-xs font-semibold">{copy.prompt}<input value={prompt} onChange={e=>setPrompt(e.target.value)} maxLength={4000} className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm font-normal"/></label>
       <label className="text-xs font-semibold">Recurrence<select value={recurrenceType} onChange={e=>setRecurrenceType(e.target.value as 'daily'|'interval')} className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm"><option value="daily">{copy.daily}</option><option value="interval">{copy.interval}</option></select></label>
