@@ -792,7 +792,7 @@ I am your central AI assistant and command center. You can manage engineering ta
                 <div className="flex items-center gap-1.5 min-w-0 flex-1 truncate">
                   <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
                   <span className="truncate">
-                    White & Green • <strong className="text-emerald-900 font-medium">Command Center</strong>
+                    Midnight Navy & White • <strong className="text-emerald-900 font-medium">Command Center</strong>
                   </span>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
