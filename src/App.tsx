@@ -52,6 +52,7 @@ import { DurableTaskQueuePanel } from './components/DurableTaskQueuePanel';
 import { WorkerAgentsCenter } from './components/WorkerAgentsCenter';
 import { AAKSHWorkspaceCenter } from './components/AAKSHWorkspaceCenter';
 import { FloatingChatWidget } from './components/FloatingChatWidget';
+import { CameraMediaStudio } from './components/CameraMediaStudio';
 
 const STORAGE_KEY = 'master_project_ai_agent_sessions_v1';
 const ACTIVE_SESSION_KEY = 'master_project_ai_agent_active_v1';
@@ -963,6 +964,8 @@ I am your central AI assistant and command center. You can manage engineering ta
 
         {/* VIEW 5: Voice Studio */}
         {activeView === 'voice' && <VoiceStudioCenter />}
+
+        {activeView === 'camera' && <CameraMediaStudio onAnalyze={(image) => handleSendMessage('Please analyze this live camera snapshot and explain what is visible.', image)} />}
 
         {/* VIEW 6: Publishing Queue & Approvals */}
         {activeView === 'publishing' && <PublishingCenter />}
