@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Mic, Volume2, VolumeX, Sparkles, X, Accessibility, ChevronRight, Focus, ShieldCheck } from 'lucide-react';
+import { findVoiceControl, isHighImpactVoiceAction, normalizeVoiceText } from '../utils/voiceCommandParser';
 
 type Language = 'hi' | 'hinglish' | 'en';
 type SpeechRecognitionResultEvent = { results: ArrayLike<ArrayLike<{ transcript: string }>> };
@@ -17,7 +18,6 @@ const COPY = {
   en: { title: 'AI Mic & Speaker Guide', read: 'Read full screen', stop: 'Stop speaking', listen: 'Voice command', questions: 'Smart questions for this screen', accessibility: 'Accessibility Mode', autopilot: 'Voice Command Mode', on: 'ON', off: 'OFF', language: 'Language', help: 'The actual controls on this screen are listed below. Selecting a step focuses its matching control.', noSpeech: 'Speech recognition is unavailable in this browser.', empty: 'No readable main content was found on this screen.', enabled: 'Voice commands are on. Say: open + tab name, read screen, or stop.', disabled: 'Voice commands are off.', confirm: 'Do you want to run this action?', q1: 'What can I do on this page?', q2: 'What is the next safe step?', q3: 'Which button or field should I use?', q4: 'Read the options on this screen.', q5: 'Take me to the next control.' }
 };
 const NAV_NAMES = ['Home', 'AI Chat', 'GitHub Explorer', 'Analytics', 'AAKSH Workspace', 'Auto Pilot', 'Video Gen', 'Voice Studio', 'Publishing', 'Connections', 'Audit Logs', 'Camera Studio'];
-const norm = (value: string) => value.toLocaleLowerCase().replace(/[^a-z0-9ऀ-ॿ]+/g, ' ').trim();
 
 export const UniversalVoiceGuide: React.FC = () => {
   const [open, setOpen] = useState(false);
@@ -99,30 +99,31 @@ export const UniversalVoiceGuide: React.FC = () => {
   }, [getTargets]);
 
   const executeVoiceCommand = useCallback((raw: string) => {
-    const command = norm(raw);
+    const command = normalizeVoiceText(raw);
     if (!command) return;
     if (/^(stop|रोक|बंद|आवाज बंद)/u.test(command)) { window.speechSynthesis?.cancel(); voiceModeRef.current = false; setVoiceMode(false); return; }
     if (command.includes('read screen') || command.includes('स्क्रीन पढ़') || command.includes('screen reader')) { setAccessibility(true); readScreen(); return; }
     if (command.includes('accessibility mode on') || command.includes('accessibility चालू')) { setAccessibility(true); return; }
     if (command.includes('accessibility mode off') || command.includes('accessibility बंद')) { setAccessibility(false); return; }
     if (command.includes('voice autopilot off') || command.includes('voice command mode off')) { voiceModeRef.current = false; setVoiceMode(false); return; }
-    const nav = NAV_NAMES.find(name => command.includes(norm(name)) || (name === 'Auto Pilot' && command.includes('autopilot')));
+    const nav = NAV_NAMES.find(name => command.includes(normalizeVoiceText(name)) || (name === 'Auto Pilot' && command.includes('autopilot')));
     if (nav && (command.startsWith('open ') || command.startsWith('खोलो ') || command.startsWith('go to ') || command.includes('open '))) {
-      const button = Array.from(document.querySelectorAll<HTMLElement>('header nav button,[aria-label="Bottom navigation"] button')).find(el => norm(el.innerText || el.getAttribute('aria-label') || '').includes(norm(nav)));
+      const button = Array.from(document.querySelectorAll<HTMLElement>('header nav button,[aria-label="Bottom navigation"] button')).find(el => normalizeVoiceText(el.innerText || el.getAttribute('aria-label') || '').includes(normalizeVoiceText(nav)));
       if (button) { button.click(); setSpokenText('Opening ' + nav); speak('Opening ' + nav); return; }
     }
     const controls = getTargets();
-    const wanted = command.replace(/^(click|press|select|choose|focus|खोलो|दबाओ|चुनो|select karo)\\s+/u, '');
-    const match = controls.find(el => {
-      const label = norm([el.innerText, el.getAttribute('aria-label'), el.getAttribute('placeholder'), el.getAttribute('name'), el.getAttribute('title')].filter(Boolean).join(' '));
-      return label === wanted || (wanted.length > 2 && label.includes(wanted));
-    });
+    const candidates = controls.map(el => ({
+      element: el,
+      label: [el.innerText, el.getAttribute('aria-label'), el.getAttribute('placeholder'), el.getAttribute('name'), el.getAttribute('title')].filter(Boolean).join(' '),
+      kind: el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement ? 'input' as const : el instanceof HTMLSelectElement ? 'select' as const : el instanceof HTMLButtonElement ? 'button' as const : el instanceof HTMLAnchorElement ? 'link' as const : 'other' as const,
+      isSubmit: el instanceof HTMLButtonElement && (el.type === 'submit' || !!el.closest('form'))
+    }));
+    const candidate = findVoiceControl(command, candidates);
+    const match = candidate?.element;
     if (!match) { setSpokenText(language === 'hi' ? 'यह command किसी सुरक्षित visible control से match नहीं हुई।' : 'No safe visible control matched that command.'); return; }
     if (match instanceof HTMLInputElement || match instanceof HTMLTextAreaElement) { match.focus(); match.scrollIntoView({ behavior: 'smooth', block: 'center' }); setSpokenText('Focused ' + (match.getAttribute('aria-label') || match.placeholder || match.name || 'input')); return; }
     if (match instanceof HTMLSelectElement) { match.focus(); setSpokenText('Select field focused. Choose an option using the screen control.'); return; }
-    const isSubmit = match instanceof HTMLButtonElement && (match.type === 'submit' || !!match.closest('form'));
-    const risky = /delete|remove|publish|post|send|pay|purchase|invite|approve|merge|deploy|logout|sign out|हटाएं|भेजें|प्रकाशित|मंजूर/u.test(norm(match.innerText || match.getAttribute('aria-label') || ''));
-    if ((isSubmit || risky) && !window.confirm(copy.confirm)) return;
+    if (candidate && isHighImpactVoiceAction(candidate) && !window.confirm(copy.confirm)) return;
     match.click();
     setSpokenText('Activated ' + (match.innerText || match.getAttribute('aria-label') || 'control'));
   }, [copy.confirm, getTargets, language, readScreen, speak]);
