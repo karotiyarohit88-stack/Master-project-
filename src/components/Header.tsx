@@ -1,4 +1,5 @@
 import React from 'react';
+import { useUiLanguage, translateUi } from '../utils/uiLanguage';
 import { 
   Home,
   Bot, 
@@ -40,6 +41,7 @@ export const Header: React.FC<HeaderProps> = ({
   activeView,
   onSelectView
 }) => {
+  const language = useUiLanguage();
   const navTabs: { id: AppView; label: string; icon: React.FC<{ className?: string }> }[] = [
     { id: 'home', label: 'Home', icon: Home },
     { id: 'chat', label: 'AI Chat', icon: Bot },
@@ -67,8 +69,8 @@ export const Header: React.FC<HeaderProps> = ({
               type="button"
               onClick={onOpenDrawer}
               className="p-2 min-w-[38px] min-h-[38px] rounded-xl text-slate-600 hover:text-emerald-700 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-200 transition-colors relative flex items-center justify-center cursor-pointer flex-shrink-0"
-              title="Open chat history"
-              aria-label="Open chat history"
+              title={translateUi("Open chat history", language)}
+              aria-label={translateUi("Open chat history", language)}
             >
               <Menu className="w-4 h-4" />
               {conversationCount > 0 && (
@@ -110,7 +112,7 @@ export const Header: React.FC<HeaderProps> = ({
               type="button"
               onClick={onOpenSettings}
               className="p-2 min-w-[38px] min-h-[38px] rounded-xl text-slate-600 hover:text-emerald-700 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-200 text-xs transition-colors flex items-center justify-center cursor-pointer"
-              title="Interface Settings & Preferences"
+              title={translateUi("Interface Settings & Preferences", language)}
               aria-label="Settings"
             >
               <Settings className="w-4 h-4" />
@@ -125,7 +127,7 @@ export const Header: React.FC<HeaderProps> = ({
               aria-label="Testing guide"
             >
               <HelpCircle className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-              <span className="hidden md:inline font-medium">Guide</span>
+              <span className="hidden md:inline font-medium">{translateUi("Guide", language)}</span>
             </button>
 
             {/* New Chat Button */}
@@ -136,11 +138,11 @@ export const Header: React.FC<HeaderProps> = ({
                 onNewChat();
               }}
               className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 min-h-[38px] rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-medium text-xs shadow-xs transition-all cursor-pointer"
-              title="Start new chat"
-              aria-label="Start new chat"
+              title={translateUi("Start new chat", language)}
+              aria-label={translateUi("Start new chat", language)}
             >
               <Plus className="w-4 h-4 flex-shrink-0" />
-              <span className="hidden xs:inline">New Chat</span>
+              <span className="hidden xs:inline">{translateUi("New Chat", language)}</span>
             </button>
           </div>
         </div>
@@ -165,7 +167,7 @@ export const Header: React.FC<HeaderProps> = ({
                 }`}
               >
                 <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-emerald-700'}`} />
-                <span>{tab.label}</span>
+                <span>{translateUi(tab.label, language)}</span>
               </button>
             );
           })}
