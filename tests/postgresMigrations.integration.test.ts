@@ -499,19 +499,19 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
     assert.deepEqual(ragB.rows.map((row: Row) => row.title), ['Tenant B RAG document']);
 
     const scheduleSecurity = await client.query(
-      \`SELECT c.relrowsecurity, c.relforcerowsecurity
+      `SELECT c.relrowsecurity, c.relforcerowsecurity
          FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = 'public' AND c.relname = 'agent_schedules'\`
+        WHERE n.nspname = 'public' AND c.relname = 'agent_schedules'`
     );
     assert.equal(scheduleSecurity.rows.length, 1);
     assert.equal(scheduleSecurity.rows[0].relrowsecurity, true);
     assert.equal(scheduleSecurity.rows[0].relforcerowsecurity, true);
     await client.query(
-      \`INSERT INTO agent_schedules
+      `INSERT INTO agent_schedules
         (tenant_id,owner_id,title,original_prompt,recurrence_type,timezone,daily_time,next_run_at)
        VALUES
         ($1,$2,'Tenant A morning schedule','Read project status','daily','Asia/Kolkata','09:00',NOW()+interval '1 day'),
-        ($3,$4,'Tenant B schedule','Read project status','interval','Asia/Kolkata',NULL,NOW()+interval '6 hours')\`,
+        ($3,$4,'Tenant B schedule','Read project status','interval','Asia/Kolkata',NULL,NOW()+interval '6 hours')`,
       [tenantA.rows[0].id,userA.rows[0].id,tenantB.rows[0].id,userB.rows[0].id]
     );
     await client.query("SELECT set_config('app.owner_id',$1,true),set_config('app.tenant_id',$2,true)", [userA.rows[0].id,tenantA.rows[0].id]);
