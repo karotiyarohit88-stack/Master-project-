@@ -1,4 +1,5 @@
 import React from 'react';
+import { useUiLanguage, translateUi } from '../utils/uiLanguage';
 import { 
   Home, 
   Bot, 
@@ -19,6 +20,7 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
   onSelectView,
   onOpenSettings
 }) => {
+  const language = useUiLanguage();
   const items = [
     { id: 'home' as AppView, label: 'Home', icon: Home, isSettings: false },
     { id: 'chat' as AppView, label: 'AI Chat', icon: Bot, isSettings: false },
