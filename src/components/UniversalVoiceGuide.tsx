@@ -167,8 +167,11 @@ export const UniversalVoiceGuide: React.FC = () => {
 
   useEffect(() => () => { voiceModeRef.current = false; recognitionRef.current?.stop(); window.speechSynthesis?.cancel(); }, []);
 
-  const actionQuestions = [copy.q1, copy.q2, copy.q3, copy.q4, copy.q5];
-  const targetLabel = (el: HTMLElement) => (el.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('name') || el.tagName).trim().replace(/\s+/g, ' ').slice(0, 90);
+    const targetLabel = (el: HTMLElement) => (el.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('name') || el.tagName).trim().replace(/\s+/g, ' ').slice(0, 90);
+
+  const firstControlQuestion = targets[0] ? (language === 'hi' ? `इस control का उपयोग कैसे करें: ${targetLabel(targets[0])}?` : language === 'hinglish' ? `Is control ko kaise use karein: ${targetLabel(targets[0])}?` : `How do I use: ${targetLabel(targets[0])}?`) : copy.q3;
+  const nextControlQuestion = targets.length ? (language === 'hi' ? `अगले control पर जाएँ: ${targetLabel(targets[1] || targets[0])}` : `Go to next control: ${targetLabel(targets[1] || targets[0])}`) : copy.q5;
+  const actionQuestions = [copy.q1, copy.q2, firstControlQuestion, copy.q4, nextControlQuestion];
 
   return <div className="fixed z-[80] bottom-4 right-3 sm:right-5 flex flex-col items-end gap-2" aria-label="Universal voice and accessibility controls">
     {open && <section className="w-[min(92vw,390px)] max-h-[78dvh] overflow-y-auto rounded-2xl border border-slate-300 bg-white text-slate-900 shadow-2xl p-4" aria-label={copy.title}>
