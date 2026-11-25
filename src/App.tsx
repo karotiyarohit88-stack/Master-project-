@@ -423,28 +423,13 @@ I am your central AI assistant and command center. You can manage engineering ta
 
   // Action Click Handler from Chat Input Toolbar
   const handleChatActionClick = async (actionType: 'help' | 'next_step' | 'run_task' | 'open_tools' | 'view_results') => {
-    if (actionType === 'help') {
+    if (actionType === 'help' || actionType === 'next_step' || actionType === 'run_task') {
+      setWorkflowTaskId(null);
+      setWorkflowTaskStatus('not_started');
+      setModalRequiresApproval(true);
+      setWorkflowCurrentStep(0);
+      setWorkflowLogs([ '[' + new Date().toLocaleTimeString() + '] Ready to create a durable read-only task.' ]);
       setIsWorkflowModalOpen(true);
-    } else if (actionType === 'next_step') {
-      if (workflowCurrentStep < workflowSteps.length - 1) {
-        setWorkflowCurrentStep(prev => prev + 1);
-        setWorkflowLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Advanced to Step ${workflowCurrentStep + 2}`]);
-      }
-      setIsWorkflowModalOpen(true);
-    } else if (actionType === 'run_task') {
-      try {
-        const res = await fetch('/api/automation/trigger', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
-          body: JSON.stringify({ triggerId: 'chat_action', topic: 'User Triggered Task' })
-        });
-        if (res.ok) {
-          setWorkflowLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Executed /api/automation/trigger successfully`]);
-          setIsWorkflowModalOpen(true);
-        }
-      } catch (e) {
-        console.warn('Run task error:', e);
-      }
     } else if (actionType === 'open_tools') {
       setActiveView('connections');
     } else if (actionType === 'view_results') {
