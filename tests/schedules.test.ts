@@ -74,7 +74,7 @@ test('scheduled research waits for a separate approval before provider calls', a
   assert.ok(insert);
   assert.equal(insert!.values?.[3], 'research');
   assert.deepEqual(JSON.parse(String(insert!.values?.[5])), { action: 'research' });
-  assert.match(insert!.sql, /\\(\\$4='research'\\)/);
+  assert.ok(insert!.sql.includes("($4='research')"));
 });
 
 test('scheduler does not create work when there are no due schedules', async () => {
