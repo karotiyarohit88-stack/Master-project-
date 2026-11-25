@@ -57,7 +57,7 @@ test('scheduler dispatches due schedule as an automatically approved fixed read-
   assert.equal(count, 1);
   const insert = calls.find(call => call.sql.includes('INSERT INTO agent_tasks'));
   assert.ok(insert);
-  assert.match(insert!.sql, /CASE WHEN \$4='research' THEN 'waiting_approval' ELSE 'queued' END/);
+  assert.ok(insert!.sql.includes("CASE WHEN $4='research' THEN 'waiting_approval' ELSE 'queued' END"));
   assert.equal(insert!.values?.[3], 'read_only');
   assert.deepEqual(JSON.parse(String(insert!.values?.[5])), { action: 'read_project_status' });
   assert.deepEqual(insert!.values?.slice(0, 2), [dueSchedule.tenant_id, dueSchedule.owner_id]);
