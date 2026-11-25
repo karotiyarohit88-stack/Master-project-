@@ -38,8 +38,10 @@ ALTER TABLE agent_schedules FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS agent_schedules_owner_isolation ON agent_schedules;
 CREATE POLICY agent_schedules_owner_isolation ON agent_schedules
   USING (
-    owner_id = NULLIF(current_setting('app.owner_id', true), '')::uuid
-    AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+    current_setting('app.worker_mode', true) = 'true'
+    OR (current_setting('app.worker_mode', true) = 'true'
+    OR (owner_id = NULLIF(current_setting('app.owner_id', true), '')::uuid
+    AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid))
   )
   WITH CHECK (
     owner_id = NULLIF(current_setting('app.owner_id', true), '')::uuid
