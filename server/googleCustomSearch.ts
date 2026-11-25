@@ -11,7 +11,7 @@ export type GoogleSearchResult = {
 function cleanText(value: unknown, maxLength: number): string {
   if (typeof value !== 'string') return '';
   return sanitizeUntrustedText(value.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>'), maxLength)
-    .replace(/\\s+/g, ' ').trim();
+    .replace(/\s+/g, ' ').trim();
 }
 
 function safeLink(value: unknown): { url: string; domain: string } | null {
