@@ -99,6 +99,9 @@ export default function App() {
     `[${new Date().toLocaleTimeString()}] Pre-flight check passed. Zero secrets exposed in frontend.`
   ]);
   const [modalRequiresApproval, setModalRequiresApproval] = useState<boolean>(true);
+  const [workflowTaskId, setWorkflowTaskId] = useState<string | null>(null);
+  const [workflowTaskStatus, setWorkflowTaskStatus] = useState<string>('not_started');
+  const [isWorkflowSubmitting, setIsWorkflowSubmitting] = useState<boolean>(false);
 
   // Settings
   const [settings, setSettings] = useState<AppSettings>(() => {
@@ -193,6 +196,35 @@ export default function App() {
         console.warn('Backend health check note:', err);
       });
   }, []);
+
+  // Poll the durable task queue for the workflow modal; only database-confirmed states are shown.
+  useEffect(() => {
+    if (!workflowTaskId || !isWorkflowModalOpen) return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const response = await fetch('/api/tasks?limit=100');
+        if (!response.ok) return;
+        const data = await response.json();
+        const task = (data.tasks || []).find((item: any) => item.id === workflowTaskId);
+        if (!task || !active) return;
+        setWorkflowTaskStatus(task.status);
+        if (task.status === 'completed') {
+          const resultResponse = await fetch('/api/tasks/' + workflowTaskId + '/result');
+          const resultData = resultResponse.ok ? await resultResponse.json() : null;
+          if (active && resultData?.result) {
+            setWorkflowSteps(prev => prev.map((step, index) => index === prev.length - 1 ? { ...step, status: 'completed', outputSummary: 'Worker saved the read-only task result.' } : step));
+            setWorkflowLogs(prev => prev.some(line => line.includes('Task result saved')) ? prev : [...prev, '[' + new Date().toLocaleTimeString() + '] Task result saved: ' + JSON.stringify(resultData.result).slice(0, 500)]);
+          }
+        } else if (task.status === 'failed' || task.status === 'cancelled' || task.status === 'rejected') {
+          setWorkflowLogs(prev => prev.some(line => line.includes('Task status: ' + task.status)) ? prev : [...prev, '[' + new Date().toLocaleTimeString() + '] Task status: ' + task.status]);
+        }
+      } catch { /* transient polling errors do not alter task state */ }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 2500);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [workflowTaskId, isWorkflowModalOpen]);
 
   // AuthGate renders App only after /api/auth/me confirms an OTP-issued session.
   // The server remains authoritative for the Safety & Security switch.
@@ -1063,14 +1095,46 @@ I am your central AI assistant and command center. You can manage engineering ta
         currentStepIndex={workflowCurrentStep}
         steps={workflowSteps}
         logs={workflowLogs}
-        onStart={() => {
-          setWorkflowCurrentStep(0);
-          setWorkflowLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Task started by user`]);
+        onStart={async () => {
+          if (workflowTaskId || isWorkflowSubmitting) return;
+          setIsWorkflowSubmitting(true);
+          try {
+            const response = await fetch('/api/tasks', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
+              body: JSON.stringify({
+                taskType: 'read_only',
+                prompt: workflowTitle + ': ' + workflowSteps.map(step => step.name + ' - ' + step.description).join('; '),
+                payload: { action: 'read_project_status' },
+                idempotencyKey: 'workflow-modal-' + crypto.randomUUID()
+              })
+            });
+            const data = await response.json();
+            if (!response.ok || !data.task?.id) throw new Error(data.error || 'Durable workflow task could not be created.');
+            setWorkflowTaskId(data.task.id);
+            setWorkflowTaskStatus(data.task.status);
+            setWorkflowCurrentStep(0);
+            setWorkflowLogs(prev => [...prev, '[' + new Date().toLocaleTimeString() + '] Durable task created: ' + data.task.id, 'Task is stored in PostgreSQL and awaits Owner/Admin approval.']);
+          } catch (error) {
+            setWorkflowLogs(prev => [...prev, '[' + new Date().toLocaleTimeString() + '] Queue error: ' + (error instanceof Error ? error.message : 'unknown error')]);
+          } finally { setIsWorkflowSubmitting(false); }
         }}
-        onApproveStep={() => {
-          setWorkflowSteps(prev => prev.map((s, i) => i === workflowCurrentStep ? { ...s, status: 'completed' } : s));
-          setModalRequiresApproval(false);
-          setWorkflowLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Human Operator Token Verified`]);
+        onApproveStep={async () => {
+          if (!workflowTaskId || isWorkflowSubmitting) return;
+          setIsWorkflowSubmitting(true);
+          try {
+            const response = await fetch('/api/tasks/' + workflowTaskId + '/approve', {
+              method: 'POST', headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() }, body: JSON.stringify({})
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Task approval failed.');
+            setModalRequiresApproval(false);
+            setWorkflowTaskStatus(data.status || 'queued');
+            setWorkflowSteps(prev => prev.map((step, index) => index === 1 ? { ...step, status: 'running' } : step));
+            setWorkflowLogs(prev => [...prev, '[' + new Date().toLocaleTimeString() + '] Human approval recorded in PostgreSQL. Task queued for worker execution.']);
+          } catch (error) {
+            setWorkflowLogs(prev => [...prev, '[' + new Date().toLocaleTimeString() + '] Approval error: ' + (error instanceof Error ? error.message : 'unknown error')]);
+          } finally { setIsWorkflowSubmitting(false); }
         }}
         onNextStep={() => {
           if (workflowCurrentStep < workflowSteps.length - 1) {
@@ -1081,7 +1145,12 @@ I am your central AI assistant and command center. You can manage engineering ta
         onRetry={() => {
           setWorkflowLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Retrying step ${workflowCurrentStep + 1}`]);
         }}
-        onCancel={() => {
+        onCancel={async () => {
+          if (workflowTaskId && ['queued','retry_wait','waiting_approval'].includes(workflowTaskStatus)) {
+            try {
+              await fetch('/api/tasks/' + workflowTaskId + '/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() }, body: JSON.stringify({}) });
+            } catch { /* modal may close while cancellation is retried from the task queue */ }
+          }
           setIsWorkflowModalOpen(false);
         }}
         requiresApproval={modalRequiresApproval}
