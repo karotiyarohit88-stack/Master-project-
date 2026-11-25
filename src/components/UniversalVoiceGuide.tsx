@@ -17,7 +17,7 @@ const COPY = {
   en: { title: 'AI Mic & Speaker Guide', read: 'Read full screen', stop: 'Stop speaking', listen: 'Voice command', questions: 'Smart questions for this screen', accessibility: 'Accessibility Mode', autopilot: 'Voice Command Mode', on: 'ON', off: 'OFF', language: 'Language', help: 'The actual controls on this screen are listed below. Selecting a step focuses its matching control.', noSpeech: 'Speech recognition is unavailable in this browser.', empty: 'No readable main content was found on this screen.', enabled: 'Voice commands are on. Say: open + tab name, read screen, or stop.', disabled: 'Voice commands are off.', confirm: 'Do you want to run this action?', q1: 'What can I do on this page?', q2: 'What is the next safe step?', q3: 'Which button or field should I use?', q4: 'Read the options on this screen.', q5: 'Take me to the next control.' }
 };
 const NAV_NAMES = ['Home', 'AI Chat', 'GitHub Explorer', 'Analytics', 'AAKSH Workspace', 'Auto Pilot', 'Video Gen', 'Voice Studio', 'Publishing', 'Connections', 'Audit Logs', 'Camera Studio'];
-const norm = (value: string) => value.toLocaleLowerCase().replace(/[^\\p{L}\\p{N}]+/gu, ' ').trim();
+const norm = (value: string) => value.toLocaleLowerCase().replace(/[^a-z0-9\\u0900-\\u097f]+/g, ' ').trim();
 
 export const UniversalVoiceGuide: React.FC = () => {
   const [open, setOpen] = useState(false);
@@ -101,11 +101,11 @@ export const UniversalVoiceGuide: React.FC = () => {
   const executeVoiceCommand = useCallback((raw: string) => {
     const command = norm(raw);
     if (!command) return;
-    if (/^(stop|रोक|बंद|आवाज बंद)/u.test(command)) { window.speechSynthesis?.cancel(); setVoiceMode(false); return; }
+    if (/^(stop|रोक|बंद|आवाज बंद)/u.test(command)) { window.speechSynthesis?.cancel(); voiceModeRef.current = false; setVoiceMode(false); return; }
     if (command.includes('read screen') || command.includes('स्क्रीन पढ़') || command.includes('screen reader')) { setAccessibility(true); readScreen(); return; }
     if (command.includes('accessibility mode on') || command.includes('accessibility चालू')) { setAccessibility(true); return; }
     if (command.includes('accessibility mode off') || command.includes('accessibility बंद')) { setAccessibility(false); return; }
-    if (command.includes('voice autopilot off') || command.includes('voice command mode off')) { setVoiceMode(false); return; }
+    if (command.includes('voice autopilot off') || command.includes('voice command mode off')) { voiceModeRef.current = false; setVoiceMode(false); return; }
     const nav = NAV_NAMES.find(name => command.includes(norm(name)) || (name === 'Auto Pilot' && command.includes('autopilot')));
     if (nav && (command.startsWith('open ') || command.startsWith('खोलो ') || command.startsWith('go to ') || command.includes('open '))) {
       const button = Array.from(document.querySelectorAll<HTMLElement>('header nav button,[aria-label="Bottom navigation"] button')).find(el => norm(el.innerText || el.getAttribute('aria-label') || '').includes(norm(nav)));
@@ -148,7 +148,7 @@ export const UniversalVoiceGuide: React.FC = () => {
   }, [copy.noSpeech, executeVoiceCommand, language]);
 
   const toggleVoiceMode = () => {
-    if (voiceMode) { setVoiceMode(false); setSpokenText(copy.disabled); return; }
+    if (voiceMode) { voiceModeRef.current = false; setVoiceMode(false); setSpokenText(copy.disabled); return; }
     if (!window.confirm(language === 'hi' ? 'Voice Command Mode microphone ko active rakhega jab tak aap ise OFF nahi karte. अनुमति दें?' : 'Enable continuous microphone listening until you turn Voice Command Mode off?')) return;
     setVoiceMode(true);
     voiceModeRef.current = true;
