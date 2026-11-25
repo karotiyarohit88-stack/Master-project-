@@ -46,7 +46,7 @@ export function createSchedulesRouter(options: { pool?: DbPool | null } = {}) {
   router.post('/', async (req, res) => {
     const who = identity(res);
     if (!who) return error(res, 401, 'Authenticated tenant context is required.');
-    if (!['owner', 'admin'].includes(who.role)) return error(res, 403, 'Only a workspace Owner/Admin can create schedules.');
+    if (who.role !== 'owner') return error(res, 403, 'Only the tenant Owner can create recurring schedules.');
     if (!pool) return error(res, 503, 'Schedule database is unavailable.');
     const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
     const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
@@ -88,7 +88,7 @@ export function createSchedulesRouter(options: { pool?: DbPool | null } = {}) {
   router.patch('/:id', async (req, res) => {
     const who = identity(res);
     if (!who) return error(res, 401, 'Authenticated tenant context is required.');
-    if (!['owner', 'admin'].includes(who.role)) return error(res, 403, 'Only a workspace Owner/Admin can change schedules.');
+    if (who.role !== 'owner') return error(res, 403, 'Only the tenant Owner can change recurring schedules.');
     if (!pool) return error(res, 503, 'Schedule database is unavailable.');
     if (!/^[0-9a-f-]{36}$/i.test(req.params.id) || typeof req.body?.enabled !== 'boolean') return error(res, 400, 'A valid schedule ID and boolean enabled value are required.');
     try {
@@ -112,7 +112,7 @@ export function createSchedulesRouter(options: { pool?: DbPool | null } = {}) {
   router.delete('/:id', async (req, res) => {
     const who = identity(res);
     if (!who) return error(res, 401, 'Authenticated tenant context is required.');
-    if (!['owner', 'admin'].includes(who.role)) return error(res, 403, 'Only a workspace Owner/Admin can delete schedules.');
+    if (who.role !== 'owner') return error(res, 403, 'Only the tenant Owner can delete recurring schedules.');
     if (!pool) return error(res, 503, 'Schedule database is unavailable.');
     try {
       const client = await pool.connect();
