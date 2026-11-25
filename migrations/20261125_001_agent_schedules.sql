@@ -6,10 +6,10 @@ CREATE TABLE IF NOT EXISTS agent_schedules (
   tenant_id UUID NOT NULL,
   owner_id UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
   title TEXT NOT NULL CHECK (length(trim(title)) BETWEEN 1 AND 160),
-  task_type TEXT NOT NULL DEFAULT 'read_only' CHECK (task_type = 'read_only'),
+  task_type TEXT NOT NULL DEFAULT 'read_only' CHECK (task_type IN ('read_only','research')),
   original_prompt TEXT NOT NULL CHECK (length(trim(original_prompt)) BETWEEN 1 AND 4000),
   payload JSONB NOT NULL DEFAULT '{"action":"read_project_status"}'::jsonb
-    CHECK (payload = '{"action":"read_project_status"}'::jsonb),
+    CHECK (payload IN ('{"action":"read_project_status"}'::jsonb, '{"action":"research"}'::jsonb)),
   recurrence_type TEXT NOT NULL CHECK (recurrence_type IN ('daily', 'interval')),
   timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata' CHECK (length(timezone) BETWEEN 1 AND 80),
   daily_time TIME,
@@ -53,6 +53,6 @@ CREATE POLICY agent_schedules_owner_isolation ON agent_schedules
   );
 
 COMMENT ON TABLE agent_schedules IS
-  'Recurring schedules. Only the fixed read-only project-status action is eligible for automatic execution until additional handlers are explicitly reviewed and approved.';
+  'Recurring schedules. Read-only project-status schedules may execute automatically; research schedules create an approval-gated task before any external search or Gemini API call.';
 
 COMMIT;
