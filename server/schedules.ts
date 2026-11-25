@@ -163,7 +163,7 @@ export async function dispatchDueSchedules(options: { pool?: DbPool | null; limi
       if (!taskId) throw new Error('Could not persist scheduled task.');
       await client.query(
         `INSERT INTO agent_task_events (task_id,tenant_id,owner_id,event_type,stage,status,message,details)
-         VALUES ($1,$2,$3,'scheduled','scheduler','queued',CASE WHEN $4='research' THEN 'Scheduled research awaits Owner/Admin approval' ELSE 'Scheduled read-only task queued automatically' END,$5::jsonb)`,
+         VALUES ($1,$2,$3,'scheduled','scheduler',CASE WHEN $4='research' THEN 'waiting_approval' ELSE 'queued' END,CASE WHEN $4='research' THEN 'Scheduled research awaits Owner/Admin approval' ELSE 'Scheduled read-only task queued automatically' END,$5::jsonb)`,
         [taskId,schedule.tenant_id,schedule.owner_id,schedule.task_type,JSON.stringify({ scheduleId: schedule.id })]
       );
       await client.query(
