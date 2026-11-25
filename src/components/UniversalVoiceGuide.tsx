@@ -81,6 +81,7 @@ export const UniversalVoiceGuide: React.FC = () => {
 
   const focusTarget = useCallback((el: HTMLElement, index: number) => {
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '-1');
     el.focus({ preventScroll: true });
     el.classList.add('ring-4', 'ring-indigo-500', 'ring-offset-2');
     window.setTimeout(() => el.classList.remove('ring-4', 'ring-indigo-500', 'ring-offset-2'), 2400);
