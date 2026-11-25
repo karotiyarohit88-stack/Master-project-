@@ -57,7 +57,7 @@ export function createSchedulesRouter(options: { pool?: DbPool | null } = {}) {
     if (!title || title.length > 160 || !prompt || prompt.length > 4000) return error(res, 400, 'Title and prompt are required and must be within limits.');
     if (!validTimezone(timezone)) return error(res, 400, 'A valid IANA timezone is required.');
     if (recurrence === 'daily') {
-      if (typeof req.body?.dailyTime !== 'string' || !/^([01]\\d|2[0-3]):[0-5]\\d$/.test(req.body.dailyTime)) return error(res, 400, 'dailyTime must use HH:mm.');
+      if (typeof req.body?.dailyTime !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(req.body.dailyTime)) return error(res, 400, 'dailyTime must use HH:mm.');
     } else if (recurrence === 'interval') {
       if (!Number.isInteger(req.body?.intervalMinutes) || req.body.intervalMinutes < 15 || req.body.intervalMinutes > 10080) return error(res, 400, 'intervalMinutes must be between 15 and 10080.');
     } else return error(res, 400, 'recurrenceType must be daily or interval.');
