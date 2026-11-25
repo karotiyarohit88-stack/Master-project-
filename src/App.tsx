@@ -94,10 +94,7 @@ export default function App() {
     { id: 's3', name: 'Background Worker Execution', description: 'Read the fixed PROJECT_STATUS.md source; no shell commands or arbitrary file paths', toolName: 'Read-only Worker', status: 'pending', expectedResult: 'Bounded task result' },
     { id: 's4', name: 'Persist & Review Result', description: 'Save the verified output and show the task state from PostgreSQL', toolName: 'PostgreSQL', status: 'pending', expectedResult: 'Completed task result' }
   ]);
-  const [workflowLogs, setWorkflowLogs] = useState<string[]>([
-    `[${new Date().toLocaleTimeString()}] Task initialized by Master Project AI Agent`,
-    `[${new Date().toLocaleTimeString()}] Pre-flight check passed. Zero secrets exposed in frontend.`
-  ]);
+  const [workflowLogs, setWorkflowLogs] = useState<string[]>([]);
   const [modalRequiresApproval, setModalRequiresApproval] = useState<boolean>(true);
   const [workflowTaskId, setWorkflowTaskId] = useState<string | null>(null);
   const [workflowTaskStatus, setWorkflowTaskStatus] = useState<string>('not_started');
@@ -428,6 +425,7 @@ I am your central AI assistant and command center. You can manage engineering ta
       setWorkflowTaskStatus('not_started');
       setModalRequiresApproval(true);
       setWorkflowCurrentStep(0);
+      setWorkflowSteps(prev => prev.map((step, index) => ({ ...step, status: index === 1 ? 'waiting_approval' : 'pending', outputSummary: undefined })));
       setWorkflowLogs([ '[' + new Date().toLocaleTimeString() + '] Ready to create a durable read-only task.' ]);
       setIsWorkflowModalOpen(true);
     } else if (actionType === 'open_tools') {
