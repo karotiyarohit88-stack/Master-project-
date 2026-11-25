@@ -69,9 +69,9 @@ export function createSchedulesRouter(options: { pool?: DbPool | null } = {}) {
          VALUES ($1,$2,$3,$4,$5,$6,$7::time,$8,
            CASE WHEN $5='interval' THEN NOW() + ($8::text || ' minutes')::interval
            ELSE
-             CASE WHEN ((date_trunc('day', NOW() AT TIME ZONE $6) + $7::time) AT TIME ZONE $6) > NOW()
+             CASE WHEN ((date_trunc('day', NOW() AT TIME ZONE $6)::date + $7::time) AT TIME ZONE $6) > NOW()
                THEN ((date_trunc('day', NOW() AT TIME ZONE $6) + $7::time) AT TIME ZONE $6)
-               ELSE ((date_trunc('day', NOW() AT TIME ZONE $6) + interval '1 day' + $7::time) AT TIME ZONE $6)
+               ELSE ((date_trunc('day', NOW() AT TIME ZONE $6)::date + 1 + $7::time) AT TIME ZONE $6)
              END
            END)
          RETURNING id,title,task_type,original_prompt,recurrence_type,timezone,daily_time,interval_minutes,next_run_at,enabled,created_at`,
@@ -167,9 +167,9 @@ export async function dispatchDueSchedules(options: { pool?: DbPool | null; limi
           next_run_at=CASE WHEN recurrence_type='interval'
             THEN NOW() + (interval_minutes::text || ' minutes')::interval
             ELSE
-              CASE WHEN ((date_trunc('day', NOW() AT TIME ZONE timezone) + daily_time) AT TIME ZONE timezone) > NOW()
+              CASE WHEN ((date_trunc('day', NOW() AT TIME ZONE timezone)::date + daily_time) AT TIME ZONE timezone) > NOW()
                 THEN ((date_trunc('day', NOW() AT TIME ZONE timezone) + daily_time) AT TIME ZONE timezone)
-                ELSE ((date_trunc('day', NOW() AT TIME ZONE timezone) + interval '1 day' + daily_time) AT TIME ZONE timezone)
+                ELSE ((date_trunc('day', NOW() AT TIME ZONE timezone)::date + 1 + daily_time) AT TIME ZONE timezone)
               END
           END
           WHERE id=$1`,
