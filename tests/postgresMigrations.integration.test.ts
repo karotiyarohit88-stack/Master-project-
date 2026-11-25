@@ -265,7 +265,8 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
     '20261119_003_autopilot_record_types.sql',
     '20261119_004_owner_emergency_halt.sql',
     '20261119_005_owner_tenant_secrets.sql',
-    '20261119_006_tenant_knowledge_documents.sql'
+    '20261119_006_tenant_knowledge_documents.sql',
+    '20261125_001_agent_schedules.sql'
   ];
   assert.equal(status.migrationTableExists, true);
   for (const migration of required) assert.ok(status.appliedMigrations.includes(migration), 'Missing migration ' + migration);
@@ -496,6 +497,29 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
     );
     assert.deepEqual(ragA.rows.map((row: Row) => row.title), ['Tenant A RAG document']);
     assert.deepEqual(ragB.rows.map((row: Row) => row.title), ['Tenant B RAG document']);
+
+    const scheduleSecurity = await client.query(
+      \`SELECT c.relrowsecurity, c.relforcerowsecurity
+         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'agent_schedules'\`
+    );
+    assert.equal(scheduleSecurity.rows.length, 1);
+    assert.equal(scheduleSecurity.rows[0].relrowsecurity, true);
+    assert.equal(scheduleSecurity.rows[0].relforcerowsecurity, true);
+    await client.query(
+      \`INSERT INTO agent_schedules
+        (tenant_id,owner_id,title,original_prompt,recurrence_type,timezone,daily_time,next_run_at)
+       VALUES
+        ($1,$2,'Tenant A morning schedule','Read project status','daily','Asia/Kolkata','09:00',NOW()+interval '1 day'),
+        ($3,$4,'Tenant B schedule','Read project status','interval','Asia/Kolkata',NULL,NOW()+interval '6 hours')\`,
+      [tenantA.rows[0].id,userA.rows[0].id,tenantB.rows[0].id,userB.rows[0].id]
+    );
+    await client.query("SELECT set_config('app.owner_id',$1,true),set_config('app.tenant_id',$2,true)", [userA.rows[0].id,tenantA.rows[0].id]);
+    const schedulesA = await client.query('SELECT title FROM agent_schedules WHERE tenant_id=$1 AND owner_id=$2', [tenantA.rows[0].id,userA.rows[0].id]);
+    await client.query("SELECT set_config('app.owner_id',$1,true),set_config('app.tenant_id',$2,true)", [userB.rows[0].id,tenantB.rows[0].id]);
+    const schedulesB = await client.query('SELECT title FROM agent_schedules WHERE tenant_id=$1 AND owner_id=$2', [tenantB.rows[0].id,userB.rows[0].id]);
+    assert.deepEqual(schedulesA.rows.map((row: Row) => row.title), ['Tenant A morning schedule']);
+    assert.deepEqual(schedulesB.rows.map((row: Row) => row.title), ['Tenant B schedule']);
 
     // Verify AutoPilot and Accounting record types are durable and tenant-isolated.
     await client.query(
