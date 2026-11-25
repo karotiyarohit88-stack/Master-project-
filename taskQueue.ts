@@ -54,6 +54,7 @@ export function createAgentTaskRouter(options: { pool?: DbPool | null } = {}) {
     const payload = req.body?.payload === undefined ? {} : req.body.payload;
     const idempotencyKey = typeof req.header('idempotency-key') === 'string' ? req.header('idempotency-key')!.trim() : '';
     if (!TASK_TYPES.has(taskType)) return jsonError(res, 400, 'Unsupported task type.');
+    if (taskType === 'research' && context.tenant.role !== 'owner') return jsonError(res, 403, 'Only the tenant Owner can queue research that uses encrypted provider secrets.');
     if (!prompt || prompt.length > MAX_PROMPT_LENGTH) return jsonError(res, 400, 'Prompt must contain between 1 and 12000 characters.');
     if (!isPlainObject(payload) || Buffer.byteLength(JSON.stringify(payload), 'utf8') > MAX_PAYLOAD_BYTES) {
       return jsonError(res, 400, 'Task payload must be a JSON object no larger than 16 KB.');
