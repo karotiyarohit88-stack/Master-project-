@@ -17,7 +17,7 @@ const COPY = {
   en: { title: 'AI Mic & Speaker Guide', read: 'Read full screen', stop: 'Stop speaking', listen: 'Voice command', questions: 'Smart questions for this screen', accessibility: 'Accessibility Mode', autopilot: 'Voice Command Mode', on: 'ON', off: 'OFF', language: 'Language', help: 'The actual controls on this screen are listed below. Selecting a step focuses its matching control.', noSpeech: 'Speech recognition is unavailable in this browser.', empty: 'No readable main content was found on this screen.', enabled: 'Voice commands are on. Say: open + tab name, read screen, or stop.', disabled: 'Voice commands are off.', confirm: 'Do you want to run this action?', q1: 'What can I do on this page?', q2: 'What is the next safe step?', q3: 'Which button or field should I use?', q4: 'Read the options on this screen.', q5: 'Take me to the next control.' }
 };
 const NAV_NAMES = ['Home', 'AI Chat', 'GitHub Explorer', 'Analytics', 'AAKSH Workspace', 'Auto Pilot', 'Video Gen', 'Voice Studio', 'Publishing', 'Connections', 'Audit Logs', 'Camera Studio'];
-const norm = (value: string) => value.toLocaleLowerCase().replace(/[^a-z0-9\\u0900-\\u097f]+/g, ' ').trim();
+const norm = (value: string) => value.toLocaleLowerCase().replace(/[^a-z0-9ऀ-ॿ]+/g, ' ').trim();
 
 export const UniversalVoiceGuide: React.FC = () => {
   const [open, setOpen] = useState(false);
@@ -69,7 +69,7 @@ export const UniversalVoiceGuide: React.FC = () => {
 
   const readScreen = useCallback(() => {
     const main = document.querySelector('main') || document.querySelector('#root');
-    const text = (main?.textContent || document.body.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 6500);
+    const text = (main?.textContent || document.body.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 6500);
     const items = getTargets();
     setTargets(items);
     setPageText(text);
@@ -94,7 +94,7 @@ export const UniversalVoiceGuide: React.FC = () => {
     const items = getTargets();
     setTargets(items);
     const main = document.querySelector('main') || document.querySelector('#root');
-    setPageText((main?.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 6500));
+    setPageText((main?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 6500));
     return items;
   }, [getTargets]);
 
@@ -167,7 +167,7 @@ export const UniversalVoiceGuide: React.FC = () => {
   useEffect(() => () => { voiceModeRef.current = false; recognitionRef.current?.stop(); window.speechSynthesis?.cancel(); }, []);
 
   const actionQuestions = [copy.q1, copy.q2, copy.q3, copy.q4, copy.q5];
-  const targetLabel = (el: HTMLElement) => (el.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('name') || el.tagName).trim().replace(/\\s+/g, ' ').slice(0, 90);
+  const targetLabel = (el: HTMLElement) => (el.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('name') || el.tagName).trim().replace(/\s+/g, ' ').slice(0, 90);
 
   return <div className="fixed z-[80] bottom-4 right-3 sm:right-5 flex flex-col items-end gap-2" aria-label="Universal voice and accessibility controls">
     {open && <section className="w-[min(92vw,390px)] max-h-[78dvh] overflow-y-auto rounded-2xl border border-slate-300 bg-white text-slate-900 shadow-2xl p-4" aria-label={copy.title}>
