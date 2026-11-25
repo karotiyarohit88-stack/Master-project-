@@ -41,6 +41,7 @@ export const UniversalVoiceGuide: React.FC = () => {
 
   useEffect(() => {
     try { localStorage.setItem('aaksh_voice_language', language); } catch { /* storage may be blocked */ }
+    window.dispatchEvent(new CustomEvent('aaksh:language-change', { detail: language }));
     document.documentElement.lang = language === 'hi' ? 'hi' : 'en';
   }, [language]);
 
