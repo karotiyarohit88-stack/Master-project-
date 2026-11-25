@@ -15,7 +15,7 @@ const dictionary: Record<UiLanguage, Record<string, string>> = {
     '+ New AI Chat': '+ नई AI चैट', 'Explore Code': 'कोड देखें',
     'Live System Health & Integration Status': 'लाइव सिस्टम स्वास्थ्य और इंटीग्रेशन स्थिति',
     'Core Backend': 'मुख्य बैकएंड', 'Backend available': 'बैकएंड उपलब्ध', 'Status unavailable': 'स्थिति उपलब्ध नहीं',
-    'AI Model Engine': 'AI मॉडल इंजन', 'GitHub Explorer': 'GitHub एक्सप्लोरर',
+    'AI Model Engine': 'AI मॉडल इंजन',
     'n8n Automator': 'n8n ऑटोमेशन', 'Configured': 'कॉन्फ़िगर है', 'Local fallback': 'लोकल विकल्प',
     'Tasks & Approvals': 'कार्य और अनुमतियाँ', 'AI Command Center': 'AI कमांड सेंटर',
     'Quick Actions': 'त्वरित कार्य', 'Refresh status': 'स्थिति रीफ्रेश करें'
