@@ -2900,7 +2900,10 @@ app.post('/api/research', requireOwnerForSecrets, createRateLimitMiddleware({ wi
       const query = sanitizeUntrustedText((call.args as any)?.query, 200).trim();
       if (!query) continue;
       const results = useGoogleSearch
-        ? await searchGoogleCustom(query, googleSearchKey, googleSearchCx)
+        ? await (async () => {
+            await assertOwnerEmergencyHaltClear(ownerId);
+            return searchGoogleCustom(query, googleSearchKey, googleSearchCx);
+          })()
         : await searchBraveWeb(query, searchApiKey, () => assertOwnerEmergencyHaltClear(ownerId));
       allSources.push(...results);
       functionResponses.push({
