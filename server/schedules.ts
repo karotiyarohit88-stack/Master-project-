@@ -51,6 +51,8 @@ export function createSchedulesRouter(options: { pool?: DbPool | null } = {}) {
     const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
     const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
     const recurrence = req.body?.recurrenceType;
+    const taskType = req.body?.taskType === 'research' ? 'research' : 'read_only';
+    const taskPayload = taskType === 'research' ? { action: 'research' } : { action: 'read_project_status' };
     const timezone = req.body?.timezone || 'Asia/Kolkata';
     if (!title || title.length > 160 || !prompt || prompt.length > 4000) return error(res, 400, 'Title and prompt are required and must be within limits.');
     if (!validTimezone(timezone)) return error(res, 400, 'A valid IANA timezone is required.');
@@ -65,20 +67,20 @@ export function createSchedulesRouter(options: { pool?: DbPool | null } = {}) {
       await client.query("SELECT set_config('app.owner_id',$1,true), set_config('app.tenant_id',$2,true)", [who.ownerId, who.tenantId]);
       const result = await client.query(
         `INSERT INTO agent_schedules
-          (tenant_id,owner_id,title,original_prompt,recurrence_type,timezone,daily_time,interval_minutes,next_run_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7::time,$8,
-           CASE WHEN $5='interval' THEN NOW() + ($8::text || ' minutes')::interval
+          (tenant_id,owner_id,title,task_type,original_prompt,payload,recurrence_type,timezone,daily_time,interval_minutes,next_run_at)
+         VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9::time,$10,
+           CASE WHEN $7='interval' THEN NOW() + ($10::text || ' minutes')::interval
            ELSE
-             CASE WHEN ((date_trunc('day', NOW() AT TIME ZONE $6)::date + $7::time) AT TIME ZONE $6) > NOW()
-               THEN ((date_trunc('day', NOW() AT TIME ZONE $6)::date + $7::time) AT TIME ZONE $6)
-               ELSE ((date_trunc('day', NOW() AT TIME ZONE $6)::date + 1 + $7::time) AT TIME ZONE $6)
+             CASE WHEN ((date_trunc('day', NOW() AT TIME ZONE $8)::date + $9::time) AT TIME ZONE $8) > NOW()
+               THEN ((date_trunc('day', NOW() AT TIME ZONE $8)::date + $9::time) AT TIME ZONE $8)
+               ELSE ((date_trunc('day', NOW() AT TIME ZONE $8)::date + 1 + $9::time) AT TIME ZONE $8)
              END
            END)
          RETURNING id,title,task_type,original_prompt,recurrence_type,timezone,daily_time,interval_minutes,next_run_at,enabled,created_at`,
-        [who.tenantId, who.ownerId, title, prompt, recurrence, timezone, recurrence === 'daily' ? req.body.dailyTime : null, recurrence === 'interval' ? req.body.intervalMinutes : null]
+        [who.tenantId, who.ownerId, title, taskType, prompt, JSON.stringify(taskPayload), recurrence, timezone, recurrence === 'daily' ? req.body.dailyTime : null, recurrence === 'interval' ? req.body.intervalMinutes : null]
       );
       await client.query('COMMIT');
-      return res.status(201).json({ schedule: result.rows[0], automaticAction: 'read_project_status', approval: 'Schedule creation is the Owner/Admin authorization; only the fixed read-only action is automatically executed.' });
+      return res.status(201).json({ schedule: result.rows[0], automaticAction: taskType, approval: taskType === 'research' ? 'Each research run waits for a separate Owner/Admin approval before external search or Gemini API use.' : 'Schedule creation authorizes only the fixed read-only project-status action.' });
     } catch (e) {
       try { await client.query('ROLLBACK'); } catch { /* preserve original */ }
       return error(res, 503, 'Schedule could not be saved. Confirm the schedule migration is applied.');
@@ -137,7 +139,7 @@ export async function dispatchDueSchedules(options: { pool?: DbPool | null; limi
     await client.query('BEGIN');
     await client.query("SELECT set_config('app.worker_mode','true',true)");
     const due = await client.query(
-      `SELECT id,tenant_id,owner_id,title,original_prompt,recurrence_type,timezone,daily_time,interval_minutes,next_run_at
+      `SELECT id,tenant_id,owner_id,title,task_type,original_prompt,payload,recurrence_type,timezone,daily_time,interval_minutes,next_run_at
          FROM agent_schedules
         WHERE enabled=TRUE AND next_run_at <= NOW()
         ORDER BY next_run_at ASC
@@ -150,17 +152,19 @@ export async function dispatchDueSchedules(options: { pool?: DbPool | null; limi
       const task = await client.query(
         `INSERT INTO agent_tasks
           (tenant_id,owner_id,idempotency_key,task_type,original_prompt,payload,status,requires_approval,priority)
-         VALUES ($1,$2,$3,'read_only',$4,'{"action":"read_project_status"}'::jsonb,'queued',FALSE,50)
+         VALUES ($1,$2,$3,$4,$5,$6::jsonb,
+           CASE WHEN $4='research' THEN 'waiting_approval' ELSE 'queued' END,
+           ($4='research'),50)
          ON CONFLICT (owner_id,idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
          RETURNING id`,
-        [schedule.tenant_id, schedule.owner_id, runKey, schedule.original_prompt]
+        [schedule.tenant_id, schedule.owner_id, runKey, schedule.task_type, schedule.original_prompt, JSON.stringify(schedule.payload)]
       );
       const taskId = task.rows[0]?.id || (await client.query('SELECT id FROM agent_tasks WHERE owner_id=$1 AND tenant_id=$2 AND idempotency_key=$3', [schedule.owner_id,schedule.tenant_id,runKey])).rows[0]?.id;
       if (!taskId) throw new Error('Could not persist scheduled task.');
       await client.query(
         `INSERT INTO agent_task_events (task_id,tenant_id,owner_id,event_type,stage,status,message,details)
-         VALUES ($1,$2,$3,'scheduled','scheduler','queued','Scheduled read-only task queued automatically',$4::jsonb)`,
-        [taskId,schedule.tenant_id,schedule.owner_id,JSON.stringify({ scheduleId: schedule.id })]
+         VALUES ($1,$2,$3,'scheduled','scheduler','queued',CASE WHEN $4='research' THEN 'Scheduled research awaits Owner/Admin approval' ELSE 'Scheduled read-only task queued automatically' END,$5::jsonb)`,
+        [taskId,schedule.tenant_id,schedule.owner_id,schedule.task_type,JSON.stringify({ scheduleId: schedule.id })]
       );
       await client.query(
         `UPDATE agent_schedules SET last_run_at=NOW(),last_task_id=$2,updated_at=NOW(),
