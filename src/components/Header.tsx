@@ -81,21 +81,21 @@ export const Header: React.FC<HeaderProps> = ({
               className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer"
             >
               <img 
-                src="/assets/aistudio/1791973196299_d0ac9fe0.png" 
-                alt="Master Project Logo" 
+                src="/aaksh-ai-autopilot-icon.svg" 
+                alt="AAKSH AI AUTOPILOT" 
                 className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover border border-emerald-500 shadow-xs flex-shrink-0" 
               />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5 min-w-0">
                   <h1 className="font-bold text-xs sm:text-sm md:text-base text-slate-900 truncate">
-                    Master Project AI Agent
+                    AAKSH AI AUTOPILOT
                   </h1>
                   <span className="hidden md:inline-flex text-[9px] font-mono uppercase px-1.5 py-0.2 rounded-md bg-emerald-100 text-emerald-900 border border-emerald-300 font-bold flex-shrink-0">
                     Techar Aaksh
                   </span>
                 </div>
                 <p className="text-[10px] text-slate-500 font-mono hidden xs:block truncate">
-                  Techar Aaksh AI Control Center
+                  Midnight Navy AI Control Center
                 </p>
               </div>
             </div>
