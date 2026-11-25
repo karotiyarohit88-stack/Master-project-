@@ -124,11 +124,38 @@ export const UniversalVoiceGuide: React.FC = () => {
       kind: el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement ? 'input' as const : el instanceof HTMLSelectElement ? 'select' as const : el instanceof HTMLButtonElement ? 'button' as const : el instanceof HTMLAnchorElement ? 'link' as const : 'other' as const,
       isSubmit: el instanceof HTMLButtonElement && (el.type === 'submit' || !!el.closest('form'))
     }));
+    const fillMatch = raw.match(/^(?:type|fill|enter|लिखो|भरें)\s+(.+?)\s+(?:into|in|में)\s+(.+)$/iu);
+    if (fillMatch) {
+      const target = candidates.find(item => (item.element instanceof HTMLInputElement || item.element instanceof HTMLTextAreaElement) && normalizeVoiceText(item.label).includes(normalizeVoiceText(fillMatch[2])));
+      if (!target) { setSpokenText('Matching input field not found.'); return; }
+      const el = target.element as HTMLInputElement | HTMLTextAreaElement;
+      if (el instanceof HTMLInputElement && ['password','hidden','file'].includes(el.type)) { setSpokenText('Sensitive fields cannot be filled by voice.'); return; }
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.focus();
+      const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.set;
+      setter?.call(el, fillMatch[1]);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      setSpokenText('Filled ' + (target.label || 'field') + '. Review before submitting.');
+      speak('Filled the field. Please review it before submitting.');
+      return;
+    }
+    const selectMatch = raw.match(/^(?:select|choose|चुनो)\s+(.+?)\s+(?:in|from|में)\s+(.+)$/iu);
+    if (selectMatch) {
+      const target = candidates.find(item => item.element instanceof HTMLSelectElement && normalizeVoiceText(item.label).includes(normalizeVoiceText(selectMatch[2])));
+      if (!target || !(target.element instanceof HTMLSelectElement)) { setSpokenText('Matching dropdown not found.'); return; }
+      const option = Array.from(target.element.options).find(item => normalizeVoiceText(item.text || item.label) === normalizeVoiceText(selectMatch[1]));
+      if (!option) { setSpokenText('That option is not available in this dropdown.'); return; }
+      target.element.value = option.value;
+      target.element.dispatchEvent(new Event('change', { bubbles: true }));
+      setSpokenText('Selected ' + option.text + '. Review before continuing.');
+      speak('Selected ' + option.text + '.');
+      return;
+    }
     const candidate = findVoiceControl(command, candidates);
     const match = candidate?.element;
     if (!match) { setSpokenText(language === 'hi' ? 'यह command किसी सुरक्षित visible control से match नहीं हुई।' : 'No safe visible control matched that command.'); return; }
     if (match instanceof HTMLInputElement || match instanceof HTMLTextAreaElement) { match.focus(); match.scrollIntoView({ behavior: 'smooth', block: 'center' }); setSpokenText('Focused ' + (match.getAttribute('aria-label') || match.placeholder || match.name || 'input')); return; }
-    if (match instanceof HTMLSelectElement) { match.focus(); setSpokenText('Select field focused. Choose an option using the screen control.'); return; }
+    if (match instanceof HTMLSelectElement) { match.focus(); setSpokenText('Dropdown focused. Say: select OPTION in FIELD.'); return; }
     if (candidate && isHighImpactVoiceAction(candidate) && !window.confirm(copy.confirm)) return;
     match.click();
     setSpokenText('Activated ' + (match.innerText || match.getAttribute('aria-label') || 'control'));
