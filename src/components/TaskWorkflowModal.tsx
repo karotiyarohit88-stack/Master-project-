@@ -38,6 +38,8 @@ interface TaskWorkflowModalProps {
   isProcessing?: boolean;
   requiresApproval?: boolean;
   approvalWarning?: string;
+  canStart?: boolean;
+  canApprove?: boolean;
 }
 
 export const TaskWorkflowModal: React.FC<TaskWorkflowModalProps> = ({
@@ -54,7 +56,9 @@ export const TaskWorkflowModal: React.FC<TaskWorkflowModalProps> = ({
   onCancel,
   isProcessing = false,
   requiresApproval = false,
-  approvalWarning = '⚠️ मानवीय अनुमति आवश्यक है। यह कार्रवाई सार्वजनिक रूप से दिखाई दे सकती है।'
+  approvalWarning = '⚠️ मानवीय अनुमति आवश्यक है। यह कार्रवाई सार्वजनिक रूप से दिखाई दे सकती है।',
+  canStart = true,
+  canApprove = false
 }) => {
   const [showHindiGate, setShowHindiGate] = useState<boolean>(false);
 
@@ -208,7 +212,7 @@ export const TaskWorkflowModal: React.FC<TaskWorkflowModalProps> = ({
           <button
             type="button"
             onClick={onStart}
-            disabled={isProcessing}
+            disabled={isProcessing || !canStart}
             className="px-3 py-2 rounded-xl bg-[#14183E] hover:bg-[#20285f] text-white font-semibold transition-colors cursor-pointer disabled:opacity-50"
           >
             <Play className="w-3.5 h-3.5 inline mr-1" />
@@ -237,7 +241,7 @@ export const TaskWorkflowModal: React.FC<TaskWorkflowModalProps> = ({
               <button
                 type="button"
                 onClick={handleApproveClick}
-                disabled={isProcessing}
+                disabled={isProcessing || !canApprove}
                 className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold transition-colors cursor-pointer shadow-xs flex items-center gap-1.5 disabled:opacity-50"
               >
                 <ShieldAlert className="w-3.5 h-3.5" />
