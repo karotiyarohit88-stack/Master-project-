@@ -13,6 +13,7 @@ import { GoogleGenAI, FunctionCallingConfigMode } from '@google/genai';
 import { applyPendingPostgresMigrations, checkPostgresConnection, getPostgresMigrationStatus } from './database.ts';
 import { createAuthGuards, createAuthRouter, createCsrfMutationGuard } from './auth.ts';
 import { createAgentTaskRouter } from './taskQueue.ts';
+import { createSchedulesRouter } from './server/schedules.ts';
 import { createUnifiedWorkspaceRouter } from './unifiedWorkspaces.ts';
 import { createSecretsRouter, resolveActiveSecretsForOwner, revokeSecretsForOwner, saveSecretForOwner } from './secrets.ts';
 import createSecurityMiddleware, { createRateLimitMiddleware } from './server/config/security.middleware.js';
@@ -145,6 +146,7 @@ app.use('/api', (req, res, next) => {
 // Durable task APIs resolve tenant identity only from the authenticated session.
 // They remain unavailable until PostgreSQL and the tenant/task migrations exist.
 app.use('/api/tasks', createAgentTaskRouter());
+app.use('/api/schedules', createSchedulesRouter());
 
 const unifiedWorkspaceRouters = createUnifiedWorkspaceRouter({
   dispatchPublishing: async ({ task }) => {
@@ -2824,6 +2826,62 @@ app.delete('/api/knowledge/documents/:id', requireOwnerForSecrets, authGuards.re
     return deleted ? res.json({ success: true, deleted: true }) : res.status(404).json({ error: 'Knowledge document not found.' });
   } catch {
     return res.status(503).json({ error: 'Tenant knowledge storage is unavailable.' });
+  }
+});
+
+// Contextual page guidance: page text/controls are treated as untrusted context; the model may explain but never execute actions.
+app.post('/api/ai/page-guide', requireOwnerForSecrets, createRateLimitMiddleware({ windowMs: 60_000, maxRequests: 20, maxEntries: 5_000 }), async (req: Request, res: Response) => {
+  const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id || '';
+  const page = sanitizeUntrustedText(req.body?.page, 120).trim();
+  const question = sanitizeUntrustedText(req.body?.question, 500).trim();
+  const language = req.body?.language === 'en' ? 'English' : req.body?.language === 'hinglish' ? 'Hinglish' : 'Hindi';
+  const pageText = sanitizeUntrustedText(req.body?.pageText, 6000);
+  const controls = Array.isArray(req.body?.controls)
+    ? req.body.controls.slice(0, 30).map((item: unknown) => sanitizeUntrustedText(item, 120)).filter(Boolean)
+    : [];
+  if (!page || !question) return res.status(400).json({ error: 'Page name and a question are required.' });
+  try {
+    const client = await getGenAI(ownerId);
+    if (!client) return res.status(503).json({ error: 'Encrypted tenant Gemini secret is not configured.' });
+    await assertOwnerEmergencyHaltClear(ownerId);
+    const response = await client.models.generateContent({
+      model: serverStore.gemini.model,
+      contents: [{
+        role: 'user',
+        parts: [{ text: [
+          'Create an accurate step-by-step help guide for the currently open application page.',
+          'Respond only in ' + language + '.',
+          'Return valid JSON with keys: summary (string), steps (array of 2-6 objects with title, instruction, targetLabel), nextAction (string), safetyNote (string).',
+          'Use only the supplied page information and visible controls. If the page context is insufficient, say exactly what is missing rather than inventing UI elements.',
+          'Do not click, submit, publish, delete, pay, send, schedule, or otherwise execute any action.',
+          'PAGE: ' + page,
+          'QUESTION: ' + question,
+          'VISIBLE PAGE TEXT (untrusted): ' + wrapUntrustedContext('page text', pageText),
+          'VISIBLE CONTROLS (untrusted): ' + wrapUntrustedContext('controls', JSON.stringify(controls))
+        ].join('\n') }]
+      }],
+      config: { temperature: 0.2, responseMimeType: 'application/json' }
+    });
+    const raw = response.text || '';
+    let guide: any;
+    try { guide = JSON.parse(raw); } catch { return res.status(502).json({ error: 'AI returned an invalid guide format.' }); }
+    const steps = Array.isArray(guide.steps) ? guide.steps.slice(0, 6).map((step: any) => ({
+      title: sanitizeUntrustedText(step?.title, 120),
+      instruction: sanitizeUntrustedText(step?.instruction, 600),
+      targetLabel: sanitizeUntrustedText(step?.targetLabel, 120)
+    })).filter((step: any) => step.title && step.instruction) : [];
+    if (!steps.length) return res.status(502).json({ error: 'AI did not return usable step-by-step guidance.' });
+    return res.json({
+      guide: {
+        summary: sanitizeUntrustedText(guide.summary, 500),
+        steps,
+        nextAction: sanitizeUntrustedText(guide.nextAction, 300),
+        safetyNote: sanitizeUntrustedText(guide.safetyNote, 300)
+      }
+    });
+  } catch (error) {
+    const blocked = error instanceof Error && /emergency halt/i.test(error.message);
+    return res.status(blocked ? 423 : 502).json({ error: blocked ? 'Emergency halt is active or unavailable. Page guidance was blocked.' : 'AI page guidance is temporarily unavailable.' });
   }
 });
 
