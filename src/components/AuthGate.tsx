@@ -215,11 +215,11 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
 
   if (!user) {
     return (
-      <main className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-sky-50 flex items-center justify-center p-4">
+      <main className="min-h-screen bg-gradient-to-br from-slate-100 via-white to-slate-200 flex items-center justify-center p-4">
         <section className="w-full max-w-md bg-white border border-slate-200 rounded-3xl shadow-xl p-6 sm:p-8">
           <div className="flex items-center gap-3 mb-6">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center"><ShieldCheck className="w-7 h-7" /></div>
-            <div><h1 className="text-xl font-bold text-slate-900">AAKSH AI</h1><p className="text-xs text-slate-500">Secure Master Project workspace</p></div>
+            <img src="/aaksh-ai-autopilot-icon.svg" alt="AAKSH AI AUTOPILOT" className="w-14 h-14 rounded-2xl shadow-md" />
+            <div><h1 className="text-xl font-bold text-slate-900">AAKSH AI AUTOPILOT</h1><p className="text-xs text-slate-500">Secure Master Project workspace</p></div>
           </div>
           {!otpChallenge && <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-xl mb-5">
             <button type="button" onClick={() => { setMode('login'); setError(''); }} className={`rounded-lg py-2 text-xs font-semibold ${mode === 'login' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-600'}`}>Login</button>
@@ -229,7 +229,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
           {otpChallenge ? (
             <div className="space-y-5">
               <div className="mb-5">
-                <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center mb-3"><ShieldCheck className="w-7 h-7" /></div>
+                <img src="/aaksh-ai-autopilot-icon.svg" alt="AAKSH AI AUTOPILOT" className="w-14 h-14 rounded-2xl shadow-md mb-3" />
                 <h2 className="text-lg font-bold text-slate-900">Verify your email</h2>
                 <p className="text-sm text-slate-500 mt-1">Enter the 6-digit code sent to the email address used in the previous step. The code expires in 10 minutes.</p>
               </div>
