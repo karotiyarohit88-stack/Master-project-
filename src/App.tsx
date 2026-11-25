@@ -89,10 +89,10 @@ export default function App() {
   const [workflowTitle, setWorkflowTitle] = useState<string>('Master AI Task Execution Workflow');
   const [workflowCurrentStep, setWorkflowCurrentStep] = useState<number>(0);
   const [workflowSteps, setWorkflowSteps] = useState<WorkflowStepItem[]>([
-    { id: 's1', name: 'Task Intake & Analysis', description: 'Evaluate user request requirements and tool capabilities', toolName: 'Gemini AI', status: 'completed', expectedResult: 'Structured task plan' },
-    { id: 's2', name: 'Environment & Tool Validation', description: 'Check connected server routes and credentials', toolName: 'Connections API', status: 'running', expectedResult: 'HTTP 200 OK tool health' },
-    { id: 's3', name: 'Human Approval Gate Review', description: 'Require operator confirmation token before execution', toolName: 'Approval Gate', status: 'waiting_approval', expectedResult: 'Verified authorization token' },
-    { id: 's4', name: 'Task Execution & Telemetry Log', description: 'Run step pipeline and log results to audit storage', toolName: 'Audit System', status: 'pending', expectedResult: 'Execution Hash recorded' }
+    { id: 's1', name: 'Durable Task Intake', description: 'Store the requested read-only project-status task in the tenant PostgreSQL queue', toolName: 'Task Queue API', status: 'pending', expectedResult: 'PostgreSQL task ID' },
+    { id: 's2', name: 'Human Approval Gate', description: 'Require an authenticated tenant Owner/Admin approval before execution', toolName: 'Approval API', status: 'waiting_approval', expectedResult: 'Recorded approval timestamp' },
+    { id: 's3', name: 'Background Worker Execution', description: 'Read the fixed PROJECT_STATUS.md source; no shell commands or arbitrary file paths', toolName: 'Read-only Worker', status: 'pending', expectedResult: 'Bounded task result' },
+    { id: 's4', name: 'Persist & Review Result', description: 'Save the verified output and show the task state from PostgreSQL', toolName: 'PostgreSQL', status: 'pending', expectedResult: 'Completed task result' }
   ]);
   const [workflowLogs, setWorkflowLogs] = useState<string[]>([
     `[${new Date().toLocaleTimeString()}] Task initialized by Master Project AI Agent`,
