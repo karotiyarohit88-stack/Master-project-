@@ -216,6 +216,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
 
   if (!user) {
     return (
+      <>
       <main className="min-h-screen bg-gradient-to-br from-slate-100 via-white to-slate-200 flex items-center justify-center p-4">
         <section className="w-full max-w-md bg-white border border-slate-200 rounded-3xl shadow-xl p-6 sm:p-8">
           <div className="flex items-center gap-3 mb-6">
@@ -272,6 +273,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
         </section>
       </main>
       <UniversalVoiceGuide />
+      </>
     );
   }
 
