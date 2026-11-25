@@ -123,13 +123,13 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 min-w-0">
           <div className="flex items-start sm:items-center gap-3.5 min-w-0 w-full lg:flex-1">
             <div className="w-12 h-12 rounded-2xl bg-white border border-emerald-200 p-0.5 flex items-center justify-center shadow-xs flex-shrink-0 relative overflow-hidden">
-              <img src="/assets/aistudio/1791973196299_d0ac9fe0.png" alt="Master Project AI Agent Logo" className="w-full h-full object-contain rounded-xl" />
+              <img src="/aaksh-ai-autopilot-icon.svg" alt="AAKSH AI AUTOPILOT" className="w-full h-full object-contain rounded-xl" />
               <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-emerald-500 border-2 border-white rounded-full animate-pulse" />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-lg sm:text-xl md:text-2xl font-bold text-slate-900 tracking-tight break-words leading-tight">
-                  Master Project AI Agent
+                  AAKSH AI AUTOPILOT
                 </h1>
                 <span className="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-900 font-bold border border-emerald-300">
                   Techar Aaksh Edition
