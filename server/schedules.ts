@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { getPostgresPool } from '../database.ts';
 import type { TenantContext } from '../auth.ts';
+import { getPostgresMigrationStatus } from '../database.ts';
 
 type DbClient = { query: (sql: string, values?: unknown[]) => Promise<{ rows: any[]; rowCount?: number | null }>; release: () => void };
 type DbPool = DbClient & { connect: () => Promise<DbClient> };
@@ -188,6 +189,8 @@ export function requestScheduleWorkerStop() { schedulerStopping = true; }
 export async function runScheduleWorker(options: { pollIntervalMs?: number; shouldStop?: () => boolean } = {}): Promise<void> {
   if (process.env.MASTER_PROJECT_WORKER_ENABLED !== 'true') throw new Error('Schedule worker disabled; set MASTER_PROJECT_WORKER_ENABLED=true in the dedicated worker service.');
   schedulerStopping = false;
+  const migrationStatus = await getPostgresMigrationStatus();
+  if (!migrationStatus.migrationTableExists || !migrationStatus.appliedMigrations.includes('20261125_001_agent_schedules.sql')) throw new Error('Schedule worker blocked: schedule migration is not confirmed as applied.');
   const poll = Math.min(Math.max(options.pollIntervalMs ?? 15000, 1000), 60000);
   const shouldStop = options.shouldStop ?? (() => schedulerStopping);
   while (!shouldStop()) {
