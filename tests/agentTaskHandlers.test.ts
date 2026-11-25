@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  readProjectStatusHandler
+  readProjectStatusHandler,
+  researchTaskHandler
 } from '../agentTaskHandlers.ts';
 import { getRegisteredAgentTaskTypes } from '../agentTaskWorkerRuntime.ts';
 import type { LeasedAgentTask } from '../agentTaskWorker.ts';
@@ -20,8 +21,8 @@ const makeTask = (payload: Record<string, unknown>, taskType = 'read_only'): Lea
   lease_expires_at: new Date(Date.now() + 60_000).toISOString()
 });
 
-test('worker registers only the reviewed read-only task type', () => {
-  assert.deepEqual(getRegisteredAgentTaskTypes(), ['read_only']);
+test('worker registers only the reviewed read-only and approval-gated research task types', () => {
+  assert.deepEqual(getRegisteredAgentTaskTypes(), ['read_only', 'research']);
 });
 
 test('read-only handler rejects arbitrary actions and task types', async () => {
@@ -59,5 +60,13 @@ test('read-only project status action respects cancellation before reading', asy
       { signal: controller.signal, workerId: 'worker-test' }
     ),
     /Task cancelled/
+  );
+});
+
+
+test('research handler rejects arbitrary payloads before any provider access', async () => {
+  await assert.rejects(
+    () => researchTaskHandler(makeTask({ action: 'arbitrary_shell' }, 'research'), { signal: new AbortController().signal, workerId: 'worker-test' }),
+    /Unsupported research action/
   );
 });
