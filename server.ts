@@ -2835,8 +2835,11 @@ app.post('/api/research', requireOwnerForSecrets, createRateLimitMiddleware({ wi
 
   // Both credentials are resolved only from this request's encrypted Owner+Tenant secret context.
   const searchApiKey = getOwnerSecret('search');
+  const googleSearchKey = process.env.GOOGLE_SEARCH_API_KEY || '';
+  const googleSearchCx = process.env.GOOGLE_SEARCH_CX || '';
+  const useGoogleSearch = Boolean(googleSearchKey && googleSearchCx);
   const geminiApiKey = getOwnerSecret('gemini');
-  if (!searchApiKey) return res.status(403).json({ error: 'Tenant Live Search key is not configured in encrypted Secrets.' });
+  if (!useGoogleSearch && !searchApiKey) return res.status(403).json({ error: 'Configure Google Custom Search server variables or the encrypted tenant Live Search key.' });
   if (!geminiApiKey) return res.status(403).json({ error: 'Tenant Gemini key is not configured in encrypted Secrets.' });
 
   try {
@@ -2896,7 +2899,9 @@ app.post('/api/research', requireOwnerForSecrets, createRateLimitMiddleware({ wi
     for (const call of calls) {
       const query = sanitizeUntrustedText((call.args as any)?.query, 200).trim();
       if (!query) continue;
-      const results = await searchBraveWeb(query, searchApiKey, () => assertOwnerEmergencyHaltClear(ownerId));
+      const results = useGoogleSearch
+        ? await searchGoogleCustom(query, googleSearchKey, googleSearchCx)
+        : await searchBraveWeb(query, searchApiKey, () => assertOwnerEmergencyHaltClear(ownerId));
       allSources.push(...results);
       functionResponses.push({
         functionResponse: {
@@ -2932,7 +2937,7 @@ app.post('/api/research', requireOwnerForSecrets, createRateLimitMiddleware({ wi
       success: true,
       answer: finalResponse.text || '',
       retrieval: { method: 'postgres_full_text_search', matches: ragMatches.map(item => ({ id: item.id, title: item.title, source: item.source, rank: item.rank })) },
-      liveSearch: { provider: 'Brave Search API', resultCount: allSources.length, sources: allSources },
+      liveSearch: { provider: useGoogleSearch ? 'Google Custom Search' : 'Brave Search API', resultCount: allSources.length, sources: allSources },
       model: serverStore.gemini.model
     });
   } catch (error) {
