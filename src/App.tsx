@@ -1154,6 +1154,8 @@ I am your central AI assistant and command center. You can manage engineering ta
           setIsWorkflowModalOpen(false);
         }}
         requiresApproval={modalRequiresApproval}
+        canStart={!workflowTaskId}
+        canApprove={Boolean(workflowTaskId && workflowTaskStatus === 'waiting_approval')}
       />
     </div>
   );
