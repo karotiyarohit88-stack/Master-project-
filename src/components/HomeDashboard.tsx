@@ -33,6 +33,7 @@ import {
 import { AppView, ServerHealth, TaskStatus } from '../types';
 import { SecretManagerPanel } from './SecretManagerPanel';
 import { LiveSearchPanel } from './LiveSearchPanel';
+import { useUiLanguage, translateUi } from '../utils/uiLanguage';
 
 interface HomeDashboardProps {
   onSelectView: (view: AppView) => void;
@@ -51,6 +52,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   currentTaskStatus,
   onLaunchTaskWithPrompt
 }) => {
+  const language = useUiLanguage();
   // Live states from backend
   const [connectionsData, setConnectionsData] = useState<any>(null);
   const [workflowsCount, setWorkflowsCount] = useState<number>(3);
@@ -167,7 +169,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
           <div className="min-w-0">
             <h2 className="text-sm sm:text-base font-bold text-slate-900 flex items-center gap-1.5">
               <Sparkles className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-              <span>What would you like to build or automate today?</span>
+              <span>{translateUi('What would you like to build or automate today?', language)}</span>
             </h2>
             <p className="text-xs text-slate-600 mt-0.5">
               Type natural-language instructions to generate code, plan Android apps, compose vertical reels, or orchestrate autonomous workflows.
@@ -184,7 +186,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
               className="flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs sm:text-sm font-semibold shadow-xs transition-all cursor-pointer min-h-[40px]"
             >
               <Plus className="w-4 h-4" />
-              <span>+ New AI Chat</span>
+              <span>{translateUi('+ New AI Chat', language)}</span>
             </button>
             <button
               type="button"
@@ -192,7 +194,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
               className="flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs sm:text-sm font-medium transition-all cursor-pointer min-h-[40px]"
             >
               <GitBranch className="w-4 h-4 text-emerald-700" />
-              <span>Explore Code</span>
+              <span>{translateUi('Explore Code', language)}</span>
             </button>
           </div>
         </div>
@@ -204,7 +206,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
           <div className="flex items-center gap-2">
             <Server className="w-4 h-4 text-emerald-600" />
             <h3 className="text-xs sm:text-sm font-bold text-slate-900 uppercase tracking-wider font-mono">
-              Live System Health & Integration Status
+              {translateUi('Live System Health & Integration Status', language)}
             </h3>
           </div>
           <span className="text-[10px] font-mono text-slate-400">
@@ -215,17 +217,17 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 text-xs font-mono">
           {/* Core Backend */}
           <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1">
-            <span className="text-[10px] text-slate-500 block">Core Backend</span>
+            <span className="text-[10px] text-slate-500 block">{translateUi('Core Backend', language)}</span>
             <div className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="font-bold text-slate-800">{serverHealth?.status === 'ok' ? 'Backend available' : 'Status unavailable'}</span>
+              <span className="font-bold text-slate-800" >{translateUi(serverHealth?.status === 'ok' ? 'Backend available' : 'Status unavailable', language)}</span>
             </div>
             <p className="text-[10px] text-slate-400">{serverHealth?.appName || 'Live server health not confirmed'}</p>
           </div>
 
           {/* Model Engine */}
           <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1">
-            <span className="text-[10px] text-slate-500 block">AI Model Engine</span>
+            <span className="text-[10px] text-slate-500 block">{translateUi('AI Model Engine', language)}</span>
             <div className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-emerald-500" />
               <span className="font-bold text-slate-800">{connectionsData?.gemini?.configured ? (connectionsData?.gemini?.model || serverHealth?.model || 'Configured') : 'Model status unavailable'}</span>
@@ -235,7 +237,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
 
           {/* GitHub Explorer */}
           <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1">
-            <span className="text-[10px] text-slate-500 block">GitHub Explorer</span>
+            <span className="text-[10px] text-slate-500 block">{translateUi('GitHub Explorer', language)}</span>
             <div className="flex items-center gap-1.5">
               <span className={`w-2 h-2 rounded-full ${githubConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />
               <span className="font-bold text-slate-800 truncate">
@@ -247,7 +249,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
 
           {/* n8n Webhook */}
           <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1">
-            <span className="text-[10px] text-slate-500 block">n8n Automator</span>
+            <span className="text-[10px] text-slate-500 block">{translateUi('n8n Automator', language)}</span>
             <div className="flex items-center gap-1.5">
               <span className={`w-2 h-2 rounded-full ${n8nConfigured ? 'bg-emerald-500' : 'bg-slate-400'}`} />
               <span className="font-bold text-slate-800">
