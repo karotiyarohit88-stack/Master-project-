@@ -17,6 +17,8 @@ export const CameraMediaStudio: React.FC<Props> = ({ onAnalyze }) => {
   const [recordedUrl, setRecordedUrl] = useState('');
 
   const stopCamera = () => {
+    if (recorderRef.current && recorderRef.current.state !== 'inactive') recorderRef.current.stop();
+    setRecording(false);
     streamRef.current?.getTracks().forEach(track => track.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
@@ -36,7 +38,10 @@ export const CameraMediaStudio: React.FC<Props> = ({ onAnalyze }) => {
     }
   };
 
-  useEffect(() => () => { streamRef.current?.getTracks().forEach(track => track.stop()); }, []);
+  useEffect(() => () => {
+    if (recorderRef.current && recorderRef.current.state !== 'inactive') recorderRef.current.stop();
+    streamRef.current?.getTracks().forEach(track => track.stop());
+  }, []);
   useEffect(() => () => { if (recordedUrl) URL.revokeObjectURL(recordedUrl); }, [recordedUrl]);
 
   const capture = () => {
