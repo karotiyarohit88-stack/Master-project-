@@ -33,7 +33,8 @@ export type AppView =
   | 'github'
   | 'settings'
   | 'analytics'
-  | 'aaksh';
+  | 'aaksh'
+  | 'camera';
 
 export type RequestClassification = 
   | 'question'
