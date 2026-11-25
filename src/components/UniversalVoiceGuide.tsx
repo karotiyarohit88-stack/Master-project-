@@ -163,12 +163,36 @@ export const UniversalVoiceGuide: React.FC = () => {
     setSpokenText(copy.enabled);
   };
 
-  const explainQuestion = (question: string) => {
+  const explainQuestion = async (question: string) => {
     const items = scanScreen();
-    const labels = items.map(el => (el.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.tagName).trim()).filter(Boolean);
-    const result = [question, copy.help, ...labels.slice(0, 12).map((label, i) => (i + 1) + '. ' + label)];
-    setSpokenText(result.join(' '));
-    speak(result.join(' '));
+    const main = document.querySelector('main') || document.querySelector('#root');
+    const text = (main?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 6000);
+    const labels = items.map(el => (el.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('name') || el.tagName).trim()).filter(Boolean);
+    setGuideLoading(true); setGuideError(''); setGuideSteps([]);
+    try {
+      const response = await fetch('/api/ai/page-guide', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ page: document.title + ' ' + window.location.pathname, question, language, pageText: text, controls: labels })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.guide) throw new Error(data.error || 'Page guide unavailable.');
+      const guide = data.guide;
+      setGuideSummary(guide.summary || '');
+      setGuideSteps(Array.isArray(guide.steps) ? guide.steps : []);
+      setGuideNextAction(guide.nextAction || '');
+      const narration = [guide.summary, ...(guide.steps || []).map((step: any, index: number) => (index + 1) + '. ' + step.title + ': ' + step.instruction), guide.nextAction, guide.safetyNote].filter(Boolean).join(' ');
+      setSpokenText(narration); speak(narration);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'AI page guide unavailable.';
+      setGuideError(message); setSpokenText(message); speak(message);
+    } finally { setGuideLoading(false); }
+  };
+
+  const focusGuideTarget = (label: string, index: number) => {
+    const wanted = normalizeVoiceText(label);
+    const target = getTargets().find(el => normalizeVoiceText([el.innerText,el.getAttribute('aria-label'),el.getAttribute('placeholder'),el.getAttribute('name')].filter(Boolean).join(' ')).includes(wanted));
+    if (target) focusTarget(target, index);
+    else setSpokenText('No exact visible control matched this step; follow the instruction manually.');
   };
 
   useEffect(() => () => { voiceModeRef.current = false; recognitionRef.current?.stop(); window.speechSynthesis?.cancel(); }, []);
