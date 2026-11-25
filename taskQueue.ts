@@ -61,7 +61,7 @@ export function createAgentTaskRouter(options: { pool?: DbPool | null } = {}) {
     }
     if ((taskType === 'read_only' && (payload.action !== 'read_project_status' || Object.keys(payload).some(key => key !== 'action'))) ||
         (taskType === 'research' && (payload.action !== 'research' || Object.keys(payload).some(key => key !== 'action')))) {
-      return jsonError(res, 400, 'Read-only tasks support project status; research tasks support only the research action.');
+      return jsonError(res, 400, 'Read-only tasks support only read_project_status; research tasks support only the research action.');
     }
     if (idempotencyKey && (idempotencyKey.length > 128 || !/^[A-Za-z0-9._:-]+$/.test(idempotencyKey))) {
       return jsonError(res, 400, 'Idempotency-Key has an invalid format.');
