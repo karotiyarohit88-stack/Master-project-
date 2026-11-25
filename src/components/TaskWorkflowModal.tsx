@@ -207,6 +207,16 @@ export const TaskWorkflowModal: React.FC<TaskWorkflowModalProps> = ({
         <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
           <button
             type="button"
+            onClick={onStart}
+            disabled={isProcessing}
+            className="px-3 py-2 rounded-xl bg-[#14183E] hover:bg-[#20285f] text-white font-semibold transition-colors cursor-pointer disabled:opacity-50"
+          >
+            <Play className="w-3.5 h-3.5 inline mr-1" />
+            Queue safe task
+          </button>
+
+          <button
+            type="button"
             onClick={onCancel}
             className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium transition-colors cursor-pointer"
           >
