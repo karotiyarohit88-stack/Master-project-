@@ -1086,12 +1086,11 @@ I am your central AI assistant and command center. You can manage engineering ta
           try {
             const response = await fetch('/api/tasks', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
+              headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'workflow-modal-' + crypto.randomUUID(), ...getCsrfHeaders() },
               body: JSON.stringify({
                 taskType: 'read_only',
                 prompt: workflowTitle + ': ' + workflowSteps.map(step => step.name + ' - ' + step.description).join('; '),
-                payload: { action: 'read_project_status' },
-                idempotencyKey: 'workflow-modal-' + crypto.randomUUID()
+                payload: { action: 'read_project_status' }
               })
             });
             const data = await response.json();
@@ -1122,13 +1121,29 @@ I am your central AI assistant and command center. You can manage engineering ta
           } finally { setIsWorkflowSubmitting(false); }
         }}
         onNextStep={() => {
-          if (workflowCurrentStep < workflowSteps.length - 1) {
-            setWorkflowCurrentStep(prev => prev + 1);
-            setWorkflowLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Advanced to step ${workflowCurrentStep + 2}`]);
-          }
+          setWorkflowLogs(prev => [...prev, '[' + new Date().toLocaleTimeString() + '] Worker execution is asynchronous; the durable queue status is shown above.']);
         }}
-        onRetry={() => {
-          setWorkflowLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Retrying step ${workflowCurrentStep + 1}`]);
+        onRetry={async () => {
+          if (!workflowTaskId || !['failed','cancelled'].includes(workflowTaskStatus) || isWorkflowSubmitting) {
+            setWorkflowLogs(prev => [...prev, 'Retry is available only after a failed or cancelled durable task.']);
+            return;
+          }
+          setIsWorkflowSubmitting(true);
+          try {
+            const response = await fetch('/api/tasks', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'workflow-retry-' + crypto.randomUUID(), ...getCsrfHeaders() },
+              body: JSON.stringify({ taskType: 'read_only', prompt: workflowTitle + ' (manual retry)', payload: { action: 'read_project_status' } })
+            });
+            const data = await response.json();
+            if (!response.ok || !data.task?.id) throw new Error(data.error || 'Retry task could not be queued.');
+            setWorkflowTaskId(data.task.id);
+            setWorkflowTaskStatus(data.task.status);
+            setModalRequiresApproval(true);
+            setWorkflowLogs(prev => [...prev, '[' + new Date().toLocaleTimeString() + '] Retry created as a new approval-gated task: ' + data.task.id]);
+          } catch (error) {
+            setWorkflowLogs(prev => [...prev, 'Retry failed: ' + (error instanceof Error ? error.message : 'unknown error')]);
+          } finally { setIsWorkflowSubmitting(false); }
         }}
         onCancel={async () => {
           if (workflowTaskId && ['queued','retry_wait','waiting_approval'].includes(workflowTaskStatus)) {
