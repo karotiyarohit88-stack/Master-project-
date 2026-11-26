@@ -1378,7 +1378,7 @@ app.get('/api/database/status', requireOwnerForSecrets, async (req: Request, res
 let databaseMigrationApplyInProgress = false;
 
 // POST /api/database/migrate: explicit Owner + Admin Token + CSRF one-shot migration authorization.
-app.post('/api/database/migrate', requireOwnerForSecrets, requireAdminToken, async (req: Request, res: Response) => {
+app.post('/api/database/migrate', requireOwnerForSecrets, authGuards.requireCsrf, requireAdminToken, async (req: Request, res: Response) => {
   const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id || '';
   const expectedDatabase = typeof req.body?.expectedDatabase === 'string' ? req.body.expectedDatabase.trim() : '';
   const targetMigration = typeof req.body?.targetMigration === 'string' ? req.body.targetMigration.trim() : '';
@@ -1410,12 +1410,10 @@ app.post('/api/database/migrate', requireOwnerForSecrets, requireAdminToken, asy
     }
 
     databaseMigrationApplyInProgress = true;
-    // Keep the global setting disabled. Grant the existing migration runner a
-    // short-lived in-process opt-in only for this confirmed Owner request.
-    process.env.RUN_DB_MIGRATIONS = 'true';
+    // Use a narrowly scoped in-process authorization; never enable global migrations.
     try {
       await assertOwnerEmergencyHaltClear(ownerId);
-      const result = await applyPendingPostgresMigrations(['20261126_001_ai_conversation_memory.sql']);
+      const result = await applyPendingPostgresMigrations(['20261126_001_ai_conversation_memory.sql'], { allowOneShot: true });
       recordAudit({
         category: 'security',
         action: 'Owner Applied PostgreSQL Migrations',
@@ -1425,12 +1423,10 @@ app.post('/api/database/migrate', requireOwnerForSecrets, requireAdminToken, asy
       });
       return res.json({ success: true, provider: 'PostgreSQL', database: connection.database, ...result });
     } finally {
-      // Always restore the required safe default, including when the runner throws.
-      process.env.RUN_DB_MIGRATIONS = 'false';
+      // Always release the single-request mutex.
       databaseMigrationApplyInProgress = false;
     }
   } catch (error) {
-    process.env.RUN_DB_MIGRATIONS = 'false';
     databaseMigrationApplyInProgress = false;
     const message = error instanceof Error ? error.message : 'PostgreSQL migration failed.';
     const status = /Emergency halt/i.test(message) ? 423 : 500;
