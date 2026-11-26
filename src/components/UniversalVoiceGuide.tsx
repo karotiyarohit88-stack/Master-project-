@@ -113,12 +113,25 @@ export const UniversalVoiceGuide: React.FC = () => {
     const preferred = voices.find(voice => voice.lang.toLowerCase().startsWith(language === 'hi' ? 'hi' : 'en')
       && (voiceGender === 'female' ? /female|woman|zira|samantha|susan|heera|kalpana/i.test(voice.name) : /male|man|david|mark|ravi|hemant/i.test(voice.name)));
     const fallback = voices.find(voice => voice.lang.toLowerCase().startsWith(language === 'hi' ? 'hi' : 'en'));
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.lang = locale;
-    utterance.voice = preferred || fallback || null;
-    utterance.rate = 0.96;
-    utterance.pitch = voiceGender === 'female' ? 1.04 : 0.94;
-    if (speechGeneration === speechGenerationRef.current) window.speechSynthesis.speak(utterance);
+    const chunks = cleanText.match(/[^.!?।\\n]+[.!?।\\n]*/gu) || [cleanText];
+    const queue = chunks.map(chunk => chunk.trim()).filter(Boolean);
+    let chunkIndex = 0;
+    const speakNext = () => {
+      if (speechGeneration !== speechGenerationRef.current || chunkIndex >= queue.length) return;
+      const utterance = new SpeechSynthesisUtterance(queue[chunkIndex++]);
+      utterance.lang = locale;
+      utterance.voice = preferred || fallback || null;
+      utterance.rate = 0.99;
+      utterance.pitch = voiceGender === 'female' ? 1.04 : 0.94;
+      utterance.onend = () => {
+        if (speechGeneration === speechGenerationRef.current) speakNext();
+      };
+      utterance.onerror = event => {
+        if (event.error !== 'canceled' && event.error !== 'interrupted' && speechGeneration === speechGenerationRef.current) speakNext();
+      };
+      window.speechSynthesis.speak(utterance);
+    };
+    if (speechGeneration === speechGenerationRef.current) speakNext();
   }, [language, naturalVoiceEnabled, voiceGender]);
 
   const stopSpeech = useCallback(() => {
@@ -289,7 +302,7 @@ export const UniversalVoiceGuide: React.FC = () => {
       const data = await response.json();
       if (!response.ok || !data.guide) throw new Error(data.error || 'Page guide unavailable.');
       const guide = data.guide;
-      setConversation(previous => [...previous, { role: 'user', text: question }, { role: 'assistant', text: [guide.summary, ...(guide.steps || []).map((step: any) => step.instruction), guide.nextAction].filter(Boolean).join(' ') }].slice(-12));
+      setConversation(previous => [...previous, { role: 'user' as const, text: question }, { role: 'assistant' as const, text: [guide.summary, ...(guide.steps || []).map((step: any) => step.instruction), guide.nextAction].filter(Boolean).join(' ') }].slice(-12));
       setGuideSummary(guide.summary || '');
       setGuideSteps(Array.isArray(guide.steps) ? guide.steps : []);
       setGuideNextAction(guide.nextAction || '');
