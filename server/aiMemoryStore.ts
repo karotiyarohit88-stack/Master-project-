@@ -15,7 +15,9 @@ export type ConversationMemoryTurn = {
 function safeText(value: unknown, maxLength: number): string {
   if (typeof value !== 'string') return '';
   return value
-    .replace(/\b(?:password|passwd|api[_ -]?key|secret|access[_ -]?token|refresh[_ -]?token|otp)\b\s*[:=]\s*[^\s,;]+/gi, '$1=[REDACTED]')
+    .replace(/\b(password|passwd|api[_ -]?key|secret|access[_ -]?token|refresh[_ -]?token|otp)\b\s*[:=]\s*[^\s,;]+/gi, '$1=[REDACTED]')
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Bearer [REDACTED]')
+    .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[REDACTED_TOKEN]')
     .replace(/\b(?:sk-[A-Za-z0-9_-]{12,}|AIza[0-9A-Za-z_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,})\b/g, '[REDACTED_SECRET]')
     .slice(0, maxLength);
 }
