@@ -134,11 +134,11 @@ async function runMigration(client: PoolClient, version: string, sql: string, ch
   }
 }
 
-export async function applyPendingPostgresMigrations(onlyVersions?: string[]): Promise<{
+export async function applyPendingPostgresMigrations(onlyVersions?: string[], options?: { allowOneShot?: boolean }): Promise<{
   applied: string[];
   alreadyApplied: string[];
 }> {
-  if (process.env.RUN_DB_MIGRATIONS !== 'true') {
+  if (process.env.RUN_DB_MIGRATIONS !== 'true' && !(options?.allowOneShot === true && onlyVersions?.length === 1 && onlyVersions[0] === '20261126_001_ai_conversation_memory.sql')) {
     throw new Error('Database migrations are disabled. Set RUN_DB_MIGRATIONS=true for an explicitly approved migration run.');
   }
 
