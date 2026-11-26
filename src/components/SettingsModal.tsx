@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { AppSettings, ServerHealth } from '../types';
 import { checkAndroidAccessibilityPermission, AndroidAccessibilityPermissionState } from '../utils/androidAccessibilityBridge';
+import { DatabaseMigrationCard } from './DatabaseMigrationCard';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -148,6 +149,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         {/* Scrollable content body */}
         <div className="p-3.5 sm:p-5 space-y-5 overflow-y-auto flex-1 min-h-0 scrollbar-thin scrollbar-thumb-emerald-200">
+          <DatabaseMigrationCard isOpen={isOpen} />
+
           {/* Section 1: Chat Preferences */}
           <div className="space-y-3.5">
             <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1.5">
