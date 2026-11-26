@@ -134,7 +134,7 @@ async function runMigration(client: PoolClient, version: string, sql: string, ch
   }
 }
 
-export async function applyPendingPostgresMigrations(): Promise<{
+export async function applyPendingPostgresMigrations(onlyVersions?: string[]): Promise<{
   applied: string[];
   alreadyApplied: string[];
 }> {
@@ -159,9 +159,15 @@ export async function applyPendingPostgresMigrations(): Promise<{
       )
     `);
 
-    const files = (await fs.readdir(MIGRATIONS_DIR))
+    const allFiles = (await fs.readdir(MIGRATIONS_DIR))
       .filter((file) => /^\d{8}_\d{3}_.+\.sql$/.test(file))
       .sort();
+    const files = onlyVersions?.length
+      ? allFiles.filter((file) => onlyVersions.includes(file))
+      : allFiles;
+    if (onlyVersions?.some((version) => !files.includes(version))) {
+      throw new Error('One or more explicitly requested migration files are missing.');
+    }
 
     for (const file of files) {
       const sql = await fs.readFile(path.join(MIGRATIONS_DIR, file), 'utf8');
