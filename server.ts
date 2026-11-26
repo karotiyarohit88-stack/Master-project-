@@ -2931,7 +2931,7 @@ app.post('/api/ai/page-guide', requireOwnerForSecrets, createRateLimitMiddleware
       nextAction: sanitizeUntrustedText(guide.nextAction, 300),
       safetyNote: sanitizeUntrustedText(guide.safetyNote, 300)
     };
-    const assistantTurn = [safeGuide.summary, ...steps.map(step => step.instruction), safeGuide.nextAction, safeGuide.safetyNote].filter(Boolean).join(' ');
+    const assistantTurn = [safeGuide.summary, ...steps.map((step: { instruction: string }) => step.instruction), safeGuide.nextAction, safeGuide.safetyNote].filter(Boolean).join(' ');
     await saveConversationTurn(ownerId, tenantId, 'assistant', assistantTurn, { page, language, questionType: 'page_guide' });
     return res.json({ guide: safeGuide, memory: { persisted: true, turns: boundedConversation.length + 1 }, search: { used: webResults.length > 0, resultCount: webResults.length } });
   } catch (error) {
