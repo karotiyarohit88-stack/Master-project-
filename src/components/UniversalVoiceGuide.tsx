@@ -243,6 +243,26 @@ export const UniversalVoiceGuide: React.FC = () => {
     try { recognition.start(); setListening(true); } catch { setListening(false); setSpokenText(copy.noSpeech); }
   }, [copy.noSpeech, executeVoiceCommand, interruptForInput, language]);
 
+  const startQuestionRecognition = () => {
+    interruptForInput();
+    const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Ctor) { setSpokenText(copy.noSpeech); return; }
+    const recognition = new Ctor();
+    recognition.lang = language === 'hi' ? 'hi-IN' : 'en-IN';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.onresult = event => {
+      const transcript = event.results?.[event.results.length - 1]?.[0]?.transcript || '';
+      if (transcript.trim()) void explainQuestion(transcript.trim());
+    };
+    recognition.onerror = () => setListening(false);
+    recognition.onend = () => setListening(false);
+    recognitionRef.current?.stop();
+    recognitionRef.current = recognition;
+    try { recognition.start(); setListening(true); }
+    catch { setListening(false); setSpokenText(copy.noSpeech); }
+  };
+
   const toggleVoiceMode = () => {
     if (voiceMode) { voiceModeRef.current = false; setVoiceMode(false); setSpokenText(copy.disabled); return; }
     if (!window.confirm(language === 'hi' ? 'Voice Command Mode microphone ko active rakhega jab tak aap ise OFF nahi karte. अनुमति दें?' : 'Enable continuous microphone listening until you turn Voice Command Mode off?')) return;
@@ -345,7 +365,7 @@ export const UniversalVoiceGuide: React.FC = () => {
         <label htmlFor="aaksh-guide-question" className="block text-xs font-bold mb-1">Apna sawaal poochhein / Ask me anything</label>
         <textarea id="aaksh-guide-question" value={userQuestion} onFocus={interruptForInput} onChange={e => setUserQuestion(e.target.value)} rows={2} maxLength={500} placeholder="Yahan type karein ya mic se poochhein…" className="w-full resize-y rounded-lg border border-slate-300 p-2 text-xs" />
         <div className="flex gap-2 mt-2">
-          <button type="button" onClick={() => { interruptForInput(); createRecognition(false); }} className="flex-1 rounded-lg border border-slate-300 p-2 text-xs"><Mic size={14} className="inline mr-1"/> Ask by voice</button>
+          <button type="button" onClick={startQuestionRecognition} className="flex-1 rounded-lg border border-slate-300 p-2 text-xs"><Mic size={14} className="inline mr-1"/> Ask by voice</button>
           <button type="submit" disabled={!userQuestion.trim() || guideLoading} className="flex-1 rounded-lg bg-[#14183E] text-white p-2 text-xs font-bold">Send question</button>
         </div>
       </form>
