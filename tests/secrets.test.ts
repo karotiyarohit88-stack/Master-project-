@@ -8,6 +8,8 @@ import { createSecretsRouter, decryptSecret, encryptSecret, maskSecret, resolveA
 type Row = Record<string, any>;
 const OWNER_ID = '11111111-1111-4111-8111-111111111111';
 const MEMBER_ID = '22222222-2222-4222-8222-222222222222';
+const OWNER_TENANT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const MEMBER_TENANT_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const OWNER_SESSION = 'owner-session-token-value-123456789012345';
 const MEMBER_SESSION = 'member-session-token-value-12345678901234';
 const CSRF_TOKEN = 'csrf-token-value-123456789012345678901234';
@@ -15,6 +17,7 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 
 class MemorySecretsDb {
   rows: Row[] = [];
+  async connect() { return { query: this.query.bind(this), release: () => undefined }; }
   async query(sql: string, values: any[] = []): Promise<{ rows: Row[] }> {
     const normalized = sql.replace(/\s+/g, ' ').trim().toLowerCase();
     if (normalized.startsWith('select s.id as session_id')) {
@@ -32,25 +35,27 @@ class MemorySecretsDb {
         role: owner ? 'owner' : 'member'
       }] };
     }
+    if (['begin', 'commit', 'rollback'].includes(normalized)) return { rows: [] };
+    if (normalized.startsWith('select set_config')) return { rows: [] };
     if (normalized.startsWith('create table') || normalized.startsWith('create index')) {
       throw new Error('Runtime secret routes must never execute schema DDL.');
     }
     if (normalized.startsWith('insert into app_secrets')) {
       const row = {
-        id: values[0], owner_id: values[1], name: values[2], provider: values[3],
-        masked_preview: values[4], ciphertext: values[5], nonce: values[6],
-        auth_tag: values[7], created_at: new Date().toISOString(), revoked_at: null
+        id: values[0], owner_id: values[1], tenant_id: values[2], name: values[3], provider: values[4],
+        masked_preview: values[5], ciphertext: values[6], nonce: values[7],
+        auth_tag: values[8], created_at: new Date().toISOString(), revoked_at: null
       };
       this.rows.push(row);
       return { rows: [{ id: row.id, name: row.name, provider: row.provider,
         masked_preview: row.masked_preview, created_at: row.created_at }] };
     }
     if (normalized.startsWith('select id, name, provider, masked_preview, created_at from app_secrets')) {
-      return { rows: this.rows.filter(row => row.owner_id === values[0] && !row.revoked_at)
+      return { rows: this.rows.filter(row => row.owner_id === values[0] && row.tenant_id === values[1] && !row.revoked_at)
         .map(({ id, name, provider, masked_preview, created_at }) => ({ id, name, provider, masked_preview, created_at })) };
     }
     if (normalized.startsWith('update app_secrets set revoked_at')) {
-      const row = this.rows.find(item => item.id === values[0] && item.owner_id === values[1] && !item.revoked_at);
+      const row = this.rows.find(item => item.id === values[0] && item.owner_id === values[1] && item.tenant_id === values[2] && !item.revoked_at);
       if (!row) return { rows: [] };
       row.revoked_at = new Date().toISOString();
       return { rows: [{ id: row.id }] };
@@ -70,6 +75,7 @@ async function withServer(run: (baseUrl: string, db: MemorySecretsDb) => Promise
   app.use('/api/secrets',
     guards.requireSession,
     guards.requireRole('owner'),
+    (req, res, next) => { const ownerId = (res.locals.authSession as { id?: string }).id; res.locals.tenantContext = { tenantId: ownerId === OWNER_ID ? OWNER_TENANT_ID : MEMBER_TENANT_ID, ownerId, role: 'owner' }; next(); },
     (req, res, next) => req.method === 'GET' ? next() : guards.requireCsrf(req, res, next),
     createSecretsRouter({ pool: db, encryptionKey: encryptionKeySetting })
   );
@@ -92,10 +98,11 @@ function authHeaders(baseUrl: string, role: 'owner' | 'member', includeCsrf = tr
 
 test('AES-256-GCM encrypts and authenticates secret values; masking never returns the full key', () => {
   const secret = 'sk-live-super-secret-api-key-1234';
-  const encrypted = encryptSecret(secret, encryptionKey, 'owner-id:secret-id');
+  const encrypted = encryptSecret(secret, encryptionKey, 'owner-id:tenant-id:secret-id');
   assert.notEqual(encrypted.ciphertext, secret);
-  assert.equal(decryptSecret(encrypted, encryptionKey, 'owner-id:secret-id'), secret);
-  assert.throws(() => decryptSecret(encrypted, encryptionKey, 'another-owner:secret-id'));
+  assert.equal(decryptSecret(encrypted, encryptionKey, 'owner-id:tenant-id:secret-id'), secret);
+  assert.throws(() => decryptSecret(encrypted, encryptionKey, 'another-owner:tenant-id:secret-id'));
+  assert.throws(() => decryptSecret(encrypted, encryptionKey, 'owner-id:another-tenant:secret-id'));
   assert.equal(maskSecret(secret), 'sk-...1234');
   assert.notEqual(maskSecret(secret), secret);
   assert.equal(maskSecret('short'), '••••••••');
@@ -117,7 +124,7 @@ test('Owner can create, list and revoke secrets; database stores ciphertext only
     assert.equal(JSON.stringify(db.rows[0]).includes(secretValue), false);
     assert.equal(decryptSecret({
       ciphertext: db.rows[0].ciphertext, nonce: db.rows[0].nonce, authTag: db.rows[0].auth_tag
-    }, encryptionKey, `${OWNER_ID}:${db.rows[0].id}`), secretValue);
+    }, encryptionKey, `${OWNER_ID}:${OWNER_TENANT_ID}:${db.rows[0].id}`), secretValue);
 
     const listed = await fetch(`${baseUrl}/api/secrets`, { headers: authHeaders(baseUrl, 'owner', false) });
     assert.equal(listed.status, 200);
@@ -164,7 +171,7 @@ test('secret mutations reject missing or invalid CSRF tokens', async () => {
 test('Owner cannot read or revoke another owner account secret', async () => {
   await withServer(async (baseUrl, db) => {
     db.rows.push({
-      id: '33333333-3333-4333-8333-333333333333', owner_id: MEMBER_ID,
+      id: '33333333-3333-4333-8333-333333333333', owner_id: MEMBER_ID, tenant_id: MEMBER_TENANT_ID,
       name: 'Member secret', provider: 'Custom', masked_preview: 'abc...7890',
       ciphertext: 'ciphertext', nonce: 'nonce', auth_tag: 'tag',
       created_at: new Date().toISOString(), revoked_at: null
@@ -186,28 +193,31 @@ test('two Owners save and resolve separate encrypted keys without runtime DDL', 
   const rows: Row[] = [];
   const statements: string[] = [];
   const pool = {
+    async connect() { return { query: pool.query.bind(pool), release: () => undefined }; },
     async query(sql: string, values: any[] = []) {
       statements.push(sql);
       assert.equal(/^\s*(create|alter|drop)\b/i.test(sql), false, 'runtime secret calls must not perform DDL');
-      if (sql.trim().toLowerCase().startsWith('insert into app_secrets')) {
+      const normalized = sql.trim().toLowerCase();
+      if (['begin', 'commit', 'rollback'].includes(normalized) || normalized.startsWith('select set_config')) return { rows: [] };
+      if (normalized.startsWith('insert into app_secrets')) {
         rows.push({
-          id: values[0], owner_id: values[1], name: values[2], provider: values[3],
-          masked_preview: values[4], ciphertext: values[5], nonce: values[6], auth_tag: values[7],
+          id: values[0], owner_id: values[1], tenant_id: values[2], name: values[3], provider: values[4],
+          masked_preview: values[5], ciphertext: values[6], nonce: values[7], auth_tag: values[8],
           revoked_at: null
         });
         return { rows: [] };
       }
-      assert.match(sql, /where owner_id = \$1 and revoked_at is null/i);
-      return { rows: rows.filter(row => row.owner_id === values[0]) };
+      assert.match(sql, /where owner_id = \$1 and tenant_id = \$2 and revoked_at is null/i);
+      return { rows: rows.filter(row => row.owner_id === values[0] && row.tenant_id === values[1]) };
     }
   };
   await Promise.all([
-    saveSecretForOwner(ownerA, 'OpenAI API Key', 'openai', 'owner-a-openai-key', { pool, encryptionKey: key.toString('base64') }),
-    saveSecretForOwner(ownerB, 'OpenAI API Key', 'openai', 'owner-b-openai-key', { pool, encryptionKey: key.toString('base64') })
+    saveSecretForOwner(ownerA, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'OpenAI API Key', 'openai', 'owner-a-openai-key', { pool, encryptionKey: key.toString('base64') }),
+    saveSecretForOwner(ownerB, 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'OpenAI API Key', 'openai', 'owner-b-openai-key', { pool, encryptionKey: key.toString('base64') })
   ]);
   const [a, b] = await Promise.all([
-    resolveActiveSecretsForOwner(ownerA, { pool, encryptionKey: key.toString('base64') }),
-    resolveActiveSecretsForOwner(ownerB, { pool, encryptionKey: key.toString('base64') })
+    resolveActiveSecretsForOwner(ownerA, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', { pool, encryptionKey: key.toString('base64') }),
+    resolveActiveSecretsForOwner(ownerB, 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', { pool, encryptionKey: key.toString('base64') })
   ]);
   assert.equal(a.openai, 'owner-a-openai-key');
   assert.equal(b.openai, 'owner-b-openai-key');
@@ -220,15 +230,57 @@ test('secret revocation is restricted to the selected Owner and provider', async
   let capturedSql = '';
   let capturedValues: any[] = [];
   const pool = {
+    async connect() { return { query: pool.query.bind(pool), release: () => undefined }; },
     async query(sql: string, values: any[] = []) {
-      capturedSql = sql;
-      capturedValues = values;
+      if (sql.trim().toLowerCase().startsWith('update app_secrets')) {
+        capturedSql = sql;
+        capturedValues = values;
+      }
       return { rows: [] };
     }
   };
-  await revokeSecretsForOwner(OWNER_ID, 'github', { pool });
+  await revokeSecretsForOwner(OWNER_ID, OWNER_TENANT_ID, 'github', { pool });
   assert.match(capturedSql, /update app_secrets/i);
   assert.match(capturedSql, /owner_id = \$1/i);
-  assert.match(capturedSql, /lower\(provider\) = lower\(\$2\)/i);
-  assert.deepEqual(capturedValues, [OWNER_ID, 'github']);
+  assert.match(capturedSql, /tenant_id = \$2/i);
+  assert.match(capturedSql, /lower\(provider\) = lower\(\$3\)/i);
+  assert.deepEqual(capturedValues, [OWNER_ID, OWNER_TENANT_ID, 'github']);
+});
+
+test('legacy encrypted Owner secrets are lazily re-encrypted with tenant-bound AES-GCM associated data', async () => {
+  const key = randomBytes(32);
+  const id = '44444444-4444-4444-8444-444444444444';
+  const legacy = encryptSecret('tenant-search-key-value', key, OWNER_ID + ':' + id);
+  const row: Row = {
+    id, owner_id: OWNER_ID, tenant_id: OWNER_TENANT_ID, name: 'Brave Search Key', provider: 'search',
+    ciphertext: legacy.ciphertext, nonce: legacy.nonce, auth_tag: legacy.authTag
+  };
+  let updateSql = '';
+  let updateValues: any[] = [];
+  const pool = {
+    async connect() {
+      return {
+        async query(sql: string, values: any[] = []) {
+          const normalized = sql.trim().toLowerCase();
+          if (normalized.startsWith('select id, provider')) return { rows: [row] };
+          if (normalized.startsWith('update app_secrets')) {
+            updateSql = sql;
+            updateValues = values;
+            row.ciphertext = values[3];
+            row.nonce = values[4];
+            row.auth_tag = values[5];
+            return { rows: [] };
+          }
+          return { rows: [] };
+        },
+        release: () => undefined
+      };
+    }
+  };
+  const resolved = await resolveActiveSecretsForOwner(OWNER_ID, OWNER_TENANT_ID, { pool, encryptionKey: key.toString('base64') });
+  assert.equal(resolved.search, 'tenant-search-key-value');
+  assert.match(updateSql, /owner_id = \$2 AND tenant_id = \$3/i);
+  assert.deepEqual(updateValues.slice(0, 3), [id, OWNER_ID, OWNER_TENANT_ID]);
+  assert.equal(decryptSecret({ ciphertext: row.ciphertext, nonce: row.nonce, authTag: row.auth_tag }, key, OWNER_ID + ':' + OWNER_TENANT_ID + ':' + id), 'tenant-search-key-value');
+  assert.throws(() => decryptSecret({ ciphertext: row.ciphertext, nonce: row.nonce, authTag: row.auth_tag }, key, OWNER_ID + ':' + id));
 });

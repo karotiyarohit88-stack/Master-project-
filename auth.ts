@@ -29,6 +29,7 @@ type AuthSession = AuthUser & {
 
 export type TenantContext = {
   tenantId: string;
+  ownerId: string;
   role: 'owner' | 'admin' | 'member';
 };
 
@@ -284,7 +285,7 @@ export function createAuthGuards(options: AuthRouterOptions = {}) {
       }
       try {
         const result = await pool.query(
-          `SELECT t.id AS tenant_id, m.membership_role
+          `SELECT t.id AS tenant_id, t.owner_user_id AS owner_id, m.membership_role
              FROM app_tenant_memberships m
              JOIN app_tenants t ON t.id = m.tenant_id
             WHERE m.user_id = $1 AND m.status = 'active' AND t.status = 'active'
@@ -307,6 +308,7 @@ export function createAuthGuards(options: AuthRouterOptions = {}) {
         }
         res.locals.tenantContext = {
           tenantId: String(membership.tenant_id),
+          ownerId: String(membership.owner_id),
           role: membership.membership_role
         } satisfies TenantContext;
         next();

@@ -18,6 +18,7 @@ import {
 } from '../database.ts';
 
 const enabled = process.env.RUN_POSTGRES_INTEGRATION === 'true';
+type Row = Record<string, any>;
 
 
 function readCookie(setCookie: string, name: string): string {
@@ -258,7 +259,14 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
     '20261118_002_invitation_tenant_scope.sql',
     '20261118_003_agent_task_tenant_scope.sql',
     '20261118_004_agent_task_rejection.sql',
-    '20261118_005_aaksh_social_tenant_scope.sql'
+    '20261118_005_aaksh_social_tenant_scope.sql',
+    '20261119_001_owner_audit_logs.sql',
+    '20261119_002_owner_operational_records.sql',
+    '20261119_003_autopilot_record_types.sql',
+    '20261119_004_owner_emergency_halt.sql',
+    '20261119_005_owner_tenant_secrets.sql',
+    '20261119_006_tenant_knowledge_documents.sql',
+    '20261125_001_agent_schedules.sql'
   ];
   assert.equal(status.migrationTableExists, true);
   for (const migration of required) assert.ok(status.appliedMigrations.includes(migration), 'Missing migration ' + migration);
@@ -287,6 +295,258 @@ test('PostgreSQL migrations apply cleanly and tenant/task records remain isolate
       `INSERT INTO app_tenants (display_name, owner_user_id) VALUES ('Tenant B', $1) RETURNING id`,
       [userB.rows[0].id]
     );
+
+    const auditSecurity = await client.query(
+      `SELECT c.relrowsecurity, c.relforcerowsecurity
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'owner_audit_logs'`
+    );
+    assert.equal(auditSecurity.rows.length, 1);
+    assert.equal(auditSecurity.rows[0].relrowsecurity, true);
+    assert.equal(auditSecurity.rows[0].relforcerowsecurity, true);
+
+    const auditForeignKey = await client.query(
+      `SELECT pg_get_constraintdef(oid) AS definition
+         FROM pg_constraint
+        WHERE conrelid = 'public.owner_audit_logs'::regclass
+          AND contype = 'f'`
+    );
+    assert.ok(auditForeignKey.rows.some((row: Row) => row.definition.includes('(tenant_id, owner_id)')));
+
+    await client.query(
+      "SELECT set_config('app.owner_id', $1, true), set_config('app.tenant_id', $2, true)",
+      [userA.rows[0].id, tenantA.rows[0].id]
+    );
+    await client.query(
+      `INSERT INTO owner_audit_logs (owner_id, tenant_id, category, action, status, details)
+       VALUES ($1, $2, 'security', 'Tenant A audit event', 'info', 'Tenant A only')`,
+      [userA.rows[0].id, tenantA.rows[0].id]
+    );
+    await client.query(
+      "SELECT set_config('app.owner_id', $1, true), set_config('app.tenant_id', $2, true)",
+      [userB.rows[0].id, tenantB.rows[0].id]
+    );
+    await client.query(
+      `INSERT INTO owner_audit_logs (owner_id, tenant_id, category, action, status, details)
+       VALUES ($1, $2, 'security', 'Tenant B audit event', 'info', 'Tenant B only')`,
+      [userB.rows[0].id, tenantB.rows[0].id]
+    );
+
+    await client.query(
+      "SELECT set_config('app.owner_id', $1, true), set_config('app.tenant_id', $2, true)",
+      [userA.rows[0].id, tenantA.rows[0].id]
+    );
+    const auditA = await client.query(
+      'SELECT action FROM owner_audit_logs WHERE owner_id = $1 AND tenant_id = $2',
+      [userA.rows[0].id, tenantA.rows[0].id]
+    );
+    await client.query(
+      "SELECT set_config('app.owner_id', $1, true), set_config('app.tenant_id', $2, true)",
+      [userB.rows[0].id, tenantB.rows[0].id]
+    );
+    const auditB = await client.query(
+      'SELECT action FROM owner_audit_logs WHERE owner_id = $1 AND tenant_id = $2',
+      [userB.rows[0].id, tenantB.rows[0].id]
+    );
+    assert.deepEqual(auditA.rows.map((row: Row) => row.action), ['Tenant A audit event']);
+    assert.deepEqual(auditB.rows.map((row: Row) => row.action), ['Tenant B audit event']);
+
+    const operationalSecurity = await client.query(
+      `SELECT c.relrowsecurity, c.relforcerowsecurity
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'owner_operational_records'`
+    );
+    assert.equal(operationalSecurity.rows.length, 1);
+    assert.equal(operationalSecurity.rows[0].relrowsecurity, true);
+    assert.equal(operationalSecurity.rows[0].relforcerowsecurity, true);
+
+    await client.query(
+      "SELECT set_config('app.owner_id', $1, true), set_config('app.tenant_id', $2, true)",
+      [userA.rows[0].id, tenantA.rows[0].id]
+    );
+    await client.query(
+      `INSERT INTO owner_operational_records (owner_id, tenant_id, record_type, record_id, payload)
+       VALUES ($1, $2, 'video_job', 'video-a', '{"id":"video-a","status":"queued"}'::jsonb)`,
+      [userA.rows[0].id, tenantA.rows[0].id]
+    );
+    await client.query(
+      "SELECT set_config('app.owner_id', $1, true), set_config('app.tenant_id', $2, true)",
+      [userB.rows[0].id, tenantB.rows[0].id]
+    );
+    await client.query(
+      `INSERT INTO owner_operational_records (owner_id, tenant_id, record_type, record_id, payload)
+       VALUES ($1, $2, 'video_job', 'video-b', '{"id":"video-b","status":"queued"}'::jsonb)`,
+      [userB.rows[0].id, tenantB.rows[0].id]
+    );
+    await client.query(
+      "SELECT set_config('app.owner_id', $1, true), set_config('app.tenant_id', $2, true)",
+      [userA.rows[0].id, tenantA.rows[0].id]
+    );
+    const recordsA = await client.query(
+      'SELECT record_id FROM owner_operational_records WHERE owner_id = $1 AND tenant_id = $2 AND record_type = $3',
+      [userA.rows[0].id, tenantA.rows[0].id, 'video_job']
+    );
+    await client.query(
+      "SELECT set_config('app.owner_id', $1, true), set_config('app.tenant_id', $2, true)",
+      [userB.rows[0].id, tenantB.rows[0].id]
+    );
+    const recordsB = await client.query(
+      'SELECT record_id FROM owner_operational_records WHERE owner_id = $1 AND tenant_id = $2 AND record_type = $3',
+      [userB.rows[0].id, tenantB.rows[0].id, 'video_job']
+    );
+    assert.deepEqual(recordsA.rows.map((row: Row) => row.record_id), ['video-a']);
+    assert.deepEqual(recordsB.rows.map((row: Row) => row.record_id), ['video-b']);
+
+    const haltSecurity = await client.query(
+      `SELECT c.relrowsecurity, c.relforcerowsecurity
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'owner_emergency_halt'`
+    );
+    assert.equal(haltSecurity.rows.length, 1);
+    assert.equal(haltSecurity.rows[0].relrowsecurity, true);
+    assert.equal(haltSecurity.rows[0].relforcerowsecurity, true);
+
+    // Owner bootstrap trigger creates durable independent halt rows for each Owner.
+    await client.query(
+      "SELECT set_config('app.owner_id', $1, true)",
+      [userA.rows[0].id]
+    );
+    const haltRowsA = await client.query('SELECT owner_id, halted FROM owner_emergency_halt WHERE owner_id = $1', [userA.rows[0].id]);
+    assert.equal(haltRowsA.rows.length, 1);
+    assert.equal(haltRowsA.rows[0].owner_id, userA.rows[0].id);
+    assert.equal(haltRowsA.rows[0].halted, false);
+    await client.query(
+      'UPDATE owner_emergency_halt SET halted = TRUE, reason = $2 WHERE owner_id = $1',
+      [userA.rows[0].id, 'Tenant A incident']
+    );
+    await client.query(
+      "SELECT set_config('app.owner_id', $1, true)",
+      [userB.rows[0].id]
+    );
+    const haltRowsB = await client.query('SELECT owner_id, halted FROM owner_emergency_halt WHERE owner_id = $1', [userB.rows[0].id]);
+    assert.equal(haltRowsB.rows.length, 1);
+    assert.equal(haltRowsB.rows[0].owner_id, userB.rows[0].id);
+    assert.equal(haltRowsB.rows[0].halted, false);
+    await client.query(
+      "SELECT set_config('app.owner_id', $1, true)",
+      [userA.rows[0].id]
+    );
+    const haltAAfterUpdate = await client.query(
+      'SELECT halted, reason FROM owner_emergency_halt WHERE owner_id = $1',
+      [userA.rows[0].id]
+    );
+    assert.equal(haltAAfterUpdate.rows[0].halted, true);
+    assert.equal(haltAAfterUpdate.rows[0].reason, 'Tenant A incident');
+
+    const secretSecurity = await client.query(
+      `SELECT c.relrowsecurity, c.relforcerowsecurity
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'app_secrets'`
+    );
+    assert.equal(secretSecurity.rows.length, 1);
+    assert.equal(secretSecurity.rows[0].relrowsecurity, true);
+    assert.equal(secretSecurity.rows[0].relforcerowsecurity, true);
+    await client.query(
+      `INSERT INTO app_secrets
+        (id, owner_id, tenant_id, name, provider, masked_preview, ciphertext, nonce, auth_tag)
+       VALUES
+        ($1, $2, $3, 'Tenant A Search Key', 'search', 'abc...xyz', 'cipher-a', 'nonce-a', 'tag-a'),
+        ($4, $5, $6, 'Tenant B Search Key', 'search', 'def...uvw', 'cipher-b', 'nonce-b', 'tag-b')`,
+      [randomUUID(), userA.rows[0].id, tenantA.rows[0].id, randomUUID(), userB.rows[0].id, tenantB.rows[0].id]
+    );
+    const secretRowsA = await client.query(
+      'SELECT name FROM app_secrets WHERE owner_id = $1 AND tenant_id = $2 AND revoked_at IS NULL',
+      [userA.rows[0].id, tenantA.rows[0].id]
+    );
+    const secretRowsB = await client.query(
+      'SELECT name FROM app_secrets WHERE owner_id = $1 AND tenant_id = $2 AND revoked_at IS NULL',
+      [userB.rows[0].id, tenantB.rows[0].id]
+    );
+    assert.deepEqual(secretRowsA.rows.map((row: Row) => row.name), ['Tenant A Search Key']);
+    assert.deepEqual(secretRowsB.rows.map((row: Row) => row.name), ['Tenant B Search Key']);
+
+    const knowledgeSecurity = await client.query(
+      `SELECT c.relrowsecurity, c.relforcerowsecurity
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'tenant_knowledge_documents'`
+    );
+    assert.equal(knowledgeSecurity.rows.length, 1);
+    assert.equal(knowledgeSecurity.rows[0].relrowsecurity, true);
+    assert.equal(knowledgeSecurity.rows[0].relforcerowsecurity, true);
+    await client.query(
+      `INSERT INTO tenant_knowledge_documents (owner_id, tenant_id, title, source, content)
+       VALUES
+        ($1, $2, 'Tenant A RAG document', 'owner_upload', 'Tenant A private vectorless knowledge corpus'),
+        ($3, $4, 'Tenant B RAG document', 'owner_upload', 'Tenant B confidential billing corpus')`,
+      [userA.rows[0].id, tenantA.rows[0].id, userB.rows[0].id, tenantB.rows[0].id]
+    );
+    const ragA = await client.query(
+      `SELECT title FROM tenant_knowledge_documents
+        WHERE owner_id = $1 AND tenant_id = $2
+          AND search_vector @@ plainto_tsquery('simple', $3)`,
+      [userA.rows[0].id, tenantA.rows[0].id, 'private knowledge']
+    );
+    const ragB = await client.query(
+      'SELECT title FROM tenant_knowledge_documents WHERE owner_id = $1 AND tenant_id = $2',
+      [userB.rows[0].id, tenantB.rows[0].id]
+    );
+    assert.deepEqual(ragA.rows.map((row: Row) => row.title), ['Tenant A RAG document']);
+    assert.deepEqual(ragB.rows.map((row: Row) => row.title), ['Tenant B RAG document']);
+
+    const scheduleSecurity = await client.query(
+      `SELECT c.relrowsecurity, c.relforcerowsecurity
+         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'agent_schedules'`
+    );
+    assert.equal(scheduleSecurity.rows.length, 1);
+    assert.equal(scheduleSecurity.rows[0].relrowsecurity, true);
+    assert.equal(scheduleSecurity.rows[0].relforcerowsecurity, true);
+    await client.query(
+      `INSERT INTO agent_schedules
+        (tenant_id,owner_id,title,original_prompt,recurrence_type,timezone,daily_time,next_run_at)
+       VALUES
+        ($1,$2,'Tenant A morning schedule','Read project status','daily','Asia/Kolkata','09:00',NOW()+interval '1 day'),
+        ($3,$4,'Tenant B schedule','Read project status','interval','Asia/Kolkata',NULL,NOW()+interval '6 hours')`,
+      [tenantA.rows[0].id,userA.rows[0].id,tenantB.rows[0].id,userB.rows[0].id]
+    );
+    await client.query("SELECT set_config('app.owner_id',$1,true),set_config('app.tenant_id',$2,true)", [userA.rows[0].id,tenantA.rows[0].id]);
+    const schedulesA = await client.query('SELECT title FROM agent_schedules WHERE tenant_id=$1 AND owner_id=$2', [tenantA.rows[0].id,userA.rows[0].id]);
+    await client.query("SELECT set_config('app.owner_id',$1,true),set_config('app.tenant_id',$2,true)", [userB.rows[0].id,tenantB.rows[0].id]);
+    const schedulesB = await client.query('SELECT title FROM agent_schedules WHERE tenant_id=$1 AND owner_id=$2', [tenantB.rows[0].id,userB.rows[0].id]);
+    assert.deepEqual(schedulesA.rows.map((row: Row) => row.title), ['Tenant A morning schedule']);
+    assert.deepEqual(schedulesB.rows.map((row: Row) => row.title), ['Tenant B schedule']);
+
+    // Verify AutoPilot and Accounting record types are durable and tenant-isolated.
+    await client.query(
+      `INSERT INTO owner_operational_records (owner_id, tenant_id, record_type, record_id, payload)
+       VALUES
+       ($1, $2, 'autopilot_workflow', 'workflow-a', '{"id":"workflow-a","name":"Tenant A workflow"}'::jsonb),
+       ($1, $2, 'workflow_execution', 'execution-a', '{"id":"execution-a","status":"waiting_approval"}'::jsonb),
+       ($1, $2, 'verified_earning', 'earning-a', '{"id":"earning-a","status":"verified","taxableAmount":1000}'::jsonb),
+       ($1, $2, 'payout_request', 'payout-a', '{"id":"payout-a","status":"pending_owner_approval"}'::jsonb),
+       ($3, $4, 'autopilot_workflow', 'workflow-b', '{"id":"workflow-b","name":"Tenant B workflow"}'::jsonb),
+       ($3, $4, 'workflow_execution', 'execution-b', '{"id":"execution-b","status":"waiting_approval"}'::jsonb),
+       ($3, $4, 'verified_earning', 'earning-b', '{"id":"earning-b","status":"verified","taxableAmount":2000}'::jsonb),
+       ($3, $4, 'payout_request', 'payout-b', '{"id":"payout-b","status":"pending_owner_approval"}'::jsonb)`,
+      [userA.rows[0].id, tenantA.rows[0].id, userB.rows[0].id, tenantB.rows[0].id]
+    );
+    for (const recordType of ['autopilot_workflow', 'workflow_execution', 'verified_earning', 'payout_request']) {
+      const aRows = await client.query(
+        'SELECT record_id FROM owner_operational_records WHERE owner_id = $1 AND tenant_id = $2 AND record_type = $3 ORDER BY record_id',
+        [userA.rows[0].id, tenantA.rows[0].id, recordType]
+      );
+      const bRows = await client.query(
+        'SELECT record_id FROM owner_operational_records WHERE owner_id = $1 AND tenant_id = $2 AND record_type = $3 ORDER BY record_id',
+        [userB.rows[0].id, tenantB.rows[0].id, recordType]
+      );
+      assert.deepEqual(aRows.rows.map((row: Row) => row.record_id), [recordType === 'autopilot_workflow' ? 'workflow-a' : recordType === 'workflow_execution' ? 'execution-a' : recordType === 'verified_earning' ? 'earning-a' : 'payout-a']);
+      assert.deepEqual(bRows.rows.map((row: Row) => row.record_id), [recordType === 'autopilot_workflow' ? 'workflow-b' : recordType === 'workflow_execution' ? 'execution-b' : recordType === 'verified_earning' ? 'earning-b' : 'payout-b']);
+    }
     await client.query(
       `INSERT INTO app_tenant_memberships (tenant_id, user_id, membership_role)
        VALUES ($1, $2, 'owner'), ($3, $4, 'owner')`,

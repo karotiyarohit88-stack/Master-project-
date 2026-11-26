@@ -1,4 +1,5 @@
 import React from 'react';
+import { useUiLanguage, translateUi } from '../utils/uiLanguage';
 import { 
   Home,
   Bot, 
@@ -14,7 +15,8 @@ import {
   Terminal,
   GitBranch,
   BarChart3,
-  Layers
+  Layers,
+  Camera
 } from 'lucide-react';
 import { ServerHealth, AppView } from '../types';
 
@@ -39,6 +41,7 @@ export const Header: React.FC<HeaderProps> = ({
   activeView,
   onSelectView
 }) => {
+  const language = useUiLanguage();
   const navTabs: { id: AppView; label: string; icon: React.FC<{ className?: string }> }[] = [
     { id: 'home', label: 'Home', icon: Home },
     { id: 'chat', label: 'AI Chat', icon: Bot },
@@ -51,6 +54,7 @@ export const Header: React.FC<HeaderProps> = ({
     { id: 'publishing', label: 'Publishing', icon: Share2 },
     { id: 'connections', label: 'Connections', icon: Cpu },
     { id: 'logs', label: 'Audit Logs', icon: Terminal },
+    { id: 'camera', label: 'Camera Studio', icon: Camera },
   ];
 
   return (
@@ -65,8 +69,8 @@ export const Header: React.FC<HeaderProps> = ({
               type="button"
               onClick={onOpenDrawer}
               className="p-2 min-w-[38px] min-h-[38px] rounded-xl text-slate-600 hover:text-emerald-700 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-200 transition-colors relative flex items-center justify-center cursor-pointer flex-shrink-0"
-              title="Open chat history"
-              aria-label="Open chat history"
+              title={translateUi("Open chat history", language)}
+              aria-label={translateUi("Open chat history", language)}
             >
               <Menu className="w-4 h-4" />
               {conversationCount > 0 && (
@@ -81,21 +85,21 @@ export const Header: React.FC<HeaderProps> = ({
               className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer"
             >
               <img 
-                src="/assets/aistudio/1791973196299_d0ac9fe0.png" 
-                alt="Master Project Logo" 
+                src="/aaksh-ai-autopilot-icon.svg" 
+                alt="AAKSH AI AUTOPILOT" 
                 className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover border border-emerald-500 shadow-xs flex-shrink-0" 
               />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5 min-w-0">
                   <h1 className="font-bold text-xs sm:text-sm md:text-base text-slate-900 truncate">
-                    Master Project AI Agent
+                    AAKSH AI AUTOPILOT
                   </h1>
                   <span className="hidden md:inline-flex text-[9px] font-mono uppercase px-1.5 py-0.2 rounded-md bg-emerald-100 text-emerald-900 border border-emerald-300 font-bold flex-shrink-0">
                     Techar Aaksh
                   </span>
                 </div>
                 <p className="text-[10px] text-slate-500 font-mono hidden xs:block truncate">
-                  Techar Aaksh AI Control Center
+                  Midnight Navy AI Control Center
                 </p>
               </div>
             </div>
@@ -108,7 +112,7 @@ export const Header: React.FC<HeaderProps> = ({
               type="button"
               onClick={onOpenSettings}
               className="p-2 min-w-[38px] min-h-[38px] rounded-xl text-slate-600 hover:text-emerald-700 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-200 text-xs transition-colors flex items-center justify-center cursor-pointer"
-              title="Interface Settings & Preferences"
+              title={translateUi("Interface Settings & Preferences", language)}
               aria-label="Settings"
             >
               <Settings className="w-4 h-4" />
@@ -123,7 +127,7 @@ export const Header: React.FC<HeaderProps> = ({
               aria-label="Testing guide"
             >
               <HelpCircle className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-              <span className="hidden md:inline font-medium">Guide</span>
+              <span className="hidden md:inline font-medium">{translateUi("Guide", language)}</span>
             </button>
 
             {/* New Chat Button */}
@@ -134,11 +138,11 @@ export const Header: React.FC<HeaderProps> = ({
                 onNewChat();
               }}
               className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 min-h-[38px] rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-medium text-xs shadow-xs transition-all cursor-pointer"
-              title="Start new chat"
-              aria-label="Start new chat"
+              title={translateUi("Start new chat", language)}
+              aria-label={translateUi("Start new chat", language)}
             >
               <Plus className="w-4 h-4 flex-shrink-0" />
-              <span className="hidden xs:inline">New Chat</span>
+              <span className="hidden xs:inline">{translateUi("New Chat", language)}</span>
             </button>
           </div>
         </div>
@@ -163,7 +167,7 @@ export const Header: React.FC<HeaderProps> = ({
                 }`}
               >
                 <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-emerald-700'}`} />
-                <span>{tab.label}</span>
+                <span>{translateUi(tab.label, language)}</span>
               </button>
             );
           })}

@@ -11,7 +11,7 @@ type DbPool = DbClient & { connect: () => Promise<DbClient> };
 
 type TaskSession = { id: string; role: 'owner' | 'admin' | 'member' };
 
-const TASK_TYPES = new Set(['read_only', 'user_request', 'code_change', 'automation', 'media_generation', 'integration']);
+const TASK_TYPES = new Set(['read_only', 'user_request', 'code_change', 'automation', 'media_generation', 'integration', 'research']);
 const MAX_PROMPT_LENGTH = 12000;
 const MAX_PAYLOAD_BYTES = 16 * 1024;
 const TASK_COLUMNS = 'id, task_type, original_prompt, normalized_task, payload, status, priority, attempts, max_attempts, requires_approval, approved_by, approved_at, result, last_error, created_at, updated_at, started_at, completed_at';
@@ -54,12 +54,14 @@ export function createAgentTaskRouter(options: { pool?: DbPool | null } = {}) {
     const payload = req.body?.payload === undefined ? {} : req.body.payload;
     const idempotencyKey = typeof req.header('idempotency-key') === 'string' ? req.header('idempotency-key')!.trim() : '';
     if (!TASK_TYPES.has(taskType)) return jsonError(res, 400, 'Unsupported task type.');
+    if (taskType === 'research' && context.tenant.role !== 'owner') return jsonError(res, 403, 'Only the tenant Owner can queue research that uses encrypted provider secrets.');
     if (!prompt || prompt.length > MAX_PROMPT_LENGTH) return jsonError(res, 400, 'Prompt must contain between 1 and 12000 characters.');
     if (!isPlainObject(payload) || Buffer.byteLength(JSON.stringify(payload), 'utf8') > MAX_PAYLOAD_BYTES) {
       return jsonError(res, 400, 'Task payload must be a JSON object no larger than 16 KB.');
     }
-    if (taskType === 'read_only' && (payload.action !== 'read_project_status' || Object.keys(payload).some(key => key !== 'action'))) {
-      return jsonError(res, 400, 'Read-only tasks currently support only the read_project_status action.');
+    if ((taskType === 'read_only' && (payload.action !== 'read_project_status' || Object.keys(payload).some(key => key !== 'action'))) ||
+        (taskType === 'research' && (payload.action !== 'research' || Object.keys(payload).some(key => key !== 'action')))) {
+      return jsonError(res, 400, 'Read-only tasks support only read_project_status; research tasks support only the research action.');
     }
     if (idempotencyKey && (idempotencyKey.length > 128 || !/^[A-Za-z0-9._:-]+$/.test(idempotencyKey))) {
       return jsonError(res, 400, 'Idempotency-Key has an invalid format.');

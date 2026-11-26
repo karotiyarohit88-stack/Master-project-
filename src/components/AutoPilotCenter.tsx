@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { getCsrfHeaders } from '../utils/csrf';
+import { ScheduleManager } from './ScheduleManager';
 import { 
   Compass, 
   Play, 
@@ -457,6 +458,7 @@ export const AutoPilotCenter: React.FC<{
 
   return (
     <div className="flex-1 flex flex-col h-full max-w-5xl w-full mx-auto p-2.5 sm:p-4 overflow-y-auto min-w-0">
+      <ScheduleManager />
       {/* Top Banner */}
       <div className="bg-white border border-emerald-100 rounded-2xl p-4 sm:p-5 shadow-2xs mb-4 min-w-0">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 min-w-0">

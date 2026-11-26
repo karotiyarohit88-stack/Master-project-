@@ -98,3 +98,23 @@ main, section, article, aside, header, footer, nav { min-width: 0; }
 @media (min-width: 641px) {
   body { overflow-x: clip; }
 }
+
+
+/* AAKSH AI AUTOPILOT — Midnight Navy / White brand palette.
+   Tailwind emerald utilities are remapped centrally so every existing screen,
+   button, badge, focus ring and card follows the approved #6 colorway. */
+:root {
+  --color-emerald-50: #f3f4fa;
+  --color-emerald-100: #e7e9f4;
+  --color-emerald-200: #d1d5e8;
+  --color-emerald-300: #aeb5d4;
+  --color-emerald-400: #737da9;
+  --color-emerald-500: #3c477b;
+  --color-emerald-600: #14183e;
+  --color-emerald-700: #101432;
+  --color-emerald-800: #0c102b;
+  --color-emerald-900: #080c23;
+  --color-emerald-950: #050719;
+  --color-sky-50: #f4f5fa;
+  --color-teal-50: #f3f4fa;
+}
