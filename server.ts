@@ -3087,9 +3087,9 @@ app.post('/api/video/generate-voice', async (req: Request, res: Response) => {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          text: text.slice(0, 500),
-          model_id: 'eleven_monolingual_v1',
-          voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+          text: String(text).slice(0, 3000),
+          model_id: 'eleven_multilingual_v2',
+          voice_settings: { stability: 0.42, similarity_boost: 0.78, style: 0.25, use_speaker_boost: true }
         })
       });
 
