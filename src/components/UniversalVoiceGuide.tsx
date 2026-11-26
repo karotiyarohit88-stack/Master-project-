@@ -35,6 +35,9 @@ export const UniversalVoiceGuide: React.FC = () => {
   const [guideSteps, setGuideSteps] = useState<Array<{ title: string; instruction: string; targetLabel: string }>>([]);
   const [guideNextAction, setGuideNextAction] = useState('');
   const [guideError, setGuideError] = useState('');
+  const [voiceGender, setVoiceGender] = useState<'female' | 'male'>('female');
+  const [naturalVoiceEnabled, setNaturalVoiceEnabled] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const recognitionRef = useRef<Recognition | null>(null);
   const voiceModeRef = useRef(false);
   const copy = COPY[language];
@@ -64,14 +67,50 @@ export const UniversalVoiceGuide: React.FC = () => {
     .filter(el => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length) && !el.closest('[aria-label="Universal voice and accessibility controls"]'))
     .slice(0, 60), []);
 
-  const speak = useCallback((text: string) => {
-    if (!('speechSynthesis' in window)) { setSpokenText(text); return; }
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = language === 'hi' ? 'hi-IN' : 'en-IN';
-    utterance.rate = 0.94;
+  const speak = useCallback(async (text: string) => {
+    const cleanText = text.trim().slice(0, 3000);
+    if (!cleanText) return;
+    window.speechSynthesis?.cancel();
+    audioRef.current?.pause();
+    audioRef.current = null;
+
+    // External neural TTS is opt-in and asks for approval on every generation
+    // because provider usage may consume a paid quota.
+    if (naturalVoiceEnabled && window.confirm('Generate this speech with the configured ElevenLabs voice? Provider usage or charges may apply.')) {
+      const voiceId = voiceGender === 'female' ? 'EXAVITQu4vr4xnSDxMaL' : 'ErXwobaYiN019PkySvjV';
+      try {
+        const response = await fetch('/api/video/generate-voice', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ text: cleanText, voiceId, language })
+        });
+        const data = await response.json();
+        if (response.ok && data.audioUrl) {
+          const audio = new Audio(data.audioUrl);
+          audioRef.current = audio;
+          await audio.play();
+          return;
+        }
+        setGuideError(data.error || 'Neural voice is not configured; using device voice instead.');
+      } catch {
+        setGuideError('Neural voice is unavailable; using device voice instead.');
+      }
+    }
+
+    if (!('speechSynthesis' in window)) { setSpokenText(cleanText); return; }
+    const voices = window.speechSynthesis.getVoices();
+    const locale = language === 'hi' ? 'hi-IN' : 'en-IN';
+    const preferred = voices.find(voice => voice.lang.toLowerCase().startsWith(language === 'hi' ? 'hi' : 'en')
+      && (voiceGender === 'female' ? /female|woman|zira|samantha|susan|heera|kalpana/i.test(voice.name) : /male|man|david|mark|ravi|hemant/i.test(voice.name)));
+    const fallback = voices.find(voice => voice.lang.toLowerCase().startsWith(language === 'hi' ? 'hi' : 'en'));
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.lang = locale;
+    utterance.voice = preferred || fallback || null;
+    utterance.rate = 0.96;
+    utterance.pitch = voiceGender === 'female' ? 1.04 : 0.94;
     window.speechSynthesis.speak(utterance);
-  }, [language]);
+  }, [language, naturalVoiceEnabled, voiceGender]);
 
   const readScreen = useCallback(() => {
     const main = document.querySelector('main') || document.querySelector('#root');
@@ -223,7 +262,7 @@ export const UniversalVoiceGuide: React.FC = () => {
     else setSpokenText('No exact visible control matched this step; follow the instruction manually.');
   };
 
-  useEffect(() => () => { voiceModeRef.current = false; recognitionRef.current?.stop(); window.speechSynthesis?.cancel(); }, []);
+  useEffect(() => () => { voiceModeRef.current = false; recognitionRef.current?.stop(); window.speechSynthesis?.cancel(); audioRef.current?.pause(); audioRef.current = null; }, []);
 
     const targetLabel = (el: HTMLElement) => (el.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('name') || el.tagName).trim().replace(/\s+/g, ' ').slice(0, 90);
 
@@ -236,6 +275,9 @@ export const UniversalVoiceGuide: React.FC = () => {
       <div className="flex items-center justify-between gap-2 mb-3"><h2 className="font-bold text-sm">{copy.title}</h2><button type="button" onClick={() => setOpen(false)} aria-label="Close voice guide" className="p-2 rounded-lg hover:bg-slate-100"><X size={17}/></button></div>
       <label className="block text-xs font-semibold mb-1">{copy.language}</label>
       <select aria-label="Choose voice language" value={language} onChange={e => setLanguage(e.target.value as Language)} className="w-full rounded-xl border border-slate-300 p-2.5 mb-3 text-sm"><option value="hi">हिन्दी</option><option value="hinglish">Hinglish</option><option value="en">English</option></select>
+      <label className="block text-xs font-semibold mb-1">Speaker voice</label>
+      <select aria-label="Choose speaker voice gender" value={voiceGender} onChange={e => setVoiceGender(e.target.value as 'female' | 'male')} className="w-full rounded-xl border border-slate-300 p-2.5 mb-2 text-sm"><option value="female">Female voice</option><option value="male">Male voice</option></select>
+      <label className="flex items-center gap-2 text-xs mb-3"><input type="checkbox" checked={naturalVoiceEnabled} onChange={e => setNaturalVoiceEnabled(e.target.checked)} /> Use configured ElevenLabs neural voice (asks approval per use)</label>
       <div className="grid grid-cols-2 gap-2">
         <button type="button" onClick={readScreen} className="rounded-xl bg-[#14183E] text-white p-2.5 text-xs font-semibold flex items-center justify-center gap-2"><Volume2 size={16}/>{copy.read}</button>
         <button type="button" onClick={() => window.speechSynthesis?.cancel()} className="rounded-xl border border-slate-300 p-2.5 text-xs font-semibold flex items-center justify-center gap-2"><VolumeX size={16}/>{copy.stop}</button>
