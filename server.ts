@@ -1374,28 +1374,67 @@ app.get('/api/database/status', requireOwnerForSecrets, async (req: Request, res
   }
 });
 
-// POST /api/database/migrate: admin-only and disabled unless explicitly enabled server-side.
+// A process-local mutex prevents overlapping manual migration requests on this instance.
+let databaseMigrationApplyInProgress = false;
+
+// POST /api/database/migrate: explicit Owner + Admin Token + CSRF one-shot migration authorization.
 app.post('/api/database/migrate', requireOwnerForSecrets, requireAdminToken, async (req: Request, res: Response) => {
-  if (process.env.RUN_DB_MIGRATIONS !== 'true') {
-    return res.status(403).json({
+  const ownerId = (res.locals.authSession as { id?: string } | undefined)?.id || '';
+  const expectedDatabase = typeof req.body?.expectedDatabase === 'string' ? req.body.expectedDatabase.trim() : '';
+  const targetMigration = typeof req.body?.targetMigration === 'string' ? req.body.targetMigration.trim() : '';
+
+  if (req.body?.confirm !== true ||
+      !expectedDatabase ||
+      targetMigration !== '20261126_001_ai_conversation_memory.sql') {
+    return res.status(400).json({
       success: false,
-      error: 'Migrations are disabled. Set RUN_DB_MIGRATIONS=true in the server secret/configuration only for an approved migration window.'
+      error: 'Explicit confirmation, the verified database name, and the requested migration identifier are required.'
     });
   }
-
-  const connection = await checkPostgresConnection();
-  if (!connection.connected) {
-    return res.status(503).json({ success: false, error: connection.error || 'PostgreSQL is not connected.' });
+  if (databaseMigrationApplyInProgress) {
+    return res.status(409).json({ success: false, error: 'A database migration is already running on this instance.' });
   }
 
   try {
-    const result = await applyPendingPostgresMigrations();
-    return res.json({ success: true, provider: 'PostgreSQL', ...result });
+    // Fail closed if the durable Owner halt state is active or unavailable.
+    await assertOwnerEmergencyHaltClear(ownerId);
+    const connection = await checkPostgresConnection();
+    if (!connection.connected) {
+      return res.status(503).json({ success: false, error: connection.error || 'PostgreSQL is not connected.' });
+    }
+    if (connection.database !== expectedDatabase) {
+      return res.status(409).json({
+        success: false,
+        error: 'The connected database does not match the database confirmed in the Owner UI.'
+      });
+    }
+
+    databaseMigrationApplyInProgress = true;
+    // Keep the global setting disabled. Grant the existing migration runner a
+    // short-lived in-process opt-in only for this confirmed Owner request.
+    process.env.RUN_DB_MIGRATIONS = 'true';
+    try {
+      await assertOwnerEmergencyHaltClear(ownerId);
+      const result = await applyPendingPostgresMigrations();
+      recordAudit({
+        category: 'security',
+        action: 'Owner Applied PostgreSQL Migrations',
+        status: 'success',
+        details: 'Owner-triggered migration run completed for database ' + connection.database +
+          '. Applied migrations: ' + (result.applied.join(', ') || 'none') + '.'
+      });
+      return res.json({ success: true, provider: 'PostgreSQL', database: connection.database, ...result });
+    } finally {
+      // Always restore the required safe default, including when the runner throws.
+      process.env.RUN_DB_MIGRATIONS = 'false';
+      databaseMigrationApplyInProgress = false;
+    }
   } catch (error) {
-    return res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message.slice(0, 300) : 'PostgreSQL migration failed.'
-    });
+    process.env.RUN_DB_MIGRATIONS = 'false';
+    databaseMigrationApplyInProgress = false;
+    const message = error instanceof Error ? error.message : 'PostgreSQL migration failed.';
+    const status = /Emergency halt/i.test(message) ? 423 : 500;
+    return res.status(status).json({ success: false, error: message.slice(0, 300) });
   }
 });
 
