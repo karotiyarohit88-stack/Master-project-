@@ -2502,7 +2502,10 @@ ${isConsequential ? '#### 3. Safety Authorization:\nThis operation is consequent
     await saveConversationTurn(ownerId, tenantId, 'user', sanitizeUntrustedText(prompt, 4000), { page: 'AI Chat', language: targetLanguage || 'auto', questionType: 'chat' });
     recentPersistentMemory = (await getRecentConversationMemory(ownerId, tenantId, 12)).map(turn => ({ role: turn.role, content: turn.content }));
   } catch {
-    return res.status(503).json({ error: 'Persistent tenant memory is unavailable; AI chat was not sent to the model.' });
+    // Persistent memory is an optional enhancement. Until its migration is applied,
+    // continue with the authenticated request history and never break normal AI chat.
+    recentPersistentMemory = [];
+    console.warn('Persistent AI memory unavailable; continuing this chat without durable memory.');
   }
   let client: GoogleGenAI | null;
   try { client = await getGenAI(ownerId); }
