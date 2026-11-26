@@ -38,6 +38,13 @@ export const UniversalVoiceGuide: React.FC = () => {
   const [voiceGender, setVoiceGender] = useState<'female' | 'male'>('female');
   const [naturalVoiceEnabled, setNaturalVoiceEnabled] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [userQuestion, setUserQuestion] = useState('');
+  const [conversation, setConversation] = useState<Array<{ role: 'user' | 'assistant'; text: string }>>([]);
+  const [posterBackground, setPosterBackground] = useState<string>('');
+  const [posterTitle, setPosterTitle] = useState('AAKSH AI AUTOPILOT');
+  const [posterSubtitle, setPosterSubtitle] = useState('Your personal AI workspace');
+  const guideAbortRef = useRef<AbortController | null>(null);
+  const speechGenerationRef = useRef(0);
   const recognitionRef = useRef<Recognition | null>(null);
   const voiceModeRef = useRef(false);
   const copy = COPY[language];
@@ -68,6 +75,7 @@ export const UniversalVoiceGuide: React.FC = () => {
     .slice(0, 60), []);
 
   const speak = useCallback(async (text: string) => {
+    const speechGeneration = ++speechGenerationRef.current;
     const cleanText = text.trim().slice(0, 3000);
     if (!cleanText) return;
     window.speechSynthesis?.cancel();
@@ -90,6 +98,7 @@ export const UniversalVoiceGuide: React.FC = () => {
           const audio = new Audio(data.audioUrl);
           audioRef.current = audio;
           await audio.play();
+          if (speechGeneration !== speechGenerationRef.current) { audio.pause(); return; }
           return;
         }
         setGuideError(data.error || 'Neural voice is not configured; using device voice instead.');
@@ -109,8 +118,19 @@ export const UniversalVoiceGuide: React.FC = () => {
     utterance.voice = preferred || fallback || null;
     utterance.rate = 0.96;
     utterance.pitch = voiceGender === 'female' ? 1.04 : 0.94;
-    window.speechSynthesis.speak(utterance);
+    if (speechGeneration === speechGenerationRef.current) window.speechSynthesis.speak(utterance);
   }, [language, naturalVoiceEnabled, voiceGender]);
+
+  const stopSpeech = useCallback(() => {
+    speechGenerationRef.current += 1;
+    window.speechSynthesis?.cancel();
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0; audioRef.current = null; }
+  }, []);
+
+  const interruptForInput = useCallback(() => {
+    stopSpeech();
+    guideAbortRef.current?.abort();
+  }, [stopSpeech]);
 
   const readScreen = useCallback(() => {
     const main = document.querySelector('main') || document.querySelector('#root');
@@ -147,7 +167,9 @@ export const UniversalVoiceGuide: React.FC = () => {
   const executeVoiceCommand = useCallback((raw: string) => {
     const command = normalizeVoiceText(raw);
     if (!command) return;
-    if (/^(stop|रोक|बंद|आवाज बंद)/u.test(command)) { window.speechSynthesis?.cancel(); voiceModeRef.current = false; setVoiceMode(false); return; }
+    if (/^(stop|रोक|बंद|आवाज बंद)/u.test(command)) { interruptForInput(); voiceModeRef.current = false; setVoiceMode(false); return; }
+    // Any new utterance while the assistant is speaking is a barge-in: stop playback first.
+    interruptForInput();
     if (command.includes('read screen') || command.includes('स्क्रीन पढ़') || command.includes('screen reader')) { setAccessibility(true); readScreen(); return; }
     if (command.includes('accessibility mode on') || command.includes('accessibility चालू')) { setAccessibility(true); return; }
     if (command.includes('accessibility mode off') || command.includes('accessibility बंद')) { setAccessibility(false); return; }
@@ -199,7 +221,7 @@ export const UniversalVoiceGuide: React.FC = () => {
     if (candidate && isHighImpactVoiceAction(candidate) && !window.confirm(copy.confirm)) return;
     match.click();
     setSpokenText('Activated ' + (match.innerText || match.getAttribute('aria-label') || 'control'));
-  }, [copy.confirm, getTargets, language, readScreen, speak]);
+  }, [copy.confirm, getTargets, interruptForInput, language, readScreen, speak]);
 
   const createRecognition = useCallback((continuous: boolean) => {
     const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -208,7 +230,7 @@ export const UniversalVoiceGuide: React.FC = () => {
     recognition.lang = language === 'hi' ? 'hi-IN' : 'en-IN';
     recognition.continuous = continuous;
     recognition.interimResults = false;
-    recognition.onresult = event => executeVoiceCommand(event.results?.[event.results.length - 1]?.[0]?.transcript || '');
+    recognition.onresult = event => { interruptForInput(); executeVoiceCommand(event.results?.[event.results.length - 1]?.[0]?.transcript || ''); };
     recognition.onerror = () => setListening(false);
     recognition.onend = () => {
       setListening(false);
@@ -219,7 +241,7 @@ export const UniversalVoiceGuide: React.FC = () => {
     recognitionRef.current?.stop();
     recognitionRef.current = recognition;
     try { recognition.start(); setListening(true); } catch { setListening(false); setSpokenText(copy.noSpeech); }
-  }, [copy.noSpeech, executeVoiceCommand, language]);
+  }, [copy.noSpeech, executeVoiceCommand, interruptForInput, language]);
 
   const toggleVoiceMode = () => {
     if (voiceMode) { voiceModeRef.current = false; setVoiceMode(false); setSpokenText(copy.disabled); return; }
@@ -231,28 +253,59 @@ export const UniversalVoiceGuide: React.FC = () => {
   };
 
   const explainQuestion = async (question: string) => {
+    interruptForInput();
     const items = scanScreen();
     const main = document.querySelector('main') || document.querySelector('#root');
     const text = (main?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 6000);
     const labels = items.map(el => (el.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('name') || el.tagName).trim()).filter(Boolean);
     setGuideLoading(true); setGuideError(''); setGuideSteps([]);
     try {
+      const controller = new AbortController();
+      guideAbortRef.current = controller;
       const response = await fetch('/api/ai/page-guide', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ page: document.title + ' ' + window.location.pathname, question, language, pageText: text, controls: labels })
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal, credentials: 'same-origin',
+        body: JSON.stringify({ page: document.title + ' ' + window.location.pathname, question, language, pageText: text, controls: labels, conversation: conversation.slice(-8) })
       });
       const data = await response.json();
       if (!response.ok || !data.guide) throw new Error(data.error || 'Page guide unavailable.');
       const guide = data.guide;
+      setConversation(previous => [...previous, { role: 'user', text: question }, { role: 'assistant', text: [guide.summary, ...(guide.steps || []).map((step: any) => step.instruction), guide.nextAction].filter(Boolean).join(' ') }].slice(-12));
       setGuideSummary(guide.summary || '');
       setGuideSteps(Array.isArray(guide.steps) ? guide.steps : []);
       setGuideNextAction(guide.nextAction || '');
       const narration = [guide.summary, ...(guide.steps || []).map((step: any, index: number) => (index + 1) + '. ' + step.title + ': ' + step.instruction), guide.nextAction, guide.safetyNote].filter(Boolean).join(' ');
       setSpokenText(narration); speak(narration);
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') return;
       const message = error instanceof Error ? error.message : 'AI page guide unavailable.';
       setGuideError(message); setSpokenText(message); speak(message);
-    } finally { setGuideLoading(false); }
+    } finally { if (guideAbortRef.current?.signal.aborted || !guideAbortRef.current) setGuideLoading(false); else setGuideLoading(false); }
+  };
+
+  const submitQuestion = (event: React.FormEvent) => {
+    event.preventDefault();
+    const question = userQuestion.trim();
+    if (!question) return;
+    interruptForInput();
+    setUserQuestion('');
+    void explainQuestion(question);
+  };
+
+  const generatePosterBackground = () => {
+    const canvas = document.createElement('canvas'); canvas.width = 1200; canvas.height = 420;
+    const ctx = canvas.getContext('2d'); if (!ctx) return;
+    const gradient = ctx.createLinearGradient(0, 0, 1200, 420);
+    gradient.addColorStop(0, '#14183E'); gradient.addColorStop(1, '#344078');
+    ctx.fillStyle = gradient; ctx.fillRect(0, 0, 1200, 420);
+    for (let i = 0; i < 70; i++) { ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.beginPath(); ctx.arc((i * 173) % 1200, (i * 97) % 420, (i % 3) + 1, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 54px sans-serif'; ctx.fillText(posterTitle.slice(0, 34), 64, 185);
+    ctx.font = '28px sans-serif'; ctx.fillText(posterSubtitle.slice(0, 65), 66, 245);
+    setPosterBackground(canvas.toDataURL('image/jpeg', 0.88));
+  };
+
+  const loadPosterImage = (file?: File) => {
+    if (!file || !file.type.startsWith('image/') || file.size > 5 * 1024 * 1024) { setGuideError('Choose an image under 5 MB.'); return; }
+    const reader = new FileReader(); reader.onload = () => setPosterBackground(String(reader.result || '')); reader.readAsDataURL(file);
   };
 
   const focusGuideTarget = (label: string, index: number) => {
@@ -262,7 +315,7 @@ export const UniversalVoiceGuide: React.FC = () => {
     else setSpokenText('No exact visible control matched this step; follow the instruction manually.');
   };
 
-  useEffect(() => () => { voiceModeRef.current = false; recognitionRef.current?.stop(); window.speechSynthesis?.cancel(); audioRef.current?.pause(); audioRef.current = null; }, []);
+  useEffect(() => () => { voiceModeRef.current = false; recognitionRef.current?.stop(); guideAbortRef.current?.abort(); window.speechSynthesis?.cancel(); audioRef.current?.pause(); audioRef.current = null; }, []);
 
     const targetLabel = (el: HTMLElement) => (el.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('name') || el.tagName).trim().replace(/\s+/g, ' ').slice(0, 90);
 
@@ -280,7 +333,7 @@ export const UniversalVoiceGuide: React.FC = () => {
       <label className="flex items-center gap-2 text-xs mb-3"><input type="checkbox" checked={naturalVoiceEnabled} onChange={e => setNaturalVoiceEnabled(e.target.checked)} /> Use configured ElevenLabs neural voice (asks approval per use)</label>
       <div className="grid grid-cols-2 gap-2">
         <button type="button" onClick={readScreen} className="rounded-xl bg-[#14183E] text-white p-2.5 text-xs font-semibold flex items-center justify-center gap-2"><Volume2 size={16}/>{copy.read}</button>
-        <button type="button" onClick={() => window.speechSynthesis?.cancel()} className="rounded-xl border border-slate-300 p-2.5 text-xs font-semibold flex items-center justify-center gap-2"><VolumeX size={16}/>{copy.stop}</button>
+        <button type="button" onClick={stopSpeech} className="rounded-xl border border-slate-300 p-2.5 text-xs font-semibold flex items-center justify-center gap-2"><VolumeX size={16}/>{copy.stop}</button>
         <button type="button" onClick={() => createRecognition(false)} className="rounded-xl bg-[#14183E] text-white p-2.5 text-xs font-semibold flex items-center justify-center gap-2"><Mic size={16}/>{listening ? 'Listening…' : copy.listen}</button>
         <button type="button" onClick={() => setAccessibility(v => !v)} aria-pressed={accessibility} className="rounded-xl border border-slate-300 p-2.5 text-xs font-semibold flex items-center justify-center gap-2"><Accessibility size={16}/>{copy.accessibility}: {accessibility ? copy.on : copy.off}</button>
       </div>
@@ -288,10 +341,26 @@ export const UniversalVoiceGuide: React.FC = () => {
       <p className="text-[10px] text-slate-500 mt-2">Continuous listening is enabled only after explicit confirmation. It stops when you turn this mode off or leave the page. Critical actions still require confirmation.</p>
       <h3 className="text-xs font-bold mt-4 mb-2 flex items-center gap-2"><Sparkles size={14}/>{copy.questions}</h3>
       <div className="space-y-1.5">{actionQuestions.map(q => <button type="button" key={q} onClick={() => void explainQuestion(q)} className="w-full text-left rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 p-2.5 text-xs flex items-center justify-between gap-2">{q}<ChevronRight size={14}/></button>)}</div>
+      <form onSubmit={submitQuestion} className="mt-3 rounded-xl border border-slate-200 p-2.5" aria-label="Ask AAKSH a question">
+        <label htmlFor="aaksh-guide-question" className="block text-xs font-bold mb-1">Apna sawaal poochhein / Ask me anything</label>
+        <textarea id="aaksh-guide-question" value={userQuestion} onFocus={interruptForInput} onChange={e => setUserQuestion(e.target.value)} rows={2} maxLength={500} placeholder="Yahan type karein ya mic se poochhein…" className="w-full resize-y rounded-lg border border-slate-300 p-2 text-xs" />
+        <div className="flex gap-2 mt-2">
+          <button type="button" onClick={() => { interruptForInput(); createRecognition(false); }} className="flex-1 rounded-lg border border-slate-300 p-2 text-xs"><Mic size={14} className="inline mr-1"/> Ask by voice</button>
+          <button type="submit" disabled={!userQuestion.trim() || guideLoading} className="flex-1 rounded-lg bg-[#14183E] text-white p-2 text-xs font-bold">Send question</button>
+        </div>
+      </form>
+      <div className="mt-3 rounded-xl border border-slate-200 p-3">
+        <h3 className="text-xs font-bold mb-2">Poster / Banner background</h3>
+        <input aria-label="Poster title" value={posterTitle} onChange={e => setPosterTitle(e.target.value)} maxLength={34} className="w-full rounded-lg border p-2 text-xs mb-2" />
+        <input aria-label="Poster subtitle" value={posterSubtitle} onChange={e => setPosterSubtitle(e.target.value)} maxLength={65} className="w-full rounded-lg border p-2 text-xs mb-2" />
+        <div className="flex gap-2 flex-wrap"><button type="button" onClick={generatePosterBackground} className="rounded-lg bg-[#14183E] text-white px-3 py-2 text-xs">Generate navy banner</button><label className="rounded-lg border px-3 py-2 text-xs cursor-pointer">Upload background<input type="file" accept="image/*" className="sr-only" onChange={e => loadPosterImage(e.target.files?.[0])}/></label><button type="button" onClick={() => setPosterBackground('')} className="rounded-lg border px-3 py-2 text-xs">Remove</button></div>
+        {posterBackground && <div className="mt-2 rounded-xl overflow-hidden border"><img src={posterBackground} alt="Generated message banner background" className="w-full max-h-28 object-cover"/><p className="p-2 text-[10px] text-slate-500">This background styles the guide response preview; it does not alter or obscure the original message.</p></div>}
+      </div>
+      {conversation.length > 0 && <div className="mt-3 space-y-2" aria-label="Recent guide conversation">{conversation.slice(-6).map((turn, i) => <div key={i} className={turn.role === 'user' ? 'ml-6 rounded-lg bg-slate-100 p-2 text-xs' : 'mr-3 rounded-lg border border-slate-200 p-2 text-xs'}><b>{turn.role === 'user' ? 'You' : 'AAKSH'}:</b> {turn.text}</div>)}</div>}
       <button type="button" onClick={scanScreen} className="mt-2 text-xs underline text-[#14183E]">Refresh screen controls</button>
       {guideLoading && <p role="status" className="mt-2 text-xs">AI is reviewing this screen…</p>}
       {guideError && <p role="alert" className="mt-2 text-xs text-red-700">{guideError}</p>}
-      {guideSummary && <div className="mt-3 rounded-xl border border-[#14183E]/20 bg-[#f5f6fb] p-3"><p className="text-xs font-semibold">{guideSummary}</p><ol className="mt-2 list-decimal pl-4 space-y-2">{guideSteps.map((step,i) => <li key={i} className="text-xs"><p className="font-bold">{step.title}</p><p>{step.instruction}</p>{step.targetLabel && <button type="button" onClick={() => focusGuideTarget(step.targetLabel,i)} className="mt-1 underline text-[#14183E]">Find: {step.targetLabel}</button>}</li>)}</ol>{guideNextAction && <p className="mt-2 text-xs font-bold">Next: {guideNextAction}</p>}</div>}
+      {guideSummary && <div className="mt-3 rounded-xl border border-[#14183E]/20 bg-[#f5f6fb] p-3" style={posterBackground ? { backgroundImage: `linear-gradient(rgba(255,255,255,.90),rgba(255,255,255,.90)),url(${posterBackground})`, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}><p className="text-xs font-semibold">{guideSummary}</p><ol className="mt-2 list-decimal pl-4 space-y-2">{guideSteps.map((step,i) => <li key={i} className="text-xs"><p className="font-bold">{step.title}</p><p>{step.instruction}</p>{step.targetLabel && <button type="button" onClick={() => focusGuideTarget(step.targetLabel,i)} className="mt-1 underline text-[#14183E]">Find: {step.targetLabel}</button>}</li>)}</ol>{guideNextAction && <p className="mt-2 text-xs font-bold">Next: {guideNextAction}</p>}<p className="mt-3 border-t border-slate-300 pt-2 text-xs font-semibold">{language === 'hi' ? 'क्या आपको यह समझ आ गया, या मैं आगे के विकल्प समझाऊँ?' : language === 'hinglish' ? 'Samajh aa gaya, ya main next options explain karun?' : 'Does that make sense, or should I explain the next options?'} </p><div className="flex gap-2 mt-2"><button type="button" onClick={() => void explainQuestion(language === 'hi' ? 'हाँ, अगला कदम और विकल्प समझाइए।' : 'Please explain the next options and step.')} className="rounded-lg bg-[#14183E] text-white px-3 py-2 text-xs">{language === 'hi' ? 'आगे समझाएँ' : 'Explain next'}</button><button type="button" onClick={stopSpeech} className="rounded-lg border px-3 py-2 text-xs">{language === 'hi' ? 'समझ आ गया' : 'Got it'}</button></div></div>}
       {spokenText && <p role="status" aria-live="polite" className="mt-3 rounded-lg bg-slate-50 border border-slate-200 p-2 text-xs">{spokenText}</p>}
       {targets.length > 0 && <div className="mt-3 rounded-xl border border-[#14183E]/20 bg-[#f5f6fb] p-3"><h3 className="text-xs font-bold mb-2 flex items-center gap-2"><Focus size={14}/>Interactive screen controls</h3><ol className="list-decimal pl-4 space-y-1.5 text-xs">{targets.slice(0, 14).map((el, i) => <li key={i}><button type="button" onClick={() => focusTarget(el, i)} className="text-left underline decoration-dotted underline-offset-2">{targetLabel(el) || 'Unnamed control'}</button></li>)}</ol></div>}
       {pageText && <p className="sr-only">{pageText.slice(0, 1000)}</p>}
