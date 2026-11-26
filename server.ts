@@ -1415,7 +1415,7 @@ app.post('/api/database/migrate', requireOwnerForSecrets, requireAdminToken, asy
     process.env.RUN_DB_MIGRATIONS = 'true';
     try {
       await assertOwnerEmergencyHaltClear(ownerId);
-      const result = await applyPendingPostgresMigrations();
+      const result = await applyPendingPostgresMigrations(['20261126_001_ai_conversation_memory.sql']);
       recordAudit({
         category: 'security',
         action: 'Owner Applied PostgreSQL Migrations',
