@@ -333,6 +333,18 @@ const OTP_TTL_MS = 10 * 60 * 1000;
 const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
 const OTP_MAX_ATTEMPTS = 5;
 
+
+function safeOtpErrorDetails(error: unknown) {
+  const candidate = error as { name?: unknown; code?: unknown; message?: unknown };
+  const message = typeof candidate?.message === 'string' ? candidate.message : '';
+  const statusMatch = message.match(/\bHTTP\s+(\d{3})\b/i);
+  return {
+    errorName: typeof candidate?.name === 'string' ? candidate.name.slice(0, 80) : 'UnknownError',
+    errorCode: typeof candidate?.code === 'string' ? candidate.code.slice(0, 40) : undefined,
+    httpStatus: statusMatch ? Number(statusMatch[1]) : undefined
+  };
+}
+
 async function issueOtpChallenge(
   pool: AuthDbPool,
   email: string,
@@ -342,26 +354,35 @@ async function issueOtpChallenge(
   userId?: string,
   invitationId?: string
 ): Promise<string> {
-  const pepper = options.otpPepper ?? process.env.AAKSH_OTP_PEPPER ?? '';
-  const material = createOtpChallengeMaterial(pepper);
-  await pool.query(
-    `UPDATE app_email_otp_challenges
-        SET invalidated_at = NOW()
-      WHERE lower(trim(email)) = $1 AND purpose = $2
-        AND consumed_at IS NULL AND invalidated_at IS NULL`,
-    [email, purpose]
-  );
-  await pool.query(
-    `INSERT INTO app_email_otp_challenges
-       (challenge_token_hash, email, purpose, otp_hash, pending_payload, user_id, invitation_id,
-        attempts, max_attempts, expires_at, resend_after)
-     VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, 0, $8, $9, $10)`,
-    [material.challengeTokenHash, email, purpose, material.otpHash, JSON.stringify(pendingPayload),
-      userId ?? null, invitationId ?? null, OTP_MAX_ATTEMPTS,
-      new Date(Date.now() + OTP_TTL_MS), new Date(Date.now() + OTP_RESEND_COOLDOWN_MS)]
-  );
-  await (options.sendOtp ?? ((to, code) => sendEmailOtp(to, code)))(email, material.otp);
-  return material.challengeToken;
+  let stage = 'validate_otp_pepper';
+  try {
+    const pepper = options.otpPepper ?? process.env.AAKSH_OTP_PEPPER ?? '';
+    const material = createOtpChallengeMaterial(pepper);
+    stage = 'invalidate_previous_challenges';
+    await pool.query(
+      `UPDATE app_email_otp_challenges
+          SET invalidated_at = NOW()
+        WHERE lower(trim(email)) = $1 AND purpose = $2
+          AND consumed_at IS NULL AND invalidated_at IS NULL`,
+      [email, purpose]
+    );
+    stage = 'insert_otp_challenge';
+    await pool.query(
+      `INSERT INTO app_email_otp_challenges
+         (challenge_token_hash, email, purpose, otp_hash, pending_payload, user_id, invitation_id,
+          attempts, max_attempts, expires_at, resend_after)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, 0, $8, $9, $10)`,
+      [material.challengeTokenHash, email, purpose, material.otpHash, JSON.stringify(pendingPayload),
+        userId ?? null, invitationId ?? null, OTP_MAX_ATTEMPTS,
+        new Date(Date.now() + OTP_TTL_MS), new Date(Date.now() + OTP_RESEND_COOLDOWN_MS)]
+    );
+    stage = 'send_email_otp';
+    await (options.sendOtp ?? ((to, code) => sendEmailOtp(to, code)))(email, material.otp);
+    return material.challengeToken;
+  } catch (error) {
+    console.error('[OTP_CHALLENGE_FAILED]', { purpose, stage, ...safeOtpErrorDetails(error) });
+    throw error;
+  }
 }
 
 export function createAuthRouter(options: AuthRouterOptions = {}) {
@@ -385,21 +406,28 @@ export function createAuthRouter(options: AuthRouterOptions = {}) {
     }
     if (!pool) { res.status(503).json({ error: 'PostgreSQL is not configured.' }); return; }
     let client: AuthDbClient | undefined;
+    let stage = 'hash_password';
     try {
       const passwordHash = await hashPassword(credentials.password);
+      stage = 'database_connect';
       client = await pool.connect();
+      stage = 'begin_owner_check';
       await client.query('BEGIN');
+      stage = 'lock_owner_table';
       await client.query('LOCK TABLE app_users IN EXCLUSIVE MODE');
+      stage = 'check_existing_owner';
       const owners = await client.query("SELECT COUNT(*)::text AS count FROM app_users WHERE role = 'owner'");
       if (Number(owners.rows[0]?.count || 0) > 0) {
         await client.query('ROLLBACK');
         res.status(409).json({ error: 'Owner bootstrap is permanently closed because an Owner account already exists.' }); return;
       }
       await client.query('COMMIT');
+      stage = 'issue_otp_challenge';
       const challengeToken = await issueOtpChallenge(pool, credentials.email, 'bootstrap_owner',
         { passwordHash, displayName }, options);
       res.status(202).json({ success: true, requiresOtp: true, challengeToken, message: 'A verification code has been sent to the provided email address.' });
     } catch (error) {
+      console.error('[OWNER_BOOTSTRAP_FAILED]', { stage, ...safeOtpErrorDetails(error) });
       if (client) { try { await client.query('ROLLBACK'); } catch { /* transaction may already be closed */ } }
       if ((error as { code?: string })?.code === '23505') res.status(409).json({ error: 'An account with this email already exists.' });
       else res.status(503).json({ error: 'Owner verification could not be started. Check OTP delivery configuration.' });
