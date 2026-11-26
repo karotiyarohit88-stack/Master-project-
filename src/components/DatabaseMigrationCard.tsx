@@ -73,7 +73,7 @@ export const DatabaseMigrationCard: React.FC<{ isOpen: boolean }> = ({ isOpen })
 
   const apply = async () => {
     if (!verifiedOwner || !haltClear || !status?.connected || !status.database || !adminToken.trim() || busy) return;
-    if (!window.confirm('Apply all pending PostgreSQL migrations to ' + status.database + '? This includes ' + TARGET_MIGRATION + '.')) return;
+    if (!window.confirm('Apply only 20261126_001_ai_conversation_memory.sql to ' + status.database + '? This includes ' + TARGET_MIGRATION + '.')) return;
     setBusy(true);
     setError('');
     setMessage('');
@@ -134,9 +134,9 @@ export const DatabaseMigrationCard: React.FC<{ isOpen: boolean }> = ({ isOpen })
         <label className="block text-xs font-semibold text-slate-700" htmlFor="migration-admin-token">AAKSH Admin Token</label>
         <input id="migration-admin-token" type="password" autoComplete="off" value={adminToken} onChange={event => setAdminToken(event.target.value)} placeholder="Enter server-configured Admin Token" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900" />
         <button type="button" onClick={() => void apply()} disabled={busy || !status?.connected || !adminToken.trim()} className="w-full min-h-11 rounded-lg bg-slate-900 text-white text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-40">
-          <Play className="w-4 h-4" /> {busy ? 'Checking / Applying…' : 'Apply Pending Migrations'}
+          <Play className="w-4 h-4" /> {busy ? 'Checking / Applying…' : 'Apply Conversation Memory Migration'}
         </button>
-        <p className="text-[10px] text-slate-500 flex gap-1.5"><ShieldCheck className="w-3.5 h-3.5 shrink-0" /> Requires current Owner session, CSRF validation, Admin Token, verified database name, and clear Emergency Halt. The server temporarily enables migration permission only for this confirmed request.</p>
+        <p className="text-[10px] text-slate-500 flex gap-1.5"><ShieldCheck className="w-3.5 h-3.5 shrink-0" /> Requires current Owner session, CSRF validation, Admin Token, verified database name, and clear Emergency Halt. The server temporarily enables migration permission only for this confirmed request and applies only the named migration.</p>
       </div>}
       {message && <p role="status" className="text-xs text-emerald-700 break-words">{message}</p>}
       {error && <p role="alert" className="text-xs text-red-700 break-words">{error}</p>}
